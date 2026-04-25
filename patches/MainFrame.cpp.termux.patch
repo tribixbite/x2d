@@ -1,0 +1,38 @@
+diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
+index f8dd9e2..2e3a61d 100644
+--- a/src/slic3r/GUI/MainFrame.cpp
++++ b/src/slic3r/GUI/MainFrame.cpp
+@@ -447,10 +447,30 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
+     // BBS
+     Fit();
+ 
+-    const wxSize min_size = wxGetApp().get_min_size(); //wxSize(76*wxGetApp().em_unit(), 49*wxGetApp().em_unit());
++    wxSize min_size = wxGetApp().get_min_size(); //wxSize(76*wxGetApp().em_unit(), 49*wxGetApp().em_unit());
++
++    // Termux + small portrait displays: BambuStudio's hard-coded 1000x600
++    // floor exceeds the X server's actual screen on phones, which pushes
++    // the topbar (with its max/min/close buttons) off the right edge so the
++    // user can't even click maximize. Clamp the floor and the initial size
++    // to whatever wxDisplay reports as the client area.
++    //
++    // Default-construct wxDisplay() to get the primary display; passing
++    // `this` returns wxNOT_FOUND when the frame isn't shown yet (we're in
++    // the constructor) and ends up reading a zeroed-out size.
++    wxSize disp_size = wxDisplay(0u).GetClientArea().GetSize();
++    if (disp_size.GetWidth() > 0 && disp_size.GetHeight() > 0) {
++        min_size.x = std::min(min_size.x, disp_size.GetWidth());
++        min_size.y = std::min(min_size.y, disp_size.GetHeight());
++    }
+ 
+-    SetMinSize(min_size/*wxSize(760, 490)*/);
+-    SetSize(wxSize(FromDIP(1200), FromDIP(800)));
++    SetMinSize(min_size);
++    wxSize init_size(FromDIP(1200), FromDIP(800));
++    if (disp_size.GetWidth() > 0 && disp_size.GetHeight() > 0) {
++        init_size.x = std::min(init_size.x, disp_size.GetWidth());
++        init_size.y = std::min(init_size.y, disp_size.GetHeight());
++    }
++    SetSize(init_size);
+ 
+     Layout();
+ 

@@ -27,7 +27,7 @@ and update OFFSET below (file offset == VMA on this build because the
 import struct, sys
 from pathlib import Path
 
-OFFSET = 0x0000000002477c44                # file offset == VMA on this build
+OFFSET = 0x0000000002477bb4                # file offset == VMA on this build
 PATCH = struct.pack('<II',
                     0x52800000,    # mov w0, #0
                     0xd65f03c0)    # ret

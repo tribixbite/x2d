@@ -51,11 +51,36 @@ A prebuilt tarball is attached to the GitHub release:
 
 ```
 curl -L -o bs-x2d.tar.xz \
-    https://github.com/<user>/x2d/releases/latest/download/bambustudio-x2d-termux-aarch64.tar.xz
+    https://github.com/tribixbite/x2d/releases/latest/download/bambustudio-x2d-termux-aarch64.tar.xz
 tar -xJf bs-x2d.tar.xz
 cd bambustudio-x2d-termux-aarch64
 ./run_gui.sh                  # needs termux-x11 running on DISPLAY=:1
 ```
+
+### Termux dependencies
+
+```
+pkg install x11-repo
+pkg install \
+    wxwidgets gtk3 webkit2gtk-4.1 \
+    glew glfw mesa libllvm llvm \
+    glib pango cairo gdk-pixbuf atk \
+    fontconfig freetype libpng libjpeg libtiff \
+    openssl curl libcurl \
+    opencv libdbus libwebp \
+    libavcodec libswscale libavutil \
+    python python-cryptography xdotool
+pip install paho-mqtt
+```
+
+The most version-sensitive of these is `libllvm` — Mesa requires it at
+the same major version. If `pkg upgrade` ever leaves them mismatched
+you'll get `EGL_BAD_PARAMETER` / "Unable to get EGL Display"; recover
+with `pacman -S libllvm llvm`.
+
+You also need a working X server. The reference setup is **termux-x11**
+(install the Android app and run `termux-x11` in a Termux session,
+reachable on `:1`).
 
 ### Build from source
 

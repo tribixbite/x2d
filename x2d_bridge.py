@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/env python3.12
+#!/usr/bin/env python3
 """x2d_bridge — local LAN client / status daemon for Bambu Lab X2D, P2S,
 and other Bambu printers that require RSA-SHA256 signed MQTT messages
 (Jan-2025+ firmware).
@@ -270,17 +270,35 @@ def upload_file(creds: Creds, local_path: Path, remote_name: str | None = None) 
 # Print start
 # ---------------------------------------------------------------------------
 
+_SEQ_COUNTER = 0
+def _next_seq() -> str:
+    global _SEQ_COUNTER
+    _SEQ_COUNTER += 1
+    return str(_SEQ_COUNTER)
+
+
 def start_print(client: X2DClient, gcode_filename: str, *,
                 use_ams: bool = True, ams_slot: int = 0,
                 bed_levelling: bool = True, flow_cali: bool = False,
-                timelapse: bool = False, vibration_cali: bool = False) -> None:
+                timelapse: bool = False, vibration_cali: bool = False,
+                bed_type: str = "textured_plate") -> None:
+    """Submit a project_file print command to the printer.
+
+    `bed_type` is the build-plate identifier the printer expects when its
+    own selector doesn't match the slice — newer firmware on H2D and some
+    refreshed P1S have rejected payloads without this field. X2D appears to
+    default fine, but we set it for forward-safety. Common values:
+    `textured_plate`, `cool_plate`, `engineering_plate`, `high_temp_plate`.
+    """
     payload = {
         "print": {
+            "sequence_id": _next_seq(),
             "command": "project_file",
             "param": "Metadata/plate_1.gcode",
             "subtask_name": gcode_filename,
             "url": f"file:///mnt/sdcard/{gcode_filename}",
             "md5": "",  # firmware re-derives if blank
+            "bed_type": bed_type,
             "timelapse": timelapse,
             "bed_leveling": bed_levelling,
             "flow_cali": flow_cali,
@@ -364,7 +382,8 @@ def cmd_print(args: argparse.Namespace) -> int:
                 bed_levelling=not args.no_bed_level,
                 flow_cali=args.flow_cali,
                 timelapse=args.timelapse,
-                vibration_cali=args.vib_cali)
+                vibration_cali=args.vib_cali,
+                bed_type=args.bed_type)
     print(f"start_print queued: {name} (slot={args.slot}, ams={not args.no_ams})")
     cli.disconnect()
     return 0
@@ -382,21 +401,36 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 
     cli = X2DClient(creds, on_state=on_state)
     cli.connect()
-    cli.publish({"pushing": {"sequence_id": "0", "command": "pushall"}})
+
+    def _safe_pushall() -> None:
+        try:
+            cli.publish({"pushing": {"sequence_id": _next_seq(), "command": "pushall"}})
+        except Exception as e:  # network blip — log and keep the loop alive
+            print(f"[x2d-bridge] pushall publish failed: {e}", file=sys.stderr)
+
+    _safe_pushall()
 
     if args.http:
         Thread(target=_serve_http, args=(args.http, lambda: latest_state),
                daemon=True).start()
 
     period = max(1, int(args.interval))
-    print(f"[x2d-bridge] daemon up; polling every {period}s. Ctrl-C to quit.",
+    print(f"[x2d-bridge] daemon up; polling every {period}s. Ctrl-C / SIGTERM to quit.",
           file=sys.stderr)
-    try:
-        while True:
-            time.sleep(period)
-            cli.publish({"pushing": {"sequence_id": "0", "command": "pushall"}})
-    except KeyboardInterrupt:
-        pass
+
+    import signal as _signal
+    stop = Event()
+
+    def _handle_sig(signum, frame):  # noqa: ARG001
+        stop.set()
+
+    _signal.signal(_signal.SIGINT, _handle_sig)
+    _signal.signal(_signal.SIGTERM, _handle_sig)
+
+    while not stop.is_set():
+        if stop.wait(period):
+            break
+        _safe_pushall()
     cli.disconnect()
     return 0
 
@@ -428,6 +462,9 @@ def main() -> int:
                     help="Skip upload — file is already on the printer")
     pr.add_argument("--no-ams", action="store_true")
     pr.add_argument("--no-bed-level", action="store_true")
+    pr.add_argument("--bed-type", default="textured_plate",
+                    help="Build plate id sent to firmware "
+                         "(textured_plate / cool_plate / engineering_plate / high_temp_plate)")
     pr.add_argument("--flow-cali", action="store_true")
     pr.add_argument("--timelapse", action="store_true")
     pr.add_argument("--vib-cali", action="store_true")
