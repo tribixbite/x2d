@@ -1,0 +1,102 @@
+diff --git a/src/slic3r/GUI/BBLTopbar.cpp b/src/slic3r/GUI/BBLTopbar.cpp
+index af70745..8841b36 100644
+--- a/src/slic3r/GUI/BBLTopbar.cpp
++++ b/src/slic3r/GUI/BBLTopbar.cpp
+@@ -562,22 +562,60 @@ void BBLTopbar::OnIconize(wxAuiToolBarEvent& event)
+ 
+ void BBLTopbar::OnFullScreen(wxAuiToolBarEvent& event)
+ {
+-    if (m_frame->IsMaximized()) {
+-        m_frame->Restore();
++    // On termux-x11 (and any X11 setup with a minimal/no WM) the regular
++    // Maximize() path is unreliable: BambuStudio's MainFrame is created
++    // without wxCAPTION, GTK marks the GdkWindow undecorated, and the WM
++    // either ignores the maximize state hint or the GTK code path doesn't
++    // even send it. Track the "maximized" state ourselves and force the
++    // geometry directly so the toggle works regardless of what the WM does.
++    wxDisplay display(this);
++    auto      area = display.GetClientArea();
++
++    bool was_max = m_frame->IsMaximized() || m_manual_maximized;
++    if (was_max) {
++        m_manual_maximized = false;
++        if (m_frame->IsMaximized())
++            m_frame->Restore();
++        // Restore the min-size we temporarily relaxed in the maximize path.
++        if (m_saved_min_size.GetWidth() > 0 && m_saved_min_size.GetHeight() > 0) {
++            m_frame->SetMinSize(m_saved_min_size);
++            m_saved_min_size = wxSize{-1, -1};
++        }
++        if (m_normalRect.GetWidth() > 0 && m_normalRect.GetHeight() > 0) {
++            m_frame->SetSize(m_normalRect);
++        }
++        SetMaximizedSize();   // swap toolbar icon back to "maximize"
++        return;
+     }
+-    else {
+-        wxDisplay display(this);
+-        auto      size = display.GetClientArea().GetSize();
++
++    m_normalRect = m_frame->GetRect();
+ #ifdef __WXMSW__
+-        HWND hWnd = m_frame->GetHandle();
+-        RECT      borderThickness;
+-        SetRectEmpty(&borderThickness);
+-        AdjustWindowRectEx(&borderThickness, GetWindowLongPtr(hWnd, GWL_STYLE), FALSE, 0);
+-        m_frame->SetMaxSize(size + wxSize{-borderThickness.left + borderThickness.right, -borderThickness.top + borderThickness.bottom});
+-#endif //  __WXMSW__
+-        m_normalRect = m_frame->GetRect();
+-        m_frame->Maximize();
+-    }
++    HWND hWnd = m_frame->GetHandle();
++    RECT      borderThickness;
++    SetRectEmpty(&borderThickness);
++    AdjustWindowRectEx(&borderThickness, GetWindowLongPtr(hWnd, GWL_STYLE), FALSE, 0);
++    m_frame->SetMaxSize(area.GetSize() + wxSize{-borderThickness.left + borderThickness.right, -borderThickness.top + borderThickness.bottom});
++    m_frame->Maximize();
++#else
++    // Ask the WM to maximize first (cheap, works on real desktops). Then
++    // unconditionally force the geometry so we still end up correctly sized
++    // when the WM is absent or non-EWMH-compliant (termux-x11).
++    //
++    // Min-size relaxation: BambuStudio's MainFrame sets a min-size of
++    // (max(1000, 76*em), max(600, 49*em)). On a portrait phone display the
++    // X server's width is often <1000px; SetSize would then snap to the
++    // min-size and the window would extend off the right edge. Drop the
++    // min-size to the display area itself for the duration of the maximize
++    // and restore it on un-maximize. Saving lets us roundtrip without
++    // hard-coding the original.
++    m_saved_min_size = m_frame->GetMinSize();
++    m_frame->SetMinSize(area.GetSize());
++    m_frame->Maximize();
++    m_frame->SetSize(area);
++    m_frame->Move(area.GetTopLeft());
++    m_manual_maximized = true;
++    SetWindowSize();          // swap toolbar icon to "restore"
++#endif
+ }
+ 
+ void BBLTopbar::OnCloseFrame(wxAuiToolBarEvent& event)
+@@ -699,14 +737,20 @@ void BBLTopbar::OnMouseMotion(wxMouseEvent& event)
+     if (event.Dragging() && event.LeftIsDown())
+     {
+         // leave max state and adjust position
+-        if (m_frame->IsMaximized()) {
++        if (m_frame->IsMaximized() || m_manual_maximized) {
+             wxRect rect = m_frame->GetRect();
+             // Filter unexcept mouse move
+             if (m_delta + rect.GetLeftTop() != mouse_pos) {
+                 m_delta = mouse_pos - rect.GetLeftTop();
+                 m_delta.x = m_delta.x * m_normalRect.width / rect.width;
+                 m_delta.y = m_delta.y * m_normalRect.height / rect.height;
+-                m_frame->Restore();
++                if (m_frame->IsMaximized())
++                    m_frame->Restore();
++                if (m_manual_maximized) {
++                    m_manual_maximized = false;
++                    if (m_normalRect.GetWidth() > 0 && m_normalRect.GetHeight() > 0)
++                        m_frame->SetSize(m_normalRect);
++                }
+             }
+         }
+         m_frame->Move(mouse_pos - m_delta);

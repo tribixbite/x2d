@@ -1,0 +1,18 @@
+diff --git a/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp b/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
+index c8fc6d5..ad77736 100644
+--- a/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
++++ b/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
+@@ -298,8 +298,11 @@ void AxisCtrlButton::mouseReleased(wxMouseEvent& event)
+     if (pressedDown) {
+         pressedDown = false;
+         ReleaseMouse();
+-        if (wxRect({ 0, 0 }, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen: drop the up-bounds check so taps don't get
++        // silently swallowed by tiny finger drift between down and up. The
++        // active wedge is tracked in current_pos by mouseMove, so the
++        // correct axis still fires.
++        sendButtonEvent();
+     }
+ }
+ 

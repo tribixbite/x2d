@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/BBLTopbar.hpp b/src/slic3r/GUI/BBLTopbar.hpp
+index 3a44db7..056e51d 100644
+--- a/src/slic3r/GUI/BBLTopbar.hpp
++++ b/src/slic3r/GUI/BBLTopbar.hpp
+@@ -64,6 +64,8 @@ private:
+     wxAuiToolBarItem* m_file_menu_item;
+     wxAuiToolBarItem* m_dropdown_menu_item;
+     wxRect m_normalRect;
++    bool m_manual_maximized = false;
++    wxSize m_saved_min_size{-1, -1};
+     wxPoint m_delta;
+     wxMenu m_top_menu;
+     wxMenu* m_file_menu;

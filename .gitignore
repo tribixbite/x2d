@@ -1,0 +1,69 @@
+# Build / source trees (huge, easily reproducible from upstream + patches/)
+bs-bionic/
+bs-cli/
+bs-gui/
+bs-appdir/
+BambuStudio/
+squashfs-root/
+glibc-packages.wiki/
+research/
+
+# Distributable + binaries
+dist/
+*.AppImage
+*.sqfs
+*.tar
+*.tar.xz
+*.tar.gz
+*.tar.zst
+
+# 3D output / inputs
+*.stl
+*.3mf
+*.gcode
+*.gcode.3mf
+
+# Intermediate flattened profiles + slicer artifacts
+flat-profiles/
+result.json
+*.png
+
+# Logs / strace / scratch
+*.log
+logs/
+*.strace
+_egl_probe.*
+_*.py
+
+# Local scripts that bake printer-specific values
+*.local
+.env
+secrets/
+.x2d.env
+
+# Build helpers we no longer need
+build-deps.sh
+build-cli.sh
+build-app.sh
+finish-app.sh
+check_gcc.sh
+check_tools.sh
+slice.sh
+run_gui.sh
+run_gui_swrender.sh
+make_frame_*.py
+
+# Editor / OS
+.DS_Store
+*.swp
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+
+# Pre-built shim — always rebuild from source
+runtime/libpreloadgtk.so
+
+# Old draft notes
+UNANSWERED_QUESTIONS.md
+.claude/

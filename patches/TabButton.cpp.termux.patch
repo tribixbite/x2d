@@ -1,0 +1,15 @@
+diff --git a/src/slic3r/GUI/TabButton.cpp b/src/slic3r/GUI/TabButton.cpp
+index d4e22c0..f7bc54e 100644
+--- a/src/slic3r/GUI/TabButton.cpp
++++ b/src/slic3r/GUI/TabButton.cpp
+@@ -219,8 +219,8 @@ void TabButton::mouseReleased(wxMouseEvent &event)
+     if (pressedDown) {
+         pressedDown = false;
+         ReleaseMouse();
+-        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen drift workaround — see Button::mouseReleased.
++        sendButtonEvent();
+     }
+ }
+ 

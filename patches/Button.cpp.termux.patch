@@ -1,0 +1,22 @@
+diff --git a/src/slic3r/GUI/Widgets/Button.cpp b/src/slic3r/GUI/Widgets/Button.cpp
+index 4d65863..147d2a9 100644
+--- a/src/slic3r/GUI/Widgets/Button.cpp
++++ b/src/slic3r/GUI/Widgets/Button.cpp
+@@ -411,8 +411,15 @@ void Button::mouseReleased(wxMouseEvent& event)
+         pressedDown = false;
+         if (HasCapture())
+             ReleaseMouse();
+-        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen via termux-x11: button-up coords drift several
++        // pixels from button-down. Strict bounds check silently drops touch
++        // clicks on small widgets (Cancel buttons, AMS spool selectors,
++        // SwitchButton, AxisCtrlButton, etc.). Treat any release while
++        // pressedDown as a confirmed click — matches Android-native button
++        // semantics. Mouse users keeping the cursor inside still get the
++        // same behaviour; only difference is dragging far off no longer
++        // cancels (which is uncommon and rarely intentional).
++        sendButtonEvent();
+     }
+ }
+ 
