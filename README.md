@@ -69,9 +69,18 @@ pkg install \
     openssl curl libcurl \
     opencv libdbus libwebp \
     libavcodec libswscale libavutil \
-    python python-cryptography xdotool
+    python python-cryptography xdotool \
+    openbox
 pip install paho-mqtt
 ```
+
+**Why openbox is in the list**: termux-x11 ships without a window manager.
+Without one, `wxFileDialog`s open undecorated at (0,0) and stack *under*
+the main frame so Cancel-button taps land on the main frame instead of
+the dialog ("Cancel buttons don't work"); transient dialogs can't be
+dragged; `wxFrame::Maximize` is a no-op. Openbox (≈600 KB) supplies a
+minimal EWMH-aware WM that fixes all of those. `run_gui.sh` will spawn
+it automatically on launch if it's installed and not already running.
 
 The most version-sensitive of these is `libllvm` — Mesa requires it at
 the same major version. If `pkg upgrade` ever leaves them mismatched

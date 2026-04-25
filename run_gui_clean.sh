@@ -27,6 +27,32 @@ export DISPLAY="${DISPLAY:-:1}"
 # the bionic-specific gaps (en_US suffix retry + wxUILocale ICU bypass).
 export LC_ALL="${LC_ALL:-C}"
 export LANG="${LANG:-C}"
+
+# Spawn a tiny window manager if one is installed and not already running.
+# termux-x11 has no built-in WM, which means:
+#   - GtkFileChooserDialog and other transient dialogs open with no title
+#     bar, can't be dragged, and stack at (0,0) under the main frame so
+#     clicks land on the main frame instead of the dialog (Cancel buttons
+#     "don't work").
+#   - wxFrame::Maximize() / Iconize() are no-ops because EWMH state hints
+#     have no listener.
+# Any EWMH-aware WM fixes both classes of problem. Install one of:
+#     pkg install openbox     # ~600 KB, recommended
+#     pkg install matchbox-window-manager
+#     pkg install fluxbox
+# If none are present we still launch (via the in-app patches) but dialogs
+# will be janky.
+if ! pgrep -f -u "$(id -u)" '(openbox|matchbox-window-manager|fluxbox|jwm)' >/dev/null 2>&1; then
+    for wm in openbox matchbox-window-manager fluxbox jwm; do
+        if command -v "$wm" >/dev/null 2>&1; then
+            "$wm" >/dev/null 2>&1 &
+            disown $! 2>/dev/null || true
+            echo "[run_gui] spawned $wm" >&2
+            sleep 0.4
+            break
+        fi
+    done
+fi
 export WXSUPPRESS_SIZER_FLAGS_CHECK=1
 export WXSUPPRESS_DBL_CLICK_ASSERT=1
 export WXASSERT_DISABLE=1
