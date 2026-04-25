@@ -46,6 +46,7 @@ Side notes
 from __future__ import annotations
 
 import argparse
+import base64
 import configparser
 import json
 import os
@@ -143,7 +144,9 @@ def sign_payload(payload: dict[str, Any]) -> dict[str, Any]:
     payload["header"] = {
         "sign_ver": "v1.0",
         "sign_alg": "RSA_SHA256",
-        "sign_string": sig.hex(),
+        # Base64 matches the canonical Bambu Connect plugin format. Hex
+        # also works on current firmware but base64 is forward-safer.
+        "sign_string": base64.b64encode(sig).decode("ascii"),
         "cert_id": BAMBU_CERT_ID,
         "payload_len": len(body),
     }
