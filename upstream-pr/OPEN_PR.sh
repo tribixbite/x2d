@@ -7,45 +7,70 @@
 # Per CLAUDE.md global rule, the assistant won't run this on its own —
 # it requires explicit per-instance approval each time. Re-read it before
 # invoking.
+
 set -euo pipefail
 
-REPO_OWNER=tribixbite
 UPSTREAM=bambulab/BambuStudio
-BRANCH=termux/touch-drift-fix
-PATCH=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/touchscreen-button-fix.patch
-PR_BODY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/PR_BODY.md
+BRANCH=touchscreen-button-release-slop
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PATCH=$HERE/touchscreen-button-fix.patch
+PR_BODY=$HERE/PR_BODY.md
 
-cd "$(mktemp -d)"
+# Use the user's git config identity if set, otherwise fall back to a
+# noreply address — never inline a real personal email here, since the
+# author trailer ends up in a public commit.
+GIT_NAME=$(git config --global --get user.name 2>/dev/null || true)
+GIT_NAME=${GIT_NAME:-x2d-contributor}
+GIT_EMAIL=$(git config --global --get user.email 2>/dev/null || true)
+if [ -z "$GIT_EMAIL" ]; then
+    GH_USER=$(gh api user --jq .login 2>/dev/null || echo "")
+    if [ -n "$GH_USER" ]; then
+        GIT_EMAIL="${GH_USER}@users.noreply.github.com"
+    else
+        GIT_EMAIL="noreply@users.noreply.github.com"
+    fi
+fi
+echo "→ commit identity: $GIT_NAME <$GIT_EMAIL>"
 
-echo "→ forking $UPSTREAM as $REPO_OWNER/BambuStudio (skipped if exists)"
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+cd "$WORK"
+
+echo "→ forking $UPSTREAM (skipped if fork already exists)"
 gh repo fork "$UPSTREAM" --clone --remote --default-branch-only \
-    || git clone "https://github.com/$REPO_OWNER/BambuStudio.git" BambuStudio
+    || git clone "https://github.com/$(gh api user --jq .login)/BambuStudio.git" BambuStudio
 
 cd BambuStudio
-git fetch upstream master --depth 1
+# Make sure both remotes exist regardless of which path above we took.
+if ! git remote get-url upstream >/dev/null 2>&1; then
+    git remote add upstream "https://github.com/$UPSTREAM.git"
+fi
+git fetch upstream master --depth 50
 git checkout -B "$BRANCH" upstream/master
 
-echo "→ applying $PATCH"
-git apply --check "$PATCH"
-git apply         "$PATCH"
+echo "→ applying $PATCH (3-way merge — recoverable from upstream drift)"
+git apply --check -3 "$PATCH" 2>/dev/null || true
+git apply        -3 "$PATCH"
 
-git -c user.name="x2d-bot" -c user.email="willstone@gmail.com" \
+git -c user.name="$GIT_NAME" -c user.email="$GIT_EMAIL" \
     add src/slic3r/GUI/Widgets/Button.cpp \
         src/slic3r/GUI/Widgets/AxisCtrlButton.cpp \
         src/slic3r/GUI/Widgets/SideButton.cpp \
         src/slic3r/GUI/TabButton.cpp
-git -c user.name="x2d-bot" -c user.email="willstone@gmail.com" \
-    commit -m "Custom Button widgets: fire click on any release while pressedDown
+git -c user.name="$GIT_NAME" -c user.email="$GIT_EMAIL" \
+    commit -m "Fix touchscreen taps being dropped on custom Button widgets
 
-Touchscreen / convertible / kiosk users see button-up coords drift a
-few pixels from button-down (finger roll), and the strict
-wxRect.Contains check in mouseReleased silently swallows the click.
+Add a 15 px release-slop to the bounds check in mouseReleased on
+Button / AxisCtrlButton / SideButton / TabButton. Strict
+wxRect.Contains was silently swallowing every touchscreen tap
+because finger contact rolls between press and release, taking the
+up-coord outside the rect.
 
-Standard wxButton + wxNotebook tabs aren't affected because they
-hit-test on down. Behaviour change for desktop mouse users: dragging
-off a custom button no longer cancels the click.
-
-Affects Button.cpp, AxisCtrlButton.cpp, SideButton.cpp, TabButton.cpp.
+The deliberate desktop drag-off-to-cancel gesture is preserved (any
+release further than 15 px outside still cancels). For consistency,
+the patch also wraps ReleaseMouse() in a HasCapture() guard for the
+two widgets (AxisCtrlButton, TabButton) that called it
+unconditionally — wxWidgets asserts in debug builds otherwise.
 "
 
 git push origin "$BRANCH"
@@ -54,8 +79,8 @@ echo "→ opening PR with body from $PR_BODY"
 gh pr create \
     --repo "$UPSTREAM" \
     --base master \
-    --head "$REPO_OWNER:$BRANCH" \
-    --title "Custom Button widgets: fire click on any release while pressedDown" \
+    --head "$(gh api user --jq .login):$BRANCH" \
+    --title "Fix touchscreen taps being dropped on custom Button widgets" \
     --body-file "$PR_BODY"
 
 echo "Done."

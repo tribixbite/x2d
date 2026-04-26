@@ -1,22 +1,24 @@
 diff --git a/src/slic3r/GUI/Widgets/Button.cpp b/src/slic3r/GUI/Widgets/Button.cpp
-index 4d65863..147d2a9 100644
+index 4d65863..e261a34 100644
 --- a/src/slic3r/GUI/Widgets/Button.cpp
 +++ b/src/slic3r/GUI/Widgets/Button.cpp
-@@ -411,8 +411,15 @@ void Button::mouseReleased(wxMouseEvent& event)
+@@ -411,7 +411,18 @@ void Button::mouseReleased(wxMouseEvent& event)
          pressedDown = false;
          if (HasCapture())
              ReleaseMouse();
 -        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
--            sendButtonEvent();
-+        // Termux/touchscreen via termux-x11: button-up coords drift several
-+        // pixels from button-down. Strict bounds check silently drops touch
-+        // clicks on small widgets (Cancel buttons, AMS spool selectors,
-+        // SwitchButton, AxisCtrlButton, etc.). Treat any release while
-+        // pressedDown as a confirmed click — matches Android-native button
-+        // semantics. Mouse users keeping the cursor inside still get the
-+        // same behaviour; only difference is dragging far off no longer
-+        // cancels (which is uncommon and rarely intentional).
-+        sendButtonEvent();
++        // Touch input drift slop. The button-up position can land a few
++        // pixels outside the rect after a tap because finger contact rolls
++        // between press and release; the original strict
++        // wxRect({0,0},GetSize()).Contains(...) check silently dropped
++        // those clicks on every touchscreen device (visible symptom on
++        // Cancel buttons, AMS spool selectors, sidebar tabs, etc.).
++        // Inflating the hit area by kReleaseSlop on each side preserves
++        // the deliberate drag-off-to-cancel gesture for desktop mouse
++        // users (any release more than ~15 px outside still cancels)
++        // while accepting the small finger drift typical of touchscreens.
++        constexpr int kReleaseSlop = 15;
++        if (wxRect({0, 0}, GetSize()).Inflate(kReleaseSlop).Contains(event.GetPosition()))
+             sendButtonEvent();
      }
  }
- 

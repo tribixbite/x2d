@@ -1,68 +1,65 @@
-## Touchscreen taps silently dropped on custom `Button` widgets
+## Fix touchscreen taps being dropped on custom Button widgets
 
-### Problem
+### Symptom
 
-Bambu Studio's custom `Button` family
+On touchscreen / convertible / kiosk deployments, several custom-drawn
+Bambu widgets silently drop taps:
+
+* `Cancel` / `OK` / `Skip` buttons in many MsgDialog flows
+* AMS spool selectors
+* The sidebar `SideButton` items (Printer / Filament tabs etc.)
+* `AxisCtrlButton` jog directions on the device tab
+* `TabButton` page-selectors inside settings panels
+
+The user sees the press indicator activate, lifts their finger, and
+nothing happens. Native widgets like `wxButton` and `wxNotebook` aren't
+affected in practice — presumably because the underlying GTK / native
+hit regions are more lenient than the strict client-rect check used
+here.
+
+### Root cause
+
+All four custom Button widgets
 (`src/slic3r/GUI/Widgets/Button.cpp`,
 `src/slic3r/GUI/Widgets/AxisCtrlButton.cpp`,
 `src/slic3r/GUI/Widgets/SideButton.cpp`,
 `src/slic3r/GUI/TabButton.cpp`)
-fires its `wxEVT_COMMAND_BUTTON_CLICKED` event in `mouseReleased` only if
-the mouse-up coordinates are still inside the button's `wxRect`:
+fire their `wxEVT_COMMAND_BUTTON_CLICKED` event in `mouseReleased` only
+if the up-coords are still inside `wxRect({0,0}, GetSize())`:
 
 ```cpp
-void Button::mouseReleased(wxMouseEvent& event) {
-    event.Skip();
-    if (pressedDown) {
-        pressedDown = false;
-        if (HasCapture()) ReleaseMouse();
-        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
-            sendButtonEvent();
-    }
-}
+if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
+    sendButtonEvent();
 ```
 
-That bounds check is a problem on touchscreen / convertible / kiosk
-deployments. A finger tap is rarely pixel-stable: the down-coords and
-up-coords often differ by 5–20 px because of finger roll. The user
-*sees* the press indicator, lifts the finger, and nothing happens
-because the up-coords landed a few pixels outside the rect. Symptom:
-"Cancel buttons don't work", "AMS spool selectors don't respond",
-"Sidebar tabs randomly do nothing", "Axis-jog buttons fire
-intermittently".
+Touch input doesn't deliver pixel-stable coords. Finger contact rolls
+between press and release; the up-coord typically lands a few pixels
+outside the rect. The strict bounds check then drops the click.
 
-The standard `wxButton` doesn't have this issue because GTK's native
-button handles the click on press OR on release-anywhere-while-pressed.
-`wxNotebook` tabs hit-test on down. The bug is specific to BambuStudio's
-own Button class hierarchy.
+(Side note: `Button::mouseCaptureLost` already calls `mouseReleased`
+with a default-constructed `wxMouseEvent`, whose `GetPosition()` is
+`{0,0}` — and `wxRect({0,0}, GetSize()).Contains({0,0})` is true, so
+the click currently fires on capture-loss anyway. The strict cancel-
+on-drag-off behaviour was already only partially honoured.)
 
 ### Fix
 
-Remove the up-coords bounds check. If `pressedDown` was true on
-release, fire the click. Behaviour-equivalent for mouse users who
-release inside the button (the common case); fixes touchscreen users
-whose finger drifted slightly. Mouse users who deliberately drag off
-the button to "cancel" the click lose that gesture, but it's
-uncommon enough that the trade-off is worth it for the much larger
-touchscreen-input population.
+Add a small slop (`kReleaseSlop = 15` px) to the bounds check on
+release. The deliberate desktop "drag off and release to cancel"
+gesture is preserved (any release further than 15 px outside still
+cancels), and touch users get the few pixels of grace they need.
 
-For `AxisCtrlButton`, the wedge selection is already tracked
-separately in `current_pos` (updated by `mouseMove`), so dropping the
-check still fires the correct axis.
+For consistency, the patch also wraps `AxisCtrlButton` and `TabButton`'s
+`ReleaseMouse()` call in a `HasCapture()` guard — wxWidgets asserts in
+debug builds if you call `ReleaseMouse()` without holding capture, and
+those two widgets were the only ones in this family doing so
+unconditionally.
 
-### Provenance
+Net diff: +13, -8 across four files.
 
-This was reverse-engineered while making BambuStudio runnable on
-aarch64 Termux + termux-x11, where touch input has slightly more
-finger drift than typical desktop touchscreens. Full Termux build
-recipe + the rest of the patches at
-<https://github.com/tribixbite/x2d>.
+### Discovery context
 
-### Files
-
-- `src/slic3r/GUI/Widgets/Button.cpp` — drop bounds check.
-- `src/slic3r/GUI/Widgets/AxisCtrlButton.cpp` — drop bounds check.
-- `src/slic3r/GUI/Widgets/SideButton.cpp` — drop bounds check.
-- `src/slic3r/GUI/TabButton.cpp` — drop bounds check.
-
-Net diff: +9, –4 across four files.
+Found while making BambuStudio runnable on aarch64 Termux + termux-x11,
+where touch input has slightly more finger drift than typical desktop
+touchscreens. Full toolkit + the rest of the platform-specific patches
+at <https://github.com/tribixbite/x2d>.

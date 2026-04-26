@@ -1,15 +1,15 @@
 diff --git a/src/slic3r/GUI/Widgets/SideButton.cpp b/src/slic3r/GUI/Widgets/SideButton.cpp
-index 7db4743..09b9e3c 100644
+index 7db4743..22bafc9 100644
 --- a/src/slic3r/GUI/Widgets/SideButton.cpp
 +++ b/src/slic3r/GUI/Widgets/SideButton.cpp
-@@ -338,8 +338,8 @@ void SideButton::mouseReleased(wxMouseEvent& event)
+@@ -338,7 +338,9 @@ void SideButton::mouseReleased(wxMouseEvent& event)
  
      if (pressedDown) {
          pressedDown = false;
 -        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
--            sendButtonEvent();
-+        // Termux/touchscreen drift workaround — see Button::mouseReleased.
-+        sendButtonEvent();
++        // Touch input drift slop — see Button::mouseReleased.
++        constexpr int kReleaseSlop = 15;
++        if (wxRect({0, 0}, GetSize()).Inflate(kReleaseSlop).Contains(event.GetPosition()))
+             sendButtonEvent();
      }
  }
- 
