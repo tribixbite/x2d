@@ -182,26 +182,26 @@ For every item:
   - **Done when**: green check on every commit; fails when secrets / lint
     / sig roundtrip broken.
 
-- [ ] **5. Sidebar shrinkability patch.** Patch BambuStudio's left-rail
+- [x] **5. Sidebar shrinkability patch.** Patch BambuStudio's left-rail
   sidebar so the Plater fits portrait phone displays without
   horizontal clip.
   - **Sub-tasks**:
-    - [ ] Identified the three call-sites that hard-code
+    - [x] Identified the three call-sites that hard-code
       `42 * wxGetApp().em_unit()` (≈504 px) for the Sidebar width:
       `Sidebar::Sidebar` ctor's initial wxSize, `Sidebar::msw_rescale`
       `SetMinSize`, and `Plater::priv::priv`'s wxAuiPaneInfo `BestSize`.
-    - [ ] Added `static int sidebar_default_width()` near the Sidebar
+    - [x] Added `static int sidebar_default_width()` near the Sidebar
       class that returns `clamp(42*em, 15*em, display_width/3)`. On a
       landscape desktop max() picks 42*em → no-op; on portrait
       Termux it picks display_width/3 (≈224 px on a 672-wide display)
       so the 3D viewport actually has room.
-    - [ ] Verified visually: launched bambu, switched to Prepare tab,
+    - [x] Verified visually: launched bambu, switched to Prepare tab,
       screenshot shows the 3D bed grid + Top/Front gizmo on the right
       side of the window — first time those have been visible without
       horizontal scroll on this device. Filament list, preset combo,
       and quality/strength/speed tab navigation all still reachable
       (≥15*em floor protects them).
-    - [ ] Wrote `patches/Plater.cpp.termux.patch` (+22, -3).
+    - [x] Wrote `patches/Plater.cpp.termux.patch` (+22, -3).
   - **Done when**: window fits inside 672 px wide display with no clipped
     controls.
 
