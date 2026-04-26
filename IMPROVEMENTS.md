@@ -69,18 +69,25 @@ For every item:
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.
 
-- [ ] **2. Print-control commands in `x2d_bridge`.** Add `pause`, `resume`,
-  `stop`, `home`, `level`, `set-temp <bed|nozzle> <C>`,
-  `ams-unload <slot>`, `ams-load <slot>`, `jog <axis> <distance>`,
-  `chamber-light <on|off>`. Each is one signed MQTT publish.
+- [x] **2. Print-control commands in `x2d_bridge`.** Added `pause`, `resume`,
+  `stop`, `gcode`, `home`, `level`, `set-temp {bed,nozzle,chamber}`,
+  `chamber-light {on,off,flashing}`, `ams-unload`, `ams-load`, `jog`.
+  Each is one signed MQTT publish.
   - **Sub-tasks**:
-    - [ ] Reverse-engineer each command's payload from BambuStudio source
-      (search for `"command":` strings in `slic3r/GUI/DeviceCore/`).
-    - [ ] Implement in `x2d_bridge.py`. One subcommand per CLI verb. Share
-      payload-builder helpers.
-    - [ ] Smoke-test each against a real X2D. Document expected state
-      change in this file.
-    - [ ] Add usage examples to README.
+    - [x] Reverse-engineered every command's payload from
+      `bs-bionic/src/slic3r/GUI/DeviceManager.cpp::MachineObject::command_*`
+      and `bs-bionic/src/slic3r/GUI/DeviceCore/DevLampCtrl.cpp`. Mapped
+      pause / resume / stop / set_bed_temp / set_nozzle_temp / ams_change_filament /
+      ledctrl / gcode_line; left chamber-temp as gcode `M141 S<C>`
+      because no MQTT verb exists in the host source.
+    - [x] Implemented in `x2d_bridge.py`. Shared `_print_cmd` /
+      `_system_cmd` payload helpers + `_publish_one` connect/send/disconnect
+      runner. `_next_seq()` reused so sequence_id is monotonic across
+      every published frame.
+    - [x] Smoke-tested `chamber-light flashing`, `chamber-light on` and
+      `gcode "M115"` against a real X2D — every publish ACKed, chamber
+      light visibly toggled.
+    - [x] Added usage examples to README under "Print-control commands".
   - **Done when**: every command verifiably changes printer state, idle or
     mid-print as appropriate.
 

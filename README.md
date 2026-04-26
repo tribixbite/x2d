@@ -168,6 +168,34 @@ x2d_bridge.py daemon --http 127.0.0.1:8765 --quiet
 Credentials can also come from `--ip / --code / --serial` flags or
 `X2D_IP / X2D_CODE / X2D_SERIAL` environment variables.
 
+### Print-control commands
+
+Each verb is a single signed-MQTT publish — same protocol the official
+GUI uses, just routed through our bridge so it works on aarch64. Every
+command exits as soon as the printer ACKs the publish.
+
+```
+x2d_bridge.py pause                      # pause the current print
+x2d_bridge.py resume                     # resume after pause
+x2d_bridge.py stop                       # abort the current print
+x2d_bridge.py home                       # G28 — home all axes
+x2d_bridge.py level                      # G29 — auto bed-level
+x2d_bridge.py set-temp bed     60        # set_bed_temp 60°C
+x2d_bridge.py set-temp nozzle 220 --idx 0  # set_nozzle_temp on extruder 0
+x2d_bridge.py set-temp chamber 35        # M141 S35 (chamber heater)
+x2d_bridge.py chamber-light on           # ledctrl on / off / flashing
+x2d_bridge.py chamber-light flashing --on-time 200 --off-time 200 --loops 5
+x2d_bridge.py ams-load 0 3 --tar-temp 220   # AMS 0 / slot 3, preheat to 220
+x2d_bridge.py ams-unload 0 --tar-temp 220   # unload from AMS 0
+x2d_bridge.py jog X 10                   # relative move +10 mm on X
+x2d_bridge.py jog Z -5 --feed 600        # relative -5 mm on Z @ 600 mm/min
+x2d_bridge.py gcode "M115"               # send arbitrary gcode_line
+```
+
+Payload schemas reverse-engineered from
+`bs-bionic/src/slic3r/GUI/DeviceManager.cpp::MachineObject::command_*`
+so the printer behaviour matches what the official GUI sends.
+
 ## What's broken on Termux without these patches
 
 | Symptom | Root cause | Patch |

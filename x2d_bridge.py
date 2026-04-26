@@ -892,6 +892,150 @@ _OPS: dict[str, Callable[[_ConnHandler, dict], dict]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Print-control verbs — direct signed-MQTT publishes for the most common
+# operator actions. Payload schemas reverse-engineered from
+# bs-bionic/src/slic3r/GUI/DeviceManager.cpp::MachineObject::command_*
+# (see comments next to each).
+# ---------------------------------------------------------------------------
+
+def _publish_one(args: argparse.Namespace, payload: dict) -> int:
+    creds = Creds.resolve(args)
+    cli = X2DClient(creds)
+    cli.connect()
+    try:
+        cli.publish(payload)
+    finally:
+        cli.disconnect()
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _print_cmd(command: str, **extra) -> dict:
+    """Build a `{"print": {"command":..., "sequence_id":..., **extra}}`."""
+    body = {"command": command, "sequence_id": _next_seq(), **extra}
+    return {"print": body}
+
+
+def _system_cmd(command: str, **extra) -> dict:
+    body = {"command": command, "sequence_id": _next_seq(), **extra}
+    return {"system": body}
+
+
+def cmd_pause(args: argparse.Namespace) -> int:
+    # MachineObject::command_task_pause — DeviceManager.cpp:1337
+    return _publish_one(args, _print_cmd("pause", param=""))
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    # MachineObject::command_task_resume — DeviceManager.cpp:1347
+    return _publish_one(args, _print_cmd("resume", param=""))
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    # MachineObject::command_task_abort — DeviceManager.cpp:1316
+    return _publish_one(args, _print_cmd("stop", param=""))
+
+
+def cmd_gcode(args: argparse.Namespace) -> int:
+    # MachineObject::publish_gcode — DeviceManager.cpp:3645
+    gcode = args.gcode if args.gcode.endswith("\n") else args.gcode + "\n"
+    return _publish_one(args, _print_cmd("gcode_line", param=gcode))
+
+
+def cmd_home(args: argparse.Namespace) -> int:
+    return _publish_one(args, _print_cmd("gcode_line", param="G28\n"))
+
+
+def cmd_level(args: argparse.Namespace) -> int:
+    # G29 = auto bed leveling on most G-code dialects; the X-series
+    # firmwares accept it as the canonical "level the bed now" command.
+    return _publish_one(args, _print_cmd("gcode_line", param="G29\n"))
+
+
+def cmd_set_temp(args: argparse.Namespace) -> int:
+    if args.target == "bed":
+        # MachineObject::command_set_bed (mqtt path) — DeviceManager.cpp:1474
+        return _publish_one(args, _print_cmd("set_bed_temp", temp=int(args.value)))
+    elif args.target == "nozzle":
+        # MachineObject::command_set_nozzle_new — DeviceManager.cpp:1509
+        return _publish_one(args, _print_cmd(
+            "set_nozzle_temp",
+            extruder_index=int(args.idx),
+            target_temp=int(args.value),
+        ))
+    elif args.target == "chamber":
+        # No mqtt verb in the source — fall back to gcode M141.
+        return _publish_one(args, _print_cmd(
+            "gcode_line", param=f"M141 S{int(args.value)}\n"
+        ))
+    else:
+        sys.exit(f"unknown set-temp target: {args.target}")
+
+
+def cmd_chamber_light(args: argparse.Namespace) -> int:
+    # DevLamp::command_set_chamber_light — DeviceCore/DevLampCtrl.cpp:36
+    state = args.state.lower()
+    if state not in ("on", "off", "flashing"):
+        sys.exit(f"chamber-light state must be on/off/flashing, got: {state}")
+    payload = _system_cmd(
+        "ledctrl",
+        led_node="chamber_light",
+        led_mode=state,
+        led_on_time=int(args.on_time),
+        led_off_time=int(args.off_time),
+        loop_times=int(args.loops),
+        interval_time=int(args.interval),
+    )
+    return _publish_one(args, payload)
+
+
+def cmd_ams_unload(args: argparse.Namespace) -> int:
+    # MachineObject::command_ams_change_filament with !load — DeviceManager.cpp:1537
+    payload = _print_cmd(
+        "ams_change_filament",
+        curr_temp=int(args.curr_temp),
+        tar_temp=int(args.tar_temp),
+        ams_id=int(args.ams),
+        target=255,    # 255 == unload sentinel
+        slot_id=255,
+    )
+    return _publish_one(args, payload)
+
+
+def cmd_ams_load(args: argparse.Namespace) -> int:
+    # MachineObject::command_ams_change_filament with load — DeviceManager.cpp:1537
+    ams_id = int(args.ams)
+    slot_id = int(args.slot)
+    tray_id = ams_id * 4 + slot_id
+    target = ams_id if tray_id == 0 else tray_id
+    payload = _print_cmd(
+        "ams_change_filament",
+        curr_temp=int(args.curr_temp),
+        tar_temp=int(args.tar_temp),
+        ams_id=ams_id,
+        target=target,
+        slot_id=slot_id,
+    )
+    return _publish_one(args, payload)
+
+
+def cmd_jog(args: argparse.Namespace) -> int:
+    # Relative move via standard G91/G1/G90 sequence — works on every
+    # firmware that accepts arbitrary gcode.
+    axis = args.axis.upper()
+    if axis not in ("X", "Y", "Z", "E"):
+        sys.exit(f"jog axis must be one of X/Y/Z/E, got: {args.axis}")
+    feed = int(args.feed)
+    distance = float(args.distance)
+    gcode = (
+        "G91\n"
+        f"G1 {axis}{distance:g} F{feed}\n"
+        "G90\n"
+    )
+    return _publish_one(args, _print_cmd("gcode_line", param=gcode))
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     sock_path = Path(args.sock).expanduser()
     server = ServeServer(sock_path)
@@ -987,6 +1131,62 @@ def main() -> int:
     d.add_argument("--quiet", action="store_true",
                    help="Only emit on the HTTP endpoint, not stdout")
     d.set_defaults(fn=cmd_daemon)
+
+    # ----- print-control verbs -----------------------------------------
+    pa = sub.add_parser("pause", help="Signed MQTT publish: pause current print")
+    pa.set_defaults(fn=cmd_pause)
+
+    re_ = sub.add_parser("resume", help="Signed MQTT publish: resume current print")
+    re_.set_defaults(fn=cmd_resume)
+
+    sp = sub.add_parser("stop", help="Signed MQTT publish: abort current print")
+    sp.set_defaults(fn=cmd_stop)
+
+    gc = sub.add_parser("gcode", help="Send a literal G-code line as a signed MQTT publish")
+    gc.add_argument("gcode", help="The G-code line (a trailing newline is added if missing)")
+    gc.set_defaults(fn=cmd_gcode)
+
+    hm = sub.add_parser("home", help="Home all axes (G28)")
+    hm.set_defaults(fn=cmd_home)
+
+    lv = sub.add_parser("level", help="Auto-level the bed (G29)")
+    lv.set_defaults(fn=cmd_level)
+
+    st = sub.add_parser("set-temp", help="Set target temperature (bed/nozzle/chamber)")
+    st.add_argument("target", choices=["bed", "nozzle", "chamber"])
+    st.add_argument("value", type=int, help="Target temperature in °C")
+    st.add_argument("--idx", type=int, default=0,
+                    help="Nozzle index (0=left/main, 1=right) — only used for target=nozzle")
+    st.set_defaults(fn=cmd_set_temp)
+
+    cl = sub.add_parser("chamber-light", help="Set chamber LED state")
+    cl.add_argument("state", choices=["on", "off", "flashing"])
+    cl.add_argument("--on-time",   type=int, default=500)
+    cl.add_argument("--off-time",  type=int, default=500)
+    cl.add_argument("--loops",     type=int, default=0)
+    cl.add_argument("--interval",  type=int, default=0)
+    cl.set_defaults(fn=cmd_chamber_light)
+
+    au = sub.add_parser("ams-unload", help="Unload filament from an AMS bay")
+    au.add_argument("ams", type=int, help="AMS index (0..N)")
+    au.add_argument("--curr-temp", type=int, default=215,
+                    help="Current nozzle temperature for the unload heat soak")
+    au.add_argument("--tar-temp",  type=int, default=215,
+                    help="Target temperature to hit before retract")
+    au.set_defaults(fn=cmd_ams_unload)
+
+    al = sub.add_parser("ams-load", help="Load filament from an AMS slot")
+    al.add_argument("ams", type=int, help="AMS index (0..N)")
+    al.add_argument("slot", type=int, help="Slot within the AMS (0..3)")
+    al.add_argument("--curr-temp", type=int, default=215)
+    al.add_argument("--tar-temp",  type=int, default=215)
+    al.set_defaults(fn=cmd_ams_load)
+
+    jg = sub.add_parser("jog", help="Relative axis jog via G91/G1/G90")
+    jg.add_argument("axis", help="X / Y / Z / E")
+    jg.add_argument("distance", type=float, help="mm to move (negative for reverse)")
+    jg.add_argument("--feed", type=int, default=1500, help="Feedrate in mm/min")
+    jg.set_defaults(fn=cmd_jog)
 
     sv = sub.add_parser(
         "serve",
