@@ -164,9 +164,9 @@ For every item:
     toggle, which is a one-time user action — the proxy itself is
     complete and tested up to the pre-flight gate.
 
-- [ ] **4. CI**: GitHub Actions on every push.
+- [x] **4. CI**: GitHub Actions on every push.
   - **Sub-tasks**:
-    - [ ] `.github/workflows/ci.yml` — runs ruff lint over every Python
+    - [x] `.github/workflows/ci.yml` — runs ruff lint over every Python
       script, mypy with reasonable flags on the bridge core
       (`x2d_bridge.py`, `bambu_cert.py`), then two self-tests:
       `tests/test_signing_roundtrip.py` (signs + verifies a payload
@@ -175,10 +175,10 @@ For every item:
       `tests/test_serve_smoke.py` (spawns `x2d_bridge.py serve` on a
       tempdir socket, asserts hello / get_version / unknown-op
       responses match the wire format in PROTOCOL.md).
-    - [ ] Second job verifies the v0.1.0 release's `.sha256` asset
+    - [x] Second job verifies the v0.1.0 release's `.sha256` asset
       matches the `.tar.xz` it sits next to (catches the "uploaded
       tarball without refreshing sha" race that bit me in v0.1.0).
-    - [ ] Status badge wired into the README.
+    - [x] Status badge wired into the README.
   - **Done when**: green check on every commit; fails when secrets / lint
     / sig roundtrip broken.
 
