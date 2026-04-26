@@ -66,4 +66,12 @@ runtime/libpreloadgtk.so
 
 # Old draft notes
 UNANSWERED_QUESTIONS.md
-.claude/
+
+# .claude — keep most of it ignored, but the Stop-hook + settings
+# need to travel with the repo so the IMPROVEMENTS.md loop is
+# reproducible for anyone who clones.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/loop-improvements.sh
