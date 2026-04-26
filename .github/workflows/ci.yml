@@ -1,0 +1,78 @@
+name: ci
+
+# Validates the things we can validate without a real Bambu printer:
+#   * Python lint (ruff) + type-check (mypy --strict where reasonable)
+#   * Crypto self-test: sign + verify a payload through the same code
+#     path the bridge uses, so a bad cert / paho version surfaces here
+#     instead of silently broken in production.
+#   * Bridge `serve` smoke test: spawn it, hit it via Unix socket with
+#     the wire format from runtime/network_shim/PROTOCOL.md, assert the
+#     hello/get_version/unknown-op responses are well-formed.
+#   * Tarball SHA verifier: when a release exists, fetch the
+#     released .sha256 file and assert it matches the file we just
+#     attached (catches "uploaded but didn't refresh sha" race).
+#
+# We can't dlopen the .so on the GitHub runner (it's x86_64 Linux,
+# the .so is aarch64 Android-bionic) — that's covered by
+# runtime/network_shim/tests/test_shim_e2e.py which a maintainer runs
+# locally on a Termux device with a printer.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install paho-mqtt cryptography ruff mypy
+      - name: Lint
+        run: |
+          ruff check x2d_bridge.py bambu_cert.py \
+            runtime/network_shim/tests/test_shim_e2e.py \
+            inject_thumbnails.py resolve_profile.py make_frame.py \
+            test_signed_mqtt.py lan_print.py lan_upload.py
+      - name: Type-check the bridge core
+        run: |
+          mypy --ignore-missing-imports --no-strict-optional \
+               --warn-redundant-casts --warn-unused-ignores \
+               x2d_bridge.py bambu_cert.py
+      - name: Crypto roundtrip
+        run: python tests/test_signing_roundtrip.py
+      - name: Bridge serve smoke
+        run: python tests/test_serve_smoke.py
+
+  release-sha:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release tarball SHA matches the .sha256 asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if ! gh release view v0.1.0 >/dev/null 2>&1; then
+            echo "no v0.1.0 release yet; skipping"
+            exit 0
+          fi
+          gh release download v0.1.0 -p '*.tar.xz' -p '*.sha256' -D /tmp/release
+          cd /tmp/release
+          recorded=$(awk '{print $1}' bambustudio-x2d-termux-aarch64.tar.xz.sha256)
+          actual=$(sha256sum bambustudio-x2d-termux-aarch64.tar.xz | awk '{print $1}')
+          echo "recorded: $recorded"
+          echo "actual:   $actual"
+          [ "$recorded" = "$actual" ]

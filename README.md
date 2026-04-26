@@ -1,5 +1,7 @@
 # BambuStudio on Termux aarch64 — X2D / H2D / signed-LAN-MQTT toolkit
 
+[![ci](https://github.com/tribixbite/x2d/actions/workflows/ci.yml/badge.svg)](https://github.com/tribixbite/x2d/actions/workflows/ci.yml)
+
 This repo collects the patches, runtime shims, and helpers needed to run
 [BambuStudio v02.06.00.51](https://github.com/bambulab/BambuStudio/releases/tag/v02.06.00.51)
 natively on aarch64 Termux + termux-x11, plus a pure-Python LAN client that

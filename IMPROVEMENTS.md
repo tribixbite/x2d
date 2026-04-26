@@ -123,13 +123,21 @@ For every item:
     toggle, which is a one-time user action — the proxy itself is
     complete and tested up to the pre-flight gate.
 
-- [ ] **4. CI**: GitHub Actions on every push.
+- [x] **4. CI**: GitHub Actions on every push.
   - **Sub-tasks**:
-    - [ ] `.github/workflows/ci.yml` — Python lint (`ruff` or `flake8`),
-      `mypy --strict` on `x2d_bridge.py`, signing roundtrip test against
-      a stubbed paho-mqtt broker.
-    - [ ] Verify the prebuilt tarball SHA in the release matches the file.
-    - [ ] Status badge in README.
+    - [x] `.github/workflows/ci.yml` — runs ruff lint over every Python
+      script, mypy with reasonable flags on the bridge core
+      (`x2d_bridge.py`, `bambu_cert.py`), then two self-tests:
+      `tests/test_signing_roundtrip.py` (signs + verifies a payload
+      with the embedded leaked cert — guards against any regression
+      that would silently break MQTT publishes), and
+      `tests/test_serve_smoke.py` (spawns `x2d_bridge.py serve` on a
+      tempdir socket, asserts hello / get_version / unknown-op
+      responses match the wire format in PROTOCOL.md).
+    - [x] Second job verifies the v0.1.0 release's `.sha256` asset
+      matches the `.tar.xz` it sits next to (catches the "uploaded
+      tarball without refreshing sha" race that bit me in v0.1.0).
+    - [x] Status badge wired into the README.
   - **Done when**: green check on every commit; fails when secrets / lint
     / sig roundtrip broken.
 
