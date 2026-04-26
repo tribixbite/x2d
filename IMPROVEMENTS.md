@@ -60,11 +60,28 @@ For every item:
       live X2D (handshake → connect → state event → disconnect).
       `python3.12 runtime/network_shim/tests/test_shim_e2e.py` →
       ALL TESTS PASSED on real hardware.
-    - [ ] End-to-end test in the GUI itself: launch BambuStudio under
-      termux-x11 → click "Add Device" / LAN mode → enter creds → confirm
-      device shows up + AMS slot data populates + "Print" button uploads
-      + start succeeds. Document exact click trail and expected screenshots.
-      (Blocked by the user starting termux-x11 manually since I can't.)
+    - [x] End-to-end load + handshake test in the live GUI under
+      termux-x11. Launched bambu-studio with `run_gui.sh`, openbox
+      managed the window, the shim was confirmed mapped into the
+      bambu-studio address space at `/proc/<pid>/maps`, the bridge
+      subprocess auto-spawned, and the `[x2d-shim]` stderr trace
+      shows `create_agent ok` + `bridge handshake ok` followed by a
+      successful Device-tab navigation via xdotool click.
+    - [ ] SSDP auto-discovery in the bridge so the GUI's Devices tab
+      auto-populates the X2D. Without this the user has to add the
+      device manually via "Add Device" / "Connect via LAN" because
+      our `bambu_network_start_discovery` returns true but the bridge
+      never emits the SSDP `OnMsgArrivedFn` events the host listens
+      for. New sub-task: bridge listens on `udp/2021` for Bambu's
+      mDNS-over-SSDP broadcasts, parses each `bambu-net.local`
+      announcement, forwards as `evt:ssdp_msg` over the socket. Shim
+      hands each one to the host-registered `set_on_ssdp_msg_fn`
+      callback. Then the GUI's printer auto-list works without manual
+      "Add Device" clicks.
+    - [ ] Final end-to-end test once SSDP is in: confirm device shows
+      up in Devices list, click Connect, AMS spool slot data renders,
+      Print on a sliced plate actually starts. Documented click trail
+      + screenshots.
   - **Done when**: GUI's Devices tab shows the X2D as connected, AMS spool
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.
@@ -141,17 +158,26 @@ For every item:
   - **Done when**: green check on every commit; fails when secrets / lint
     / sig roundtrip broken.
 
-- [ ] **5. Sidebar shrinkability patch.** Patch BambuStudio's left-rail
-  sidebar minimum widths so the GUI fits portrait phone displays without
-  horizontal clip. Today the bambu MainFrame's content sums to ~1000 px
-  min-width and overrides the SetSize clamp.
+- [x] **5. Sidebar shrinkability patch.** Patch BambuStudio's left-rail
+  sidebar so the Plater fits portrait phone displays without
+  horizontal clip.
   - **Sub-tasks**:
-    - [ ] Identify the exact panels with hard-coded `SetMinSize` in
-      `Sidebar.cpp` / equivalent.
-    - [ ] Conditionally relax the floor when display width < 1000.
-    - [ ] Verify the rest of the layout doesn't break (filament list,
-      preset combo, print/slice buttons all still reachable).
-    - [ ] Add `patches/Sidebar.cpp.termux.patch`.
+    - [x] Identified the three call-sites that hard-code
+      `42 * wxGetApp().em_unit()` (≈504 px) for the Sidebar width:
+      `Sidebar::Sidebar` ctor's initial wxSize, `Sidebar::msw_rescale`
+      `SetMinSize`, and `Plater::priv::priv`'s wxAuiPaneInfo `BestSize`.
+    - [x] Added `static int sidebar_default_width()` near the Sidebar
+      class that returns `clamp(42*em, 15*em, display_width/3)`. On a
+      landscape desktop max() picks 42*em → no-op; on portrait
+      Termux it picks display_width/3 (≈224 px on a 672-wide display)
+      so the 3D viewport actually has room.
+    - [x] Verified visually: launched bambu, switched to Prepare tab,
+      screenshot shows the 3D bed grid + Top/Front gizmo on the right
+      side of the window — first time those have been visible without
+      horizontal scroll on this device. Filament list, preset combo,
+      and quality/strength/speed tab navigation all still reachable
+      (≥15*em floor protects them).
+    - [x] Wrote `patches/Plater.cpp.termux.patch` (+22, -3).
   - **Done when**: window fits inside 672 px wide display with no clipped
     controls.
 

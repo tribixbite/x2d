@@ -1,0 +1,81 @@
+diff --git a/src/slic3r/GUI/Plater.cpp b/src/slic3r/GUI/Plater.cpp
+index c9f7ee4..8ae84a3 100644
+--- a/src/slic3r/GUI/Plater.cpp
++++ b/src/slic3r/GUI/Plater.cpp
+@@ -2395,8 +2395,30 @@ void Sidebar::update_sync_ams_btn_enable(wxUpdateUIEvent &e)
+      }
+  }
+ 
++// On Termux + portrait phone displays the X server reports a viewport
++// narrower than the upstream sidebar BestSize / panel-default of
++// 42 * em_unit (~504 px). Clamp to one-third of the display so the
++// sidebar never eats more than 33% of the screen, leaving enough room
++// for the 3D viewport and the Object/Plate panes. On normal landscape
++// desktops max(disp_w/3, 42*em) == 42*em so the clamp is a no-op.
++static int sidebar_default_width()
++{
++    const int em = wxGetApp().em_unit();
++    const int upstream = 42 * em;
++    int disp_w = 0;
++    if (auto disp_count = wxDisplay::GetCount(); disp_count > 0) {
++        disp_w = wxDisplay(0u).GetClientArea().GetWidth();
++    }
++    if (disp_w <= 0) return upstream;
++    const int clamped = std::min(upstream, disp_w / 3);
++    // Don't shrink below upstream's MinSize floor of 15*em — the
++    // printer/filament panel widgets need at least that much horizontal
++    // room or they overflow.
++    return std::max(15 * em, clamped);
++}
++
+ Sidebar::Sidebar(Plater *parent)
+-    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
++    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(sidebar_default_width(), -1)), p(new priv(parent))
+ {
+     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
+     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
+@@ -3769,7 +3791,7 @@ void Sidebar::change_top_border_for_mode_sizer(bool increase_border)
+ 
+ void Sidebar::msw_rescale()
+ {
+-    SetMinSize(wxSize(42 * wxGetApp().em_unit(), -1));
++    SetMinSize(wxSize(sidebar_default_width(), -1));  // termux: clamp to disp_w/3
+     p->m_panel_printer_title->GetSizer()->SetMinSize(-1, 3 * wxGetApp().em_unit());
+     p->m_panel_filament_title->GetSizer()
+         ->SetMinSize(-1, 3 * wxGetApp().em_unit());
+@@ -6928,7 +6950,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
+                                    .Floatable(wxGetApp().app_config->get_bool("enable_sidebar_floatable"))
+                                    .Resizable(true)
+                                    .MinSize(wxSize(15 * wxGetApp().em_unit(), 90 * wxGetApp().em_unit()))
+-                                   .BestSize(wxSize(42 * wxGetApp().em_unit(), 90 * wxGetApp().em_unit())));
++                                   .BestSize(wxSize(sidebar_default_width(), 90 * wxGetApp().em_unit())));
+ 
+     auto *panel_sizer = new wxBoxSizer(wxHORIZONTAL);
+     panel_sizer->Add(view3D, 1, wxEXPAND | wxALL, 0);
+@@ -18327,7 +18349,7 @@ wxBoxSizer *ProjectDropDialog::create_item_checkbox(wxString title, wxWindow *pa
+ void ProjectDropDialog::select_radio(int index)
+ {
+     m_action                         = index;
+-    RadioSelectorList::Node *node    = m_radio_group.GetFirst();
++    auto node = m_radio_group.GetFirst();
+     auto                     groupid = 0;
+ 
+     while (node) {
+@@ -18347,7 +18369,7 @@ void ProjectDropDialog::select_radio(int index)
+ 
+ int ProjectDropDialog::get_select_radio(int groupid)
+ {
+-    RadioSelectorList::Node *node = m_radio_group.GetFirst();
++    auto node = m_radio_group.GetFirst();
+     while (node) {
+         RadioSelector *rs = node->GetData();
+         if (rs->m_groupid == groupid && rs->m_radiobox->GetValue()) { return rs->m_select_id; }
+@@ -18358,7 +18380,7 @@ int ProjectDropDialog::get_select_radio(int groupid)
+ }
+ void ProjectDropDialog::on_select_radio(wxMouseEvent &event)
+ {
+-    RadioSelectorList::Node *node    = m_radio_group.GetFirst();
++    auto node = m_radio_group.GetFirst();
+     auto                     groupid = 0;
+ 
+     while (node) {
