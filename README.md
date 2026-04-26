@@ -275,6 +275,15 @@ Two transport options:
   path too — without it the printer rejects with status `0x0003013f`
   and a clear error message.
 
+Three HTTP outputs:
+
+* `/cam.mjpeg` — multipart/x-mixed-replace, browser-renderable, low latency
+* `/cam.jpg`   — single latest JPEG snapshot (one-shot)
+* `/cam.m3u8`  — HLS playlist with 2-second segments (12s sliding window).
+  Plays in any mobile browser via `<video src="…/cam.m3u8" controls>`.
+  Higher latency than MJPEG (~6-8s) but survives flaky connections
+  better and supports seeking.
+
 ### Exposing the daemon / camera on the LAN
 
 `/state` `/healthz` `/cam.mjpeg` `/cam.jpg` are open on loopback by

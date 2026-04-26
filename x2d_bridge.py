@@ -1584,6 +1584,14 @@ def cmd_camera(args: argparse.Namespace) -> int:
     latest_frame = {"data": b"", "ts": 0.0}
     stop_event = Event()
 
+    # HLS output dir (item #20). Each segment is ~2s of mpegts; we keep
+    # a sliding window of 6 (12s of buffer) and let ffmpeg auto-delete
+    # older ones via -hls_flags delete_segments. Cleaned up at exit.
+    import tempfile as _tempfile
+    hls_dir = Path(_tempfile.mkdtemp(prefix="x2d-hls-"))
+    hls_playlist = hls_dir / "cam.m3u8"
+    hls_segment_pattern = hls_dir / "cam%04d.ts"
+
     def ffmpeg_pump():
         backoff = 1.0
         while not stop_event.is_set():
@@ -1592,12 +1600,27 @@ def cmd_camera(args: argparse.Namespace) -> int:
                 "-loglevel", "error",
                 "-rtsp_transport", "tcp",
                 "-i", rtsp_url_full,
-                "-an",                      # drop audio
+                # Output 1: MJPEG-on-stdout, consumed by the JPEG buffer
+                # below for /cam.mjpeg + /cam.jpg.
+                "-map", "0:v",
+                "-an",
                 "-c:v", "mjpeg",
                 "-q:v", "5",
                 "-f", "image2pipe",
-                "-update", "1",             # write each frame as a complete JPEG
-                "-"
+                "-update", "1",
+                "pipe:1",
+                # Output 2: HLS segments + playlist for /cam.m3u8.
+                # -c:v copy when the input is already H.264 (the X2D's
+                # RTSPS stream); ffmpeg falls back to re-encode if not.
+                "-map", "0:v",
+                "-an",
+                "-c:v", "copy",
+                "-f", "hls",
+                "-hls_time", "2",
+                "-hls_list_size", "6",
+                "-hls_flags", "delete_segments+append_list+omit_endlist",
+                "-hls_segment_filename", str(hls_segment_pattern),
+                str(hls_playlist),
             ]
             print(f"[camera] spawning ffmpeg (port {args.port})", file=sys.stderr)
             proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE,
@@ -1718,6 +1741,51 @@ def cmd_camera(args: argparse.Namespace) -> int:
                 self.send_header("Content-Length", str(len(frame)))
                 self.end_headers()
                 self.wfile.write(frame)
+            elif self.path == "/cam.m3u8":
+                # HLS playlist (item #20). 503 until ffmpeg has emitted
+                # at least one segment and the playlist file exists.
+                if not hls_playlist.exists():
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                try:
+                    body = hls_playlist.read_bytes()
+                except OSError:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path.startswith("/cam") and self.path.endswith(".ts"):
+                # HLS segment. Validate the filename to prevent path
+                # traversal (only `cam<digits>.ts` shape allowed).
+                seg_name = self.path[1:]  # strip leading slash
+                import re as _re
+                if not _re.fullmatch(r"cam\d+\.ts", seg_name):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                seg = hls_dir / seg_name
+                if not seg.exists():
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                try:
+                    body = seg.read_bytes()
+                except OSError:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp2t")
+                self.send_header("Cache-Control", "max-age=10")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -1738,8 +1806,9 @@ def cmd_camera(args: argparse.Namespace) -> int:
     _signal.signal(_signal.SIGTERM, _stop)
 
     print(f"[camera] streaming at http://{host}:{port}/cam.mjpeg "
-          f"(JPEG snapshot at /cam.jpg). Ctrl-C to quit.",
+          f"(JPEG snapshot at /cam.jpg, HLS at /cam.m3u8). Ctrl-C to quit.",
           file=sys.stderr)
+    print(f"[camera] HLS segments → {hls_dir}", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -1747,6 +1816,12 @@ def cmd_camera(args: argparse.Namespace) -> int:
     finally:
         stop_event.set()
         server.server_close()
+        # HLS cleanup — best-effort, don't propagate errors.
+        import shutil as _shutil
+        try:
+            _shutil.rmtree(hls_dir, ignore_errors=True)
+        except Exception:
+            pass
     return 0
 
 

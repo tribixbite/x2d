@@ -465,14 +465,14 @@ For every item:
   - **Done when**: post-restart /healthz behavior matches a long-running
     daemon (not always-503 for the first 30s).
 
-- [ ] **20. Camera HLS endpoint** alongside the existing MJPEG.
+- [x] **20. Camera HLS endpoint** alongside the existing MJPEG.
   - **Sub-tasks**:
-    - [ ] ffmpeg pump grows a second output (`-f hls -hls_time 2
+    - [x] ffmpeg pump grows a second output (`-f hls -hls_time 2
       -hls_list_size 6`) to a tempdir.
-    - [ ] HTTP server adds routes: `/cam.m3u8` returns the playlist,
+    - [x] HTTP server adds routes: `/cam.m3u8` returns the playlist,
       `/cam-N.ts` returns segments. Cleanup deletes old segments.
-    - [ ] Test `<video src="http://127.0.0.1:8766/cam.m3u8">` plays in
+    - [x] Test `<video src="http://127.0.0.1:8766/cam.m3u8">` plays in
       a mobile browser AND `curl /cam.m3u8` returns the manifest.
-    - [ ] README documents the new endpoint alongside MJPEG.
+    - [x] README documents the new endpoint alongside MJPEG.
   - **Done when**: HLS playback works end-to-end in a mobile browser
     and survives a 5-min sustained stream.
