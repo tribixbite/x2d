@@ -40,8 +40,13 @@ fi
 
 # Count unchecked items (top-level checkboxes only — sub-task checkboxes
 # under a top-level item shouldn't keep the loop alive on their own).
-pending="$(grep -cE '^- \[ \] \*\*' "$LEDGER" 2>/dev/null || printf '0')"
-if [ "$pending" -eq 0 ]; then
+# `grep -c` prints "0" on no-match and exits 1, so do NOT chain `|| printf 0`
+# — that would emit "0\n0" and the `-eq` test below would die with an
+# "integer expression expected" error, falling through to emit a useless
+# continuation prompt with an empty title.
+pending="$(grep -cE '^- \[ \] \*\*' "$LEDGER" 2>/dev/null)"
+pending=${pending:-0}
+if ! [ "$pending" -gt 0 ] 2>/dev/null; then
     exit 0
 fi
 
