@@ -337,16 +337,16 @@ For every item:
 
 ## Round 2 — UX gaps + hardening (items 11-20)
 
-- [ ] **11. Pre-seed a Bambu vendor preset in install.sh** so the Device
+- [x] **11. Pre-seed a Bambu vendor preset in install.sh** so the Device
   tab works on first run.
   - **Sub-tasks**:
-    - [ ] Drop `BBL.json` (Bambu vendor profile) + a single representative
+    - [x] Drop `BBL.json` (Bambu vendor profile) + a single representative
       printer preset (X1C 0.4 nozzle is a safe default — Device tab gates
       on `is_bbl_vendor_preset`, not on the specific model) into
       `~/.config/BambuStudioInternal/system/`.
-    - [ ] Set `presets.printer` in `BambuStudio.conf` to the seeded
+    - [x] Set `presets.printer` in `BambuStudio.conf` to the seeded
       preset name so the dropdown lands on it on first run.
-    - [ ] Verify on a clean config dir: launch bambu, switch to Device
+    - [x] Verify on a clean config dir: launch bambu, switch to Device
       tab, confirm MonitorPanel shows (not `missing_connection.html`).
   - **Done when**: brand-new install → Device tab is the agent-driven
     monitor view, not the OctoPrint-style placeholder.

@@ -177,6 +177,34 @@ if [ -x "$INSTALL_ROOT/patch_bambu_skip_wizard.py" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Vendor profile seed (so the Device tab works on first run)
+#
+# Without a Bambu vendor preset selected, MainFrame.cpp falls back to
+# `web/device/missing_connection.html` — the SSDP-discovered X2D never
+# reaches the agent-driven MonitorPanel. The wizard normally copies these
+# profiles from `resources/profiles/` into `<data_dir>/system/`, but we
+# skip the wizard. Mirror the copy here so a fresh install lands ready.
+#
+# We use Bambu Lab X1 Carbon as the default model — the X2D doesn't have
+# a stock vendor profile in upstream BambuStudio yet, and the only thing
+# that matters for the Device-tab gate is `is_bbl_vendor_preset()`.
+# ---------------------------------------------------------------------------
+
+section "pre-seeding Bambu vendor profiles"
+
+SYSTEM_DIR="$CONFIG_DIR/system"
+mkdir -p "$SYSTEM_DIR" || fatal "can't mkdir $SYSTEM_DIR" 3
+SRC_PROFILES="$INSTALL_ROOT/resources/profiles"
+if [ -f "$SRC_PROFILES/BBL.json" ] && [ -d "$SRC_PROFILES/BBL" ]; then
+    cp -f  "$SRC_PROFILES/BBL.json" "$SYSTEM_DIR/"
+    cp -rf "$SRC_PROFILES/BBL"      "$SYSTEM_DIR/"
+    c_green "BBL vendor profile installed → $SYSTEM_DIR/"
+else
+    c_yellow "no BBL profiles in $SRC_PROFILES — Device tab will show missing_connection.html"
+    c_yellow "until you pick a Bambu printer in the in-app preset switcher."
+fi
+
+# ---------------------------------------------------------------------------
 # AppConfig pre-seed (idempotent — won't clobber an existing one)
 # ---------------------------------------------------------------------------
 
@@ -184,40 +212,68 @@ section "pre-seeding AppConfig"
 
 mkdir -p "$CONFIG_DIR" || fatal "can't mkdir $CONFIG_DIR" 3
 APPCONF="$CONFIG_DIR/BambuStudio.conf"
-if [ -s "$APPCONF" ]; then
-    c_yellow "$APPCONF already present — leaving it alone"
-else
-    cat > "$APPCONF" <<'JSON'
-{
-    "version": "02.06.00.51",
-    "app": {
-        "language": "en_US",
-        "region": "Others",
-        "first_run": "false",
-        "user_mode": "advanced",
-        "show_splash": "false"
-    },
-    "firstguide": {
-        "finish": "1",
-        "privacyuse": "true"
-    },
-    "models": [
-        {
-            "vendor": "BBL",
-            "model": "Bambu Lab X2D",
-            "nozzle_diameter": "\"0.4\""
-        }
-    ],
-    "presets": {
-        "filaments": ["Bambu PLA Silk @BBL X2D 0.4 nozzle"],
-        "filament": "Bambu PLA Silk @BBL X2D 0.4 nozzle",
-        "print": "0.20mm Standard @BBL X2D",
-        "printer": "Bambu Lab X2D 0.4 nozzle"
-    }
+
+# Always merge — won't overwrite user prefs but WILL ensure the BBL
+# vendor / model / preset keys exist. Previous behaviour ("skip if
+# present") left existing AppConfigs without these keys, which made
+# the Device tab fall back to missing_connection.html.
+python3 - "$APPCONF" <<'PY'
+import json, sys, os
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = {}
+if path.exists() and path.stat().st_size > 0:
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        # Don't clobber a user-edited file we can't parse — back it up.
+        bak = path.with_suffix(path.suffix + ".bak-x2d")
+        path.replace(bak)
+        print(f"[x2d] could not parse {path}, backed up to {bak}")
+        data = {}
+
+# Defaults — only fill missing keys.
+defaults_app = {
+    "language":   "en_US",
+    "region":     "Others",
+    "first_run":  "false",
+    "user_mode":  "advanced",
+    "show_splash":"false",
 }
-JSON
-    c_green "wrote $APPCONF"
-fi
+defaults_firstguide = {"finish": "1", "privacyuse": "true"}
+
+app = data.setdefault("app", {})
+for k, v in defaults_app.items():
+    app.setdefault(k, v)
+fg = data.setdefault("firstguide", {})
+for k, v in defaults_firstguide.items():
+    fg.setdefault(k, v)
+
+# Vendor / model / presets — install ALWAYS sets these (they're the gate).
+data.setdefault("vendors", {})["BBL"] = "1"
+existing_models = data.get("models") or []
+has_bbl_model = any(m.get("vendor") == "BBL" for m in existing_models)
+if not has_bbl_model:
+    existing_models.append({
+        "vendor":          "BBL",
+        "model":           "Bambu Lab X1 Carbon",
+        "nozzle_diameter": '"0.4"',
+    })
+    data["models"] = existing_models
+
+presets = data.setdefault("presets", {})
+presets.setdefault("printer",  "Bambu Lab X1 Carbon 0.4 nozzle")
+presets.setdefault("filament", "Bambu PLA Basic @BBL X1C")
+presets.setdefault("print",    "0.20mm Standard @BBL X1C")
+if not isinstance(presets.get("filaments"), list) or not presets["filaments"]:
+    presets["filaments"] = ["Bambu PLA Basic @BBL X1C"]
+
+path.write_text(json.dumps(data, indent=4))
+os.chmod(path, 0o644)
+print(f"[x2d] merged BBL vendor/model/presets into {path}")
+PY
+c_green "$APPCONF merged (BBL vendor/model/presets ensured)"
 
 # ---------------------------------------------------------------------------
 # ~/.x2d/credentials skeleton
