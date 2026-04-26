@@ -264,6 +264,17 @@ Pre-flight checks `ipcam.rtsp_url` via signed MQTT and bails with a
 clear hint if liveview is still disabled. Pass `--skip-check` to bypass
 (useful when MQTT is flaky but RTSP is open).
 
+Two transport options:
+
+* `--proto rtsp` (default): RTSPS:322 via ffmpeg. Fast, well-tested,
+  gated on `ipcam.rtsp_url != "disable"`.
+* `--proto local`: TLS:6000 LVL_Local — Bambu's proprietary stream
+  protocol. The TLS handshake + 80-byte auth blob + 16-byte frame
+  framing are reverse-engineered in `runtime/network_shim/lvl_local.py`.
+  The same printer-touchscreen "LAN-mode liveview" toggle gates this
+  path too — without it the printer rejects with status `0x0003013f`
+  and a clear error message.
+
 ### Exposing the daemon / camera on the LAN
 
 `/state` `/healthz` `/cam.mjpeg` `/cam.jpg` are open on loopback by

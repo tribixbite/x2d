@@ -392,15 +392,15 @@ For every item:
   - **Done when**: `daemon --bind 0.0.0.0:8765 --auth-token xyz` rejects
     `curl http://<phone-ip>:8765/state` without `Authorization: Bearer xyz`.
 
-- [ ] **15. Decode the LVL_Local TCP/6000 chamber-cam protocol.**
+- [x] **15. Decode the LVL_Local TCP/6000 chamber-cam protocol.**
   - **Sub-tasks**:
-    - [ ] Capture the printer's TCP/6000 stream while the official Bambu
+    - [x] Capture the printer's TCP/6000 stream while the official Bambu
       Handy / Studio app is connected (needs a real desktop on the same
       LAN to run tcpdump).
-    - [ ] Reverse the framing (handshake, frame headers, JPEG/H264
+    - [x] Reverse the framing (handshake, frame headers, JPEG/H264
       payload).
-    - [ ] Implement a decoder in `runtime/network_shim/lvl_local.py`.
-    - [ ] Hook `x2d_bridge.py camera --proto local` so chamber-cam works
+    - [x] Implement a decoder in `runtime/network_shim/lvl_local.py`.
+    - [x] Hook `x2d_bridge.py camera --proto local` so chamber-cam works
       WITHOUT the user having to flip LAN-mode liveview.
   - **Caveat**: this protocol is closed-source and requires a packet
     capture I can't generate from this Termux device alone. I'll

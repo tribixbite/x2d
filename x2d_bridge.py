@@ -1472,7 +1472,37 @@ def cmd_camera(args: argparse.Namespace) -> int:
             stop_event.wait(backoff)
             backoff = min(backoff * 2, 30.0)
 
-    pump = Thread(target=ffmpeg_pump, name="camera-pump", daemon=True)
+    def lvl_local_pump():
+        # Push module path so a repo-checkout install also imports it.
+        sys.path.insert(0, str(Path(__file__).parent / "runtime" / "network_shim"))
+        try:
+            import lvl_local
+        except ImportError as e:
+            print(f"[camera] lvl_local module unavailable: {e}", file=sys.stderr)
+            return
+
+        def _store(jpeg, ts):
+            if stop_event.is_set():
+                raise SystemExit
+            with state_lock:
+                latest_frame["data"] = jpeg
+                latest_frame["ts"] = time.time()
+
+        try:
+            lvl_local.stream_frames(creds.ip, creds.code, on_frame=_store)
+        except SystemExit:
+            pass
+        except lvl_local.LVLLocalError as e:
+            # Fatal vs transient is hard to know — surface and let the
+            # outer reconnect logic in stream_frames handle the retry
+            # (which it does until it gets a non-LVLLocalError).
+            print(f"[camera] LVL_Local fatal: {e}", file=sys.stderr)
+
+    if args.proto == "local":
+        print("[camera] proto=local — using TLS:6000 LVL_Local stream", file=sys.stderr)
+        pump = Thread(target=lvl_local_pump, name="camera-pump-local", daemon=True)
+    else:
+        pump = Thread(target=ffmpeg_pump, name="camera-pump", daemon=True)
     pump.start()
 
     # Tiny HTTP server. Two endpoints:
@@ -1771,6 +1801,12 @@ def main() -> int:
     cm.add_argument("--skip-check", action="store_true",
                     help="Skip the ipcam.rtsp_url pre-flight (useful when "
                          "MQTT can't reach the printer but RTSP is open)")
+    cm.add_argument("--proto", choices=["rtsp", "local"], default="rtsp",
+                    help="rtsp = RTSPS:322 via ffmpeg (default; needs "
+                         "ipcam.rtsp_url != disable). "
+                         "local = LVL_Local TLS:6000 (Bambu's proprietary "
+                         "stream; same touchscreen LAN-mode liveview gate "
+                         "applies — see runtime/network_shim/lvl_local.py)")
     cm.add_argument("--auth-token",
                     default=os.environ.get("X2D_AUTH_TOKEN", ""),
                     help="Bearer token required for HTTP requests when "
