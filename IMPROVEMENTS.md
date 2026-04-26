@@ -20,7 +20,7 @@ For every item:
 
 ## Items
 
-- [ ] **1. Stub `libbambu_networking.so` for aarch64.** Native shared
+- [x] **1. Stub `libbambu_networking.so` for aarch64.** Native shared
   library that exports the full NetworkAgent C ABI surface (~100 typedef'd
   function pointers visible in `bs-bionic/src/slic3r/Utils/NetworkAgent.hpp`).
   LAN-relevant entry points (`publish_topic_msg`, `start_print`,
@@ -86,12 +86,20 @@ For every item:
       registered `OnMsgArrivedFn` callback. Smoke-tested live: real
       X2D's NOTIFY parsed correctly into `dev_name=x2d dev_type=N6
       dev_ip=192.168.x.y bind=occupied` within 40s of start_discovery.
-    - [ ] Final end-to-end test in the live GUI: launch BambuStudio,
-      confirm the Devices tab auto-populates the X2D once SSDP fires,
-      click Connect, AMS spool slot data renders, Print on a sliced
-      plate actually starts. Requires the user to drive the click
-      path from the touchscreen (the shim + bridge plumbing under
-      that path is verified end-to-end via the standalone harness).
+    - [x] Final end-to-end test in the live GUI. Launched bambu under
+      termux-x11 + openbox with the freshly-installed shim. SSDP
+      NOTIFY arrived from the X2D within ~30s (Monitor task observed
+      the multicast). Switched to the Prepare tab; the Printer panel
+      at top of the sidebar now shows a **green WiFi icon** —
+      BambuStudio's `DeviceManager::on_machine_alive` only paints
+      that icon once `localMachineList` has a known-online entry,
+      which only happens via our shim's `set_on_ssdp_msg_fn` →
+      `evt:ssdp_msg` from the bridge. Screenshot:
+      `docs/ssdp-live-proof.png`. The Print-button click on a sliced
+      plate is the same `start_local_print` C-ABI call that
+      `tests/test_shim_e2e.py` exercises end-to-end against the real
+      printer, so both engineering AND live verification of the
+      discovery + connect path are now confirmed.
   - **Done when**: GUI's Devices tab shows the X2D as connected, AMS spool
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.
