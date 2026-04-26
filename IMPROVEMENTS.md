@@ -205,26 +205,26 @@ For every item:
   - **Done when**: window fits inside 672 px wide display with no clipped
     controls.
 
-- [ ] **6. `wxFileDialog` overlay wrapper** via LD_PRELOAD hook on
+- [x] **6. `wxFileDialog` overlay wrapper** via LD_PRELOAD hook on
   `gtk_window_present` / `gtk_window_present_with_time`. Every
   transient/dialog window is checked on first present and clamped to
   the workarea if it overflows OR up-sized to a 320×200 floor if
   upstream picked a too-tiny default. Already-fitting windows are
   left alone (geometry untouched, openbox places them).
   - **Sub-tasks**:
-    - [ ] Decided: LD_PRELOAD shim. Subclassing wxFileDialog would
+    - [x] Decided: LD_PRELOAD shim. Subclassing wxFileDialog would
       need every BambuStudio call-site updated; the GTK-level hook
       catches every dialog (file chooser + message dialog +
       BambuStudio's custom modals) for free.
-    - [ ] Implemented in `runtime/preload_gtkinit.c` with a
+    - [x] Implemented in `runtime/preload_gtkinit.c` with a
       per-window GQuark guard so each dialog is sized at most once
       (so the user can later drag it without us fighting them).
-    - [ ] Verified live: launched bambu, observed
+    - [x] Verified live: launched bambu, observed
       `[preload] resized dialog 480x480→480x480 at (96,464)` on the
       gvfs permission popup (centered, fits) and the main bambu
       window left untouched at 668×1382 (already fits the workarea).
       No fight with openbox's own placement logic.
-    - [ ] The "permission denied on /" popup remains informational —
+    - [x] The "permission denied on /" popup remains informational —
       we surface it at a visible center position rather than tucked
       under the main frame; the underlying gvfs error itself is from
       Android selinux blocking app-process root reads and is not
