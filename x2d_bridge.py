@@ -383,9 +383,9 @@ def _serve_http(bind: str,
                 max_staleness: float = 30.0) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    host, _, port = bind.rpartition(":")
-    host = host or "127.0.0.1"
-    port = int(port)
+    host_part, _, port_part = bind.rpartition(":")
+    host = host_part or "127.0.0.1"
+    port = int(port_part)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):  # silence default access log
@@ -868,9 +868,7 @@ class _ConnHandler:
             sess = self.server._printers.get(dev_id)
             if sess is not None:
                 if self._state_cb:
-                    sess.remove_listener(
-                        lambda p, dev=dev_id: self._emit_local_message(dev, p)
-                    )
+                    sess.remove_listener(self._state_cb)
                 if self._connect_cb:
                     sess.remove_connect_listener(self._connect_cb)
                 sess.release()
@@ -929,8 +927,8 @@ def _op_connect_printer(h: _ConnHandler, args: dict) -> dict:
     sess = h.server.get_or_open_printer(dev_id, dev_ip, code)
     h._subscribed.add(dev_id)
 
-    def listener(p: str, dev: str = dev_id) -> None:
-        h._emit_local_message(dev, p)
+    def listener(p: dict) -> None:
+        h._emit_local_message(dev_id, p)
 
     sess.add_listener(listener)
     sess.add_connect_listener(h._emit_local_connect)
