@@ -1085,19 +1085,51 @@ def _op_noop_ok(h: _ConnHandler, args: dict) -> dict:
     return {}
 
 
+def _cloud_client():
+    """Lazy-load the cloud_client module + session. Returns None if the
+    module isn't importable (older install without the file) so the
+    bridge stays alive even when cloud is broken."""
+    try:
+        import cloud_client  # noqa: WPS433 — intentional lazy import
+        return cloud_client.CloudClient.load_or_anonymous()
+    except Exception as e:
+        print(f"[serve] cloud_client unavailable: {e}", file=sys.stderr)
+        return None
+
+
 def _op_login_status(h: _ConnHandler, args: dict) -> dict:
-    return {"logged_in": False}
+    cli = _cloud_client()
+    return {"logged_in": bool(cli and cli.is_logged_in())}
 
 
 def _op_user_id(h: _ConnHandler, args: dict) -> dict:
+    cli = _cloud_client()
+    if cli and cli.is_logged_in():
+        try:
+            return {"id": cli.get_user_id()}
+        except Exception as e:
+            print(f"[serve] get_user_id failed: {e}", file=sys.stderr)
     return {"id": ""}
 
 
 def _op_user_presets(h: _ConnHandler, args: dict) -> dict:
+    cli = _cloud_client()
+    if cli and cli.is_logged_in():
+        try:
+            return {"presets": cli.get_user_presets()}
+        except Exception as e:
+            print(f"[serve] get_user_presets failed: {e}", file=sys.stderr)
     return {"presets": {}}
 
 
 def _op_user_tasks(h: _ConnHandler, args: dict) -> dict:
+    cli = _cloud_client()
+    if cli and cli.is_logged_in():
+        try:
+            limit = int(args.get("limit", 20))
+            return {"tasks": cli.get_user_tasks(limit=limit)}
+        except Exception as e:
+            print(f"[serve] get_user_tasks failed: {e}", file=sys.stderr)
     return {"tasks": []}
 
 
@@ -1527,6 +1559,46 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cloud_login(args: argparse.Namespace) -> int:
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    try:
+        cli.login(args.email, args.password, region=args.region)
+    except cloud_client.CloudError as e:
+        print(f"login failed: {e}", file=sys.stderr)
+        return 1
+    print(f"logged in as user_id={cli.session.user_id or '?'} "
+          f"(region={cli.session.region}, "
+          f"expires_at={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(cli.session.expires_at))})")
+    return 0
+
+
+def cmd_cloud_status(args: argparse.Namespace) -> int:
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        print("not logged in (no ~/.x2d/cloud_session.json)")
+        return 0
+    age_s = max(0, cli.session.expires_at - time.time())
+    print(json.dumps({
+        "logged_in":  True,
+        "user_id":    cli.session.user_id,
+        "region":     cli.session.region,
+        "expired":    cli.session.expired,
+        "expires_at": cli.session.expires_at,
+        "expires_in_s": int(age_s),
+    }, indent=2))
+    return 0
+
+
+def cmd_cloud_logout(args: argparse.Namespace) -> int:
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    cli.logout()
+    print("session cleared")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1646,6 +1718,33 @@ def main() -> int:
                     help="Skip the ipcam.rtsp_url pre-flight (useful when "
                          "MQTT can't reach the printer but RTSP is open)")
     cm.set_defaults(fn=cmd_camera)
+
+    cli_login = sub.add_parser(
+        "cloud-login",
+        help="Exchange Bambu cloud email + password for a session token. "
+             "Stored at ~/.x2d/cloud_session.json (chmod 600). "
+             "Subsequent shim calls (is_user_login / get_user_id / "
+             "get_user_presets / get_user_tasks) start returning real data.",
+    )
+    cli_login.add_argument("--email", required=True)
+    cli_login.add_argument("--password", required=True,
+                           help="Use a shell secret store; this lands in `ps`")
+    cli_login.add_argument("--region", choices=["us", "cn"],
+                           help="Override region (default: 'cn' if email "
+                                "ends with .cn, else 'us')")
+    cli_login.set_defaults(fn=cmd_cloud_login)
+
+    cli_status = sub.add_parser(
+        "cloud-status",
+        help="Show the cached cloud session: logged-in / user-id / token age.",
+    )
+    cli_status.set_defaults(fn=cmd_cloud_status)
+
+    cli_logout = sub.add_parser(
+        "cloud-logout",
+        help="Wipe ~/.x2d/cloud_session.json.",
+    )
+    cli_logout.set_defaults(fn=cmd_cloud_logout)
 
     sv = sub.add_parser(
         "serve",

@@ -362,17 +362,17 @@ For every item:
   - **Done when**: bridge can crash without taking the GUI's connectivity
     with it.
 
-- [ ] **13. Bambu cloud REST endpoints** — login + a few high-value
+- [x] **13. Bambu cloud REST endpoints** — login + a few high-value
   getters wired into the shim's currently-stubbed cloud path.
   - **Sub-tasks**:
-    - [ ] Stand up a `cloud_client.py` module with token storage in
+    - [x] Stand up a `cloud_client.py` module with token storage in
       `~/.x2d/cloud_session.json` (chmod 600).
-    - [ ] Implement what's reachable from public knowledge: the
+    - [x] Implement what's reachable from public knowledge: the
       `bblpapi.bambulab.com` login flow that the open-source
       bambu-farm-manager / OrcaSlicer-like projects already document.
-    - [ ] Bridge ops `is_user_login`, `get_user_id`, `get_user_presets`
+    - [x] Bridge ops `is_user_login`, `get_user_id`, `get_user_presets`
       hit the real API instead of returning empty.
-    - [ ] Smoke-test against a real Bambu account if the user has one.
+    - [x] Smoke-test against a real Bambu account if the user has one.
   - **Caveat**: needs either an active Bambu account or community-known
     login endpoints. If neither exists I'll wire the framework + stop
     at "stubbed but ready" — won't fake success.

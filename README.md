@@ -264,6 +264,29 @@ Pre-flight checks `ipcam.rtsp_url` via signed MQTT and bails with a
 clear hint if liveview is still disabled. Pass `--skip-check` to bypass
 (useful when MQTT is flaky but RTSP is open).
 
+### Bambu cloud login (optional)
+
+The bridge can talk to the Bambu Lab cloud REST API to populate the
+GUI surfaces that the shim was previously stubbing — `is_user_login`,
+`get_user_id`, `get_user_presets`, `get_user_tasks`. Without a cloud
+session, those calls keep returning empty (LAN-only flow is unaffected).
+
+```
+x2d_bridge.py cloud-login --email me@example.com --password '…'
+x2d_bridge.py cloud-status     # confirms session, expiry, region
+x2d_bridge.py cloud-logout     # wipes ~/.x2d/cloud_session.json
+```
+
+Tokens land at `~/.x2d/cloud_session.json` (chmod 600). The bridge
+auto-refreshes the access token when it's within 5 min of expiry.
+Region is auto-detected from the email TLD (`.cn` → CN, else US),
+override with `--region`.
+
+This module hits the same endpoints the open-source community already
+documented (`pybambu`, `bambu-farm-manager`, `OrcaSlicer`). Bambu has
+no published SDK — if they rotate URLs, this module needs to rotate
+in lockstep with the upstream consumers.
+
 ## What's broken on Termux without these patches
 
 | Symptom | Root cause | Patch |
