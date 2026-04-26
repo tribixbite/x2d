@@ -334,3 +334,145 @@ For every item:
       runs to completion in dry-run.
   - **Done when**: a fresh Termux session can `curl … | bash` and end up
     with a working GUI launch in one command.
+
+## Round 2 — UX gaps + hardening (items 11-20)
+
+- [ ] **11. Pre-seed a Bambu vendor preset in install.sh** so the Device
+  tab works on first run.
+  - **Sub-tasks**:
+    - [ ] Drop `BBL.json` (Bambu vendor profile) + a single representative
+      printer preset (X1C 0.4 nozzle is a safe default — Device tab gates
+      on `is_bbl_vendor_preset`, not on the specific model) into
+      `~/.config/BambuStudioInternal/system/`.
+    - [ ] Set `presets.printer` in `BambuStudio.conf` to the seeded
+      preset name so the dropdown lands on it on first run.
+    - [ ] Verify on a clean config dir: launch bambu, switch to Device
+      tab, confirm MonitorPanel shows (not `missing_connection.html`).
+  - **Done when**: brand-new install → Device tab is the agent-driven
+    monitor view, not the OctoPrint-style placeholder.
+
+- [ ] **12. Auto-restart `x2d_bridge serve` on crash** in `run_gui.sh`.
+  - **Sub-tasks**:
+    - [ ] Replace the one-shot bridge spawn with a watchdog loop that
+      respawns within 5s with exponential backoff capped at 30s.
+    - [ ] Stderr → rotating log at `~/.x2d/bridge.log` (size cap, 3
+      generations).
+    - [ ] Integration test: kill the bridge mid-GUI session, observe it
+      relaunches and the shim's BridgeClient reconnects.
+  - **Done when**: bridge can crash without taking the GUI's connectivity
+    with it.
+
+- [ ] **13. Bambu cloud REST endpoints** — login + a few high-value
+  getters wired into the shim's currently-stubbed cloud path.
+  - **Sub-tasks**:
+    - [ ] Stand up a `cloud_client.py` module with token storage in
+      `~/.x2d/cloud_session.json` (chmod 600).
+    - [ ] Implement what's reachable from public knowledge: the
+      `bblpapi.bambulab.com` login flow that the open-source
+      bambu-farm-manager / OrcaSlicer-like projects already document.
+    - [ ] Bridge ops `is_user_login`, `get_user_id`, `get_user_presets`
+      hit the real API instead of returning empty.
+    - [ ] Smoke-test against a real Bambu account if the user has one.
+  - **Caveat**: needs either an active Bambu account or community-known
+    login endpoints. If neither exists I'll wire the framework + stop
+    at "stubbed but ready" — won't fake success.
+  - **Done when**: with a logged-in session, the GUI's user-account
+    dropdown shows the user's name.
+
+- [ ] **14. Bearer-token auth + bind-host flag** for daemon HTTP.
+  - **Sub-tasks**:
+    - [ ] `--auth-token TOKEN` and `--bind HOST:PORT` (already partly
+      there for `daemon`; extend to `camera`).
+    - [ ] Handler returns `401 Unauthorized` with `WWW-Authenticate:
+      Bearer` if the token is wrong/missing AND the bind host isn't
+      loopback.
+    - [ ] Loopback bind (`127.0.0.1`) keeps the no-auth shortcut so
+      local scripts don't break.
+    - [ ] README docs the LAN-exposure recipe with auth.
+  - **Done when**: `daemon --bind 0.0.0.0:8765 --auth-token xyz` rejects
+    `curl http://<phone-ip>:8765/state` without `Authorization: Bearer xyz`.
+
+- [ ] **15. Decode the LVL_Local TCP/6000 chamber-cam protocol.**
+  - **Sub-tasks**:
+    - [ ] Capture the printer's TCP/6000 stream while the official Bambu
+      Handy / Studio app is connected (needs a real desktop on the same
+      LAN to run tcpdump).
+    - [ ] Reverse the framing (handshake, frame headers, JPEG/H264
+      payload).
+    - [ ] Implement a decoder in `runtime/network_shim/lvl_local.py`.
+    - [ ] Hook `x2d_bridge.py camera --proto local` so chamber-cam works
+      WITHOUT the user having to flip LAN-mode liveview.
+  - **Caveat**: this protocol is closed-source and requires a packet
+    capture I can't generate from this Termux device alone. I'll
+    document everything I can extract from the existing
+    `libBambuSource.so` symbol table and stop where the rabbit hole
+    needs network capture.
+  - **Done when**: chamber stream works against an X2D with `rtsp_url
+    == "disable"`.
+
+- [ ] **16. Local filament-profile YAML** as the source for
+  `bambu_network_get_user_presets`, so the AMS spool dropdown isn't
+  empty when the user isn't logged into the cloud.
+  - **Sub-tasks**:
+    - [ ] Curate ~20 common filaments (BBL PLA Basic + Silk + PETG-HF +
+      ABS, plus generic open-vendor PLA/PETG profiles) into
+      `runtime/network_shim/data/filaments.yaml`.
+    - [ ] Bridge `_op_user_presets` reads the YAML and returns the shape
+      `Slic3r::PresetCollection::load_user_presets` expects.
+    - [ ] Verify in GUI: AMS slot 1's filament dropdown now lists the
+      curated set even with no cloud login.
+  - **Done when**: `~/.config/BambuStudioInternal/user/` populates with
+    the curated presets after first launch.
+
+- [ ] **17. Auto-pop Bambu preset on first SSDP NOTIFY.**
+  - **Sub-tasks**:
+    - [ ] Bridge tracks "first device alive seen" per session.
+    - [ ] On that event, bridge calls `set_user_selected_machine` AND
+      writes `presets.printer = "<seeded-bambu-preset>"` to
+      AppConfig.conf.
+    - [ ] GUI picks up the preset switch (may need a reload event —
+      verify whether AppConfig is hot-reloaded or only on next launch).
+    - [ ] If hot-reload doesn't work, fall back to surfacing a banner
+      in the Prepare panel: "X2D detected — switch printer preset?"
+  - **Done when**: fresh launch + SSDP detection → user sees the Device
+    tab populate without manually picking a preset.
+
+- [ ] **18. Replace `patch_bambu_skip_wizard.py` binary patch** with the
+  LD_PRELOAD shim that's already exporting
+  `_ZN6Slic3r3GUI7GUI_App21config_wizard_startupEv`.
+  - **Sub-tasks**:
+    - [ ] Verify the symbol IS being intercepted (write a quick objdump
+      + LD_DEBUG=symbols probe).
+    - [ ] If yes: remove the binary-patch invocation from `install.sh`
+      and `run_gui.sh`.
+    - [ ] If the override isn't reaching wx — debug why and either add
+      a constructor-time hook or keep the binary patch as fallback,
+      but log the discrepancy.
+    - [ ] Live-test: install fresh binary, no binary patch, launch →
+      no first-run wizard.
+  - **Done when**: binary-offset script is gone from the install path
+    AND the wizard is still skipped.
+
+- [ ] **19. Persist `last_message_ts` to disk** so `/healthz` after a
+  daemon restart reports the actual last-push age, not "infinity".
+  - **Sub-tasks**:
+    - [ ] On each MQTT push, atomically rewrite `~/.x2d/last_msg_ts`
+      with the timestamp.
+    - [ ] On daemon start, read it back as the initial value.
+    - [ ] /healthz immediately reports a meaningful age post-restart.
+    - [ ] Test: kill+restart daemon, hit /healthz before any new push,
+      verify age is ~uptime not "0".
+  - **Done when**: post-restart /healthz behavior matches a long-running
+    daemon (not always-503 for the first 30s).
+
+- [ ] **20. Camera HLS endpoint** alongside the existing MJPEG.
+  - **Sub-tasks**:
+    - [ ] ffmpeg pump grows a second output (`-f hls -hls_time 2
+      -hls_list_size 6`) to a tempdir.
+    - [ ] HTTP server adds routes: `/cam.m3u8` returns the playlist,
+      `/cam-N.ts` returns segments. Cleanup deletes old segments.
+    - [ ] Test `<video src="http://127.0.0.1:8766/cam.m3u8">` plays in
+      a mobile browser AND `curl /cam.m3u8` returns the manifest.
+    - [ ] README documents the new endpoint alongside MJPEG.
+  - **Done when**: HLS playback works end-to-end in a mobile browser
+    and survives a 5-min sustained stream.
