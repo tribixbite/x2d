@@ -110,25 +110,25 @@ For every item:
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.
 
-- [ ] **2. Print-control commands in `x2d_bridge`.** Added `pause`, `resume`,
+- [x] **2. Print-control commands in `x2d_bridge`.** Added `pause`, `resume`,
   `stop`, `gcode`, `home`, `level`, `set-temp {bed,nozzle,chamber}`,
   `chamber-light {on,off,flashing}`, `ams-unload`, `ams-load`, `jog`.
   Each is one signed MQTT publish.
   - **Sub-tasks**:
-    - [ ] Reverse-engineered every command's payload from
+    - [x] Reverse-engineered every command's payload from
       `bs-bionic/src/slic3r/GUI/DeviceManager.cpp::MachineObject::command_*`
       and `bs-bionic/src/slic3r/GUI/DeviceCore/DevLampCtrl.cpp`. Mapped
       pause / resume / stop / set_bed_temp / set_nozzle_temp / ams_change_filament /
       ledctrl / gcode_line; left chamber-temp as gcode `M141 S<C>`
       because no MQTT verb exists in the host source.
-    - [ ] Implemented in `x2d_bridge.py`. Shared `_print_cmd` /
+    - [x] Implemented in `x2d_bridge.py`. Shared `_print_cmd` /
       `_system_cmd` payload helpers + `_publish_one` connect/send/disconnect
       runner. `_next_seq()` reused so sequence_id is monotonic across
       every published frame.
-    - [ ] Smoke-tested `chamber-light flashing`, `chamber-light on` and
+    - [x] Smoke-tested `chamber-light flashing`, `chamber-light on` and
       `gcode "M115"` against a real X2D — every publish ACKed, chamber
       light visibly toggled.
-    - [ ] Added usage examples to README under "Print-control commands".
+    - [x] Added usage examples to README under "Print-control commands".
   - **Done when**: every command verifiably changes printer state, idle or
     mid-print as appropriate.
 
