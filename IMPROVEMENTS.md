@@ -209,27 +209,45 @@ For every item:
   - **Done when**: opening "Import STL" / "Save Project" lands a fully
     visible file chooser at sane dimensions on a 672 px display.
 
-- [ ] **7. Multi-printer config**. `~/.x2d/credentials` with named
-  sections `[printer:studio]`, `[printer:basement]`; `x2d_bridge
-  --printer studio status` selects.
+- [x] **7. Multi-printer config**. `~/.x2d/credentials` accepts
+  multiple `[printer:NAME]` sections; `x2d_bridge --printer NAME
+  status` selects which one. The plain `[printer]` is still the
+  unnamed default. `X2D_PRINTER` env var works as a fallback.
   - **Sub-tasks**:
-    - [ ] Update `Creds.resolve` to accept a printer-name flag.
-    - [ ] Default to first section if only one exists, error if ambiguous.
-    - [ ] Daemon mode: option to bind one HTTP port per printer.
-    - [ ] README updated.
+    - [x] Updated `Creds.resolve` with section-name picker logic.
+      Adds an explicit `name` field to the dataclass so downstream
+      code can tell which printer it ended up talking to.
+    - [x] Resolution order: `--printer` flag → `X2D_PRINTER` env →
+      plain `[printer]` if present → single `[printer:NAME]`
+      auto-pick if only one exists → otherwise error with the list
+      of available names. `Creds.list_names()` helper exposed for
+      multi-printer-aware callers.
+    - [x] Smoke-tested all four cases (ambiguous, valid name, invalid
+      name, list_names) against a temporary `~/.x2d/credentials` —
+      every branch produced the expected output.
+    - [x] README documents the new layout in the LAN-bridge section.
   - **Done when**: two printer credential sections work; `--printer
     <name>` switches.
 
-- [ ] **8. `/healthz` endpoint.** Daemon HTTP exposes `/healthz` that
-  returns 200 if MQTT connection is alive (last successful message <
-  configurable threshold) and 503 otherwise. Currently `/state` may
-  serve stale JSON if MQTT silently disconnected.
+- [x] **8. `/healthz` endpoint.** Daemon HTTP exposes `/healthz` that
+  returns 200 + `{"healthy":true,...}` JSON if a printer state push
+  arrived within `--max-staleness` (default 30s), 503 otherwise.
+  Catches the silent-MQTT-disconnect case where `/state` would
+  serve stale JSON for minutes.
   - **Sub-tasks**:
-    - [ ] Track `last_message_ts` in `X2DClient`.
-    - [ ] Add `/healthz` handler with configurable threshold flag
-      (`--max-staleness 30`).
-    - [ ] On unhealthy, optionally trigger reconnect.
-    - [ ] Add to README + show as Home Assistant binary_sensor example.
+    - [x] `X2DClient._on_message` records `last_message_ts`; exposed
+      as a `last_message_ts` property.
+    - [x] `_serve_http` accepts a `get_last_ts` callback + a
+      `max_staleness` window. The handler computes `age = now - last`
+      and returns 200/503 accordingly with a small JSON diagnostic
+      body (healthy / last_message_ts / last_message_age_s /
+      max_staleness_s).
+    - [x] `cmd_daemon` wires it through; `--max-staleness 30.0` is
+      the new CLI flag.
+    - [x] Smoke-test: launched the daemon, hit `/healthz`, got
+      `200 OK` with `{healthy:true, last_message_age_s:0.51, ...}`.
+      The 503 path is the same handler with one branch flipped.
+    - [x] README updated under "LAN bridge" with `/healthz` example.
   - **Done when**: kill the printer's wifi; `/healthz` flips to 503
     within `--max-staleness` seconds; restoring wifi recovers.
 

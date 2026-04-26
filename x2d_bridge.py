@@ -84,6 +84,25 @@ class Creds:
     ip: str
     code: str
     serial: str
+    name: str = ""   # which [printer:NAME] section we came from (if any)
+
+    @staticmethod
+    def list_names(ini_path: Path | None = None) -> list[str]:
+        """Return all `[printer:NAME]` section names in the creds file,
+        in declaration order. The plain `[printer]` is reported as ''."""
+        if ini_path is None:
+            ini_path = Path.home() / ".x2d" / "credentials"
+        if not ini_path.exists():
+            return []
+        cp = configparser.ConfigParser()
+        cp.read(ini_path)
+        names: list[str] = []
+        for sec in cp.sections():
+            if sec == "printer":
+                names.append("")
+            elif sec.startswith("printer:"):
+                names.append(sec.split(":", 1)[1])
+        return names
 
     @classmethod
     def resolve(cls, args: argparse.Namespace) -> "Creds":
@@ -92,14 +111,38 @@ class Creds:
         env_serial = os.environ.get("X2D_SERIAL", "")
 
         ini_ip = ini_code = ini_serial = ""
+        chosen_name = ""
         ini_path = Path.home() / ".x2d" / "credentials"
         if ini_path.exists():
             cp = configparser.ConfigParser()
             cp.read(ini_path)
-            if cp.has_section("printer"):
-                ini_ip = cp.get("printer", "ip", fallback="")
-                ini_code = cp.get("printer", "code", fallback="")
-                ini_serial = cp.get("printer", "serial", fallback="")
+            requested = getattr(args, "printer", None) or os.environ.get("X2D_PRINTER", "")
+            named_sections = [s for s in cp.sections() if s.startswith("printer:")]
+            if requested:
+                target = f"printer:{requested}"
+                if not cp.has_section(target):
+                    sys.exit(
+                        f"no [{target}] section in {ini_path}.\n"
+                        f"available: {', '.join(named_sections) or '(none)'}"
+                    )
+                section = target
+                chosen_name = requested
+            elif cp.has_section("printer"):
+                section = "printer"
+            elif len(named_sections) == 1:
+                section = named_sections[0]
+                chosen_name = section.split(":", 1)[1]
+            elif len(named_sections) > 1:
+                sys.exit(
+                    "multiple [printer:NAME] sections found and no --printer/X2D_PRINTER set; "
+                    f"choose one of: {', '.join(s.split(':',1)[1] for s in named_sections)}"
+                )
+            else:
+                section = "printer"  # will fall through to "missing" below
+            if cp.has_section(section):
+                ini_ip = cp.get(section, "ip", fallback="")
+                ini_code = cp.get(section, "code", fallback="")
+                ini_serial = cp.get(section, "serial", fallback="")
 
         ip = args.ip or env_ip or ini_ip
         code = args.code or env_code or ini_code
@@ -109,9 +152,13 @@ class Creds:
                 "credentials missing — provide --ip --code --serial, or set\n"
                 "  X2D_IP / X2D_CODE / X2D_SERIAL env vars, or write\n"
                 "  ~/.x2d/credentials\n\n"
-                "  [printer]\n  ip = 192.168.x.y\n  code = 12345678\n  serial = 03ABC..."
+                "  # default printer\n"
+                "  [printer]\n  ip = 192.168.x.y\n  code = 12345678\n  serial = 03ABC...\n"
+                "\n"
+                "  # OR multiple printers, selected via --printer NAME or X2D_PRINTER\n"
+                "  [printer:studio]\n  ip = …\n  code = …\n  serial = …\n"
             )
-        return cls(ip=ip, code=code, serial=serial)
+        return cls(ip=ip, code=code, serial=serial, name=chosen_name)
 
 
 # ---------------------------------------------------------------------------
@@ -196,12 +243,20 @@ class X2DClient:
         except (ValueError, UnicodeDecodeError):
             return
         self._latest_state = payload
+        self._last_message_ts = time.time()
         self._got_state.set()
         if self.on_state:
             try:
                 self.on_state(payload)
             except Exception as e:  # don't kill the listener loop
                 print(f"[x2d-bridge] on_state callback raised: {e}", file=sys.stderr)
+
+    @property
+    def last_message_ts(self) -> float:
+        """Wall-clock time of the most recent state push from the
+        printer, or 0.0 if none received yet. Used by the daemon's
+        /healthz endpoint to flag a silent disconnect."""
+        return getattr(self, "_last_message_ts", 0.0)
 
     # --- public API -------------------------------------------------------
 
@@ -322,7 +377,10 @@ def start_print(client: X2DClient, gcode_filename: str, *,
 # Optional HTTP status endpoint (so other tools can poll a JSON URL)
 # ---------------------------------------------------------------------------
 
-def _serve_http(bind: str, get_state: Callable[[], dict | None]) -> None:
+def _serve_http(bind: str,
+                get_state: Callable[[], dict | None],
+                get_last_ts: Callable[[], float] | None = None,
+                max_staleness: float = 30.0) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     host, _, port = bind.rpartition(":")
@@ -342,12 +400,33 @@ def _serve_http(bind: str, get_state: Callable[[], dict | None]) -> None:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif self.path == "/healthz":
+                # 200 if we've heard from the printer recently;
+                # 503 if MQTT silently disconnected. Used as a Home
+                # Assistant binary_sensor or a uptime-monitor poll
+                # target. JSON body for diagnostics.
+                last = get_last_ts() if get_last_ts else 0.0
+                age = time.time() - last if last else float("inf")
+                healthy = age <= max_staleness
+                payload = {
+                    "healthy":           healthy,
+                    "last_message_ts":   last,
+                    "last_message_age_s": None if last == 0.0 else round(age, 2),
+                    "max_staleness_s":   max_staleness,
+                }
+                body = json.dumps(payload, indent=2).encode()
+                self.send_response(200 if healthy else 503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(404)
                 self.end_headers()
 
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"[x2d-bridge] HTTP listening on http://{host}:{port}/state",
+    print(f"[x2d-bridge] HTTP listening on http://{host}:{port}/state "
+          f"(+ /healthz, max-staleness {max_staleness}s)",
           file=sys.stderr)
     server.serve_forever()
 
@@ -1263,7 +1342,9 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     _safe_pushall()
 
     if args.http:
-        Thread(target=_serve_http, args=(args.http, lambda: latest_state),
+        Thread(target=_serve_http,
+               args=(args.http, lambda: latest_state,
+                     lambda: cli.last_message_ts, float(args.max_staleness)),
                daemon=True).start()
 
     period = max(1, int(args.interval))
@@ -1293,6 +1374,10 @@ def main() -> int:
     p.add_argument("--ip", help="Printer LAN IP (overrides env / file)")
     p.add_argument("--code", help="Printer 8-char access code (overrides env / file)")
     p.add_argument("--serial", help="Printer serial (overrides env / file)")
+    p.add_argument("--printer",
+                   help="Pick a [printer:NAME] section from ~/.x2d/credentials. "
+                        "Required when more than one named section exists and "
+                        "no plain [printer] is present. Overrides $X2D_PRINTER.")
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -1329,6 +1414,9 @@ def main() -> int:
                    help="Bind addr for status HTTP server, e.g. ':8765' or '127.0.0.1:8765'")
     d.add_argument("--quiet", action="store_true",
                    help="Only emit on the HTTP endpoint, not stdout")
+    d.add_argument("--max-staleness", type=float, default=30.0,
+                   help="Seconds since last printer state push beyond which "
+                        "/healthz returns 503 (default 30)")
     d.set_defaults(fn=cmd_daemon)
 
     # ----- print-control verbs -----------------------------------------

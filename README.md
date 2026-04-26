@@ -141,18 +141,36 @@ flow is just: install the .so once, then `./run_gui.sh`.
 
 ## Using the LAN bridge (`x2d_bridge.py`)
 
-Save credentials once:
+Save credentials once. Either a single `[printer]` section (the
+default, used when no `--printer NAME` is passed) or as many named
+`[printer:NAME]` sections as you want:
 
 ```
 mkdir -p ~/.x2d && chmod 700 ~/.x2d
 cat > ~/.x2d/credentials <<EOF
+# Single-printer setup:
 [printer]
 ip = 192.168.x.y
 code = <8-char access code from printer screen>
 serial = <printer serial from device sticker>
+
+# OR, multiple named printers:
+[printer:studio]
+ip = 192.168.x.y
+code = …
+serial = …
+
+[printer:basement]
+ip = 10.0.0.50
+code = …
+serial = …
 EOF
 chmod 600 ~/.x2d/credentials
 ```
+
+Pick a named printer with `--printer NAME`, the `X2D_PRINTER` env
+var, or — when only one named section exists and there's no plain
+`[printer]` — automatically.
 
 Then:
 
@@ -165,6 +183,12 @@ x2d_bridge.py print myfile.gcode.3mf --slot 3
 
 # Long-running monitor — polls every 5s, exposes JSON at http://127.0.0.1:8765/state
 x2d_bridge.py daemon --http 127.0.0.1:8765 --quiet
+
+# Same daemon also exposes /healthz for uptime monitoring:
+#   200 + {"healthy": true,  ...} when fresh state arrived recently
+#   503 + {"healthy": false, ...} when MQTT silently disconnected
+# Threshold is configurable via --max-staleness (default 30s).
+curl http://127.0.0.1:8765/healthz
 ```
 
 Credentials can also come from `--ip / --code / --serial` flags or
