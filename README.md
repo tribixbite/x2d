@@ -106,6 +106,37 @@ gcc -fPIC -shared ../runtime/preload_gtkinit.c \
 python3 ../patch_bambu_skip_wizard.py src/bambu-studio
 ```
 
+## libbambu\_networking.so shim — making the GUI talk to LAN printers
+
+The Bambu Network Plug-in `.so` is shipped only for x86\_64 Linux + arm64
+macOS, so on aarch64 Termux the GUI's "Connect / AMS / Print" buttons
+have nothing to dlopen. `runtime/network_shim/` builds a drop-in
+replacement that exports the entire NetworkAgent ABI (103 `bambu_network_*`
+symbols + 21 `ft_*` symbols) and forwards the LAN-relevant calls over a
+Unix-domain socket to a long-running `x2d_bridge.py serve` process.
+Cloud-only entry points return success-with-empty so the GUI's cloud
+panels stay quiet but the LAN flow works end-to-end.
+
+```
+cd runtime/network_shim
+make            # builds libbambu_networking.so + libBambuSource.so
+make install    # → ~/.config/BambuStudioInternal/plugins/
+```
+
+A self-test harness lives at `runtime/network_shim/tests/test_shim_e2e.py`.
+It dlopens the .so, asserts every host-expected symbol is exported, then
+spawns a fresh `x2d_bridge.py serve` and round-trips through the protocol
+against a real X2D (handshake → connect → state event → disconnect):
+
+```
+python3.12 runtime/network_shim/tests/test_shim_e2e.py
+```
+
+Wire format and op set are spec'd in `runtime/network_shim/PROTOCOL.md`.
+The shim spawns `x2d_bridge.py serve` itself if no socket is found at
+`$X2D_BRIDGE_SOCK` (default `~/.x2d/bridge.sock`), so the GUI launch
+flow is just: install the .so once, then `./run_gui.sh`.
+
 ## Using the LAN bridge (`x2d_bridge.py`)
 
 Save credentials once:
@@ -148,7 +179,7 @@ Credentials can also come from `--ip / --code / --serial` flags or
 | Setup Wizard hangs on Bambu cloud calls | wizard tries cloud region/login that times out on Termux | `patch_bambu_skip_wizard.py` (binary patch) |
 | Cancel buttons / AMS spool taps / sidebar buttons silently dropped | custom `Button::mouseReleased` strict bounds check vs. touch-drift | `patches/{Button,AxisCtrlButton,SideButton,TabButton}.cpp.termux.patch` |
 | Maximize button does nothing / window goes off-screen in portrait | termux-x11 has no WM; BBLTopbar relies on `wxFrame::Maximize()`; min-size 1000×600 exceeds portrait width | `patches/BBLTopbar.{cpp,hpp}.termux.patch` |
-| LAN connect / AMS sync / print impossible | Network Plug-in is x86\_64 only | `x2d_bridge.py` |
+| LAN connect / AMS sync / print impossible | Network Plug-in is x86\_64 only | `runtime/network_shim/` (libbambu\_networking.so stub) + `x2d_bridge.py serve` |
 | `mqtt message verify failed` (err\_code 84033543) on every command | Jan-2025+ firmware requires RSA-SHA256 signature in `header` block | `bambu_cert.py` (publicly-leaked Bambu Connect cert) |
 
 ## Provenance

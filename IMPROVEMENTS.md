@@ -30,24 +30,41 @@ For every item:
   real plug-in, so every "Connect / AMS sync / Print" button in the GUI
   actually works.
   - **Sub-tasks**:
-    - [ ] Read NetworkAgent.{hpp,cpp} fully; enumerate every typedef and
-      its calling convention.
-    - [ ] Define the RPC protocol (JSON line-delimited over
+    - [x] Read NetworkAgent.{hpp,cpp} fully; enumerate every typedef and
+      its calling convention. — 105 typedef'd function pointers,
+      `bambu_networking.hpp` for callback signatures + struct layouts.
+    - [x] Define the RPC protocol (JSON line-delimited over
       `~/.x2d/bridge.sock`) and document in `runtime/network_shim/PROTOCOL.md`.
-    - [ ] Add bridge-side: `x2d_bridge.py serve` subcommand that listens
+    - [x] Add bridge-side: `x2d_bridge.py serve` subcommand that listens
       on the socket, dispatches RPCs, emits async events for state pushes.
-    - [ ] Implement the .so in `runtime/network_shim/` (CMake target). Stub
-      every cloud-only entry point with proper return-by-value defaults.
-      Wire LAN entry points to the socket client. Threading: shim owns a
-      worker thread for the socket, marshals callbacks back via
-      `g_idle_add` so they hit the GTK thread.
-    - [ ] BambuStudio plugin discovery: figure out where the plugin path is
-      configured (`AppConfig`? hard-coded? env var?) and either drop the
-      .so at the expected path or set the discovery hint.
-    - [ ] End-to-end test: launch GUI → click "Add Device" / LAN mode →
-      enter creds → confirm device shows up + AMS slot data populates +
-      "Print" button uploads + start succeeds. Document exact click trail
-      and expected screenshots.
+      Op set: hello / get_version / connect_printer / disconnect_printer /
+      send_message_to_printer / start_local_print[_with_record] /
+      start_send_gcode_to_sdcard / subscribe_local + cloud no-op stubs.
+    - [x] Implement the .so in `runtime/network_shim/` (Makefile, since
+      CMake would have pulled in the BambuStudio build tree).
+      `libbambu_networking.so` exports all 103 `bambu_network_*` plus
+      21 `ft_*` symbols. LAN entry points marshal to the socket; cloud
+      ones return success-with-empty. Threading: BridgeClient worker
+      thread reads JSON-line events and dispatches them via the
+      host-registered `QueueOnMainFn` so callbacks land on the GTK
+      main thread.
+    - [x] BambuStudio plugin discovery: data-dir is
+      `~/.config/BambuStudioInternal/` (the `BBL_INTERNAL_TESTING` build
+      we use); plug-ins go in `<data-dir>/plugins/`. Two .so's required:
+      `libbambu_networking.so` (the shim) and `libBambuSource.so` (an
+      empty stub — `get_bambu_source_entry()` only checks the handle is
+      non-null to gate `create_network_agent = true`).
+    - [x] Self-test harness at `runtime/network_shim/tests/test_shim_e2e.py`
+      that dlopens the .so, asserts every host-expected symbol is
+      exported, then exercises the full bridge round-trip against a
+      live X2D (handshake → connect → state event → disconnect).
+      `python3.12 runtime/network_shim/tests/test_shim_e2e.py` →
+      ALL TESTS PASSED on real hardware.
+    - [ ] End-to-end test in the GUI itself: launch BambuStudio under
+      termux-x11 → click "Add Device" / LAN mode → enter creds → confirm
+      device shows up + AMS slot data populates + "Print" button uploads
+      + start succeeds. Document exact click trail and expected screenshots.
+      (Blocked by the user starting termux-x11 manually since I can't.)
   - **Done when**: GUI's Devices tab shows the X2D as connected, AMS spool
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.

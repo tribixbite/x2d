@@ -75,3 +75,7 @@ UNANSWERED_QUESTIONS.md
 !.claude/hooks/
 .claude/hooks/*
 !.claude/hooks/loop-improvements.sh
+
+# network_shim build artefacts
+runtime/network_shim/src/*.o
+runtime/network_shim/*.so

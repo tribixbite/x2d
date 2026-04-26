@@ -392,6 +392,512 @@ def cmd_print(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# `serve` mode — Unix-domain socket server that the libbambu_networking.so
+# shim talks to. See runtime/network_shim/PROTOCOL.md for the wire format.
+#
+# One ServeServer process accepts many shim connections (one per
+# bambu-studio instance). Each connection runs in its own reader thread.
+# Printer-side MQTT clients are shared globally keyed by dev_id, so two
+# shims pointing at the same printer don't double-subscribe.
+# ---------------------------------------------------------------------------
+
+ABI_VERSION = 1
+SHIM_VERSION = "0.1.0"
+
+
+class _OpError(Exception):
+    """Op handler failure — surfaces as `{ok:false, error:{code, message}}`."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class _PrinterSession:
+    """One live MQTT connection to a single printer plus a fan-out of state
+    pushes to every shim that asked for it. Reference-counted so the
+    underlying X2DClient closes only when the last shim disconnects."""
+
+    def __init__(self, dev_id: str, dev_ip: str, code: str):
+        from threading import Lock as _Lock
+        self.dev_id = dev_id
+        self.dev_ip = dev_ip
+        self.code = code
+        self._refcount = 0
+        self._lock = _Lock()
+        self._listeners: list[Callable[[dict], None]] = []
+        self._connect_listeners: list[Callable[[int, str, str], None]] = []
+        self.client = X2DClient(
+            Creds(ip=dev_ip, code=code, serial=dev_id),
+            on_state=self._dispatch_state,
+        )
+
+    def _dispatch_state(self, payload: dict) -> None:
+        with self._lock:
+            listeners = list(self._listeners)
+        for fn in listeners:
+            try:
+                fn(payload)
+            except Exception as e:  # one bad subscriber shouldn't poison others
+                print(f"[serve] state listener raised: {e}", file=sys.stderr)
+
+    def add_listener(self, fn: Callable[[dict], None]) -> None:
+        with self._lock:
+            self._listeners.append(fn)
+
+    def remove_listener(self, fn: Callable[[dict], None]) -> None:
+        with self._lock:
+            try:
+                self._listeners.remove(fn)
+            except ValueError:
+                pass
+
+    def add_connect_listener(self, fn: Callable[[int, str, str], None]) -> None:
+        with self._lock:
+            self._connect_listeners.append(fn)
+
+    def remove_connect_listener(self, fn: Callable[[int, str, str], None]) -> None:
+        with self._lock:
+            try:
+                self._connect_listeners.remove(fn)
+            except ValueError:
+                pass
+
+    def _emit_connect(self, status: int, msg: str = "") -> None:
+        with self._lock:
+            listeners = list(self._connect_listeners)
+        for fn in listeners:
+            try:
+                fn(status, self.dev_id, msg)
+            except Exception as e:
+                print(f"[serve] connect listener raised: {e}", file=sys.stderr)
+
+    def acquire(self) -> None:
+        with self._lock:
+            first = self._refcount == 0
+            self._refcount += 1
+        if first:
+            try:
+                self.client.connect(timeout=8.0)
+                self._emit_connect(0, "connected")  # ConnectStatusOk
+                self.client.publish(
+                    {"pushing": {"sequence_id": _next_seq(), "command": "pushall"}}
+                )
+            except Exception as e:
+                self._emit_connect(1, str(e))  # ConnectStatusFailed
+                raise _OpError(-2, f"connect failed: {e}") from e
+
+    def release(self) -> None:
+        with self._lock:
+            self._refcount -= 1
+            now_zero = self._refcount <= 0
+        if now_zero:
+            try:
+                self.client.disconnect()
+            finally:
+                self._emit_connect(2, "lost")  # ConnectStatusLost
+
+
+class ServeServer:
+    def __init__(self, sock_path: Path):
+        self.sock_path = sock_path
+        self._printers: dict[str, _PrinterSession] = {}
+        self._printers_lock = __import__("threading").Lock()
+        self._stop = Event()
+
+    # --- printer registry ---------------------------------------------
+
+    def get_or_open_printer(self, dev_id: str, dev_ip: str, code: str) -> _PrinterSession:
+        with self._printers_lock:
+            sess = self._printers.get(dev_id)
+            if sess is None:
+                sess = _PrinterSession(dev_id, dev_ip, code)
+                self._printers[dev_id] = sess
+            elif sess.dev_ip != dev_ip or sess.code != code:
+                # IP/code changed under us — close old, open new.
+                try:
+                    sess.client.disconnect()
+                except Exception:
+                    pass
+                sess = _PrinterSession(dev_id, dev_ip, code)
+                self._printers[dev_id] = sess
+        sess.acquire()
+        return sess
+
+    def release_printer(self, dev_id: str) -> None:
+        with self._printers_lock:
+            sess = self._printers.get(dev_id)
+        if sess is not None:
+            sess.release()
+
+    # --- main loop ----------------------------------------------------
+
+    def serve_forever(self) -> int:
+        import socket
+        from threading import Thread as _Thread
+
+        self.sock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.sock_path.unlink()
+        except FileNotFoundError:
+            pass
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(str(self.sock_path))
+        os.chmod(str(self.sock_path), 0o600)
+        srv.listen(8)
+        srv.settimeout(0.5)
+
+        import signal as _signal
+        def _stop_handler(signum, frame):  # noqa: ARG001
+            self._stop.set()
+        _signal.signal(_signal.SIGINT, _stop_handler)
+        _signal.signal(_signal.SIGTERM, _stop_handler)
+
+        print(f"[serve] listening on {self.sock_path}", file=sys.stderr)
+        while not self._stop.is_set():
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._stop.is_set():
+                    break
+                raise
+            handler = _ConnHandler(self, conn)
+            t = _Thread(target=handler.run, name=f"shim-{handler.id}", daemon=True)
+            t.start()
+
+        srv.close()
+        try:
+            self.sock_path.unlink()
+        except FileNotFoundError:
+            pass
+        # Disconnect every active printer cleanly.
+        with self._printers_lock:
+            for sess in self._printers.values():
+                try:
+                    sess.client.disconnect()
+                except Exception:
+                    pass
+        print("[serve] stopped cleanly", file=sys.stderr)
+        return 0
+
+
+_conn_id = 0
+
+
+class _ConnHandler:
+    """One shim connection. Owns its socket; spawns no extra threads."""
+
+    def __init__(self, server: ServeServer, sock):
+        global _conn_id
+        _conn_id += 1
+        self.id = _conn_id
+        self.server = server
+        self.sock = sock
+        self._write_lock = __import__("threading").Lock()
+        self._subscribed: set[str] = set()
+        self._state_cb: Callable[[dict], None] | None = None
+        self._connect_cb: Callable[[int, str, str], None] | None = None
+
+    # --- I/O primitives ----------------------------------------------
+
+    def _send(self, obj: dict) -> None:
+        line = (json.dumps(obj, separators=(",", ":")) + "\n").encode()
+        with self._write_lock:
+            try:
+                self.sock.sendall(line)
+            except (BrokenPipeError, OSError):
+                pass
+
+    def _read_lines(self):
+        buf = b""
+        while True:
+            try:
+                chunk = self.sock.recv(65536)
+            except (ConnectionResetError, OSError):
+                return
+            if not chunk:
+                return
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if line.strip():
+                    yield line
+
+    # --- callbacks injected into _PrinterSession ---------------------
+
+    def _emit_local_message(self, dev_id: str, payload: dict) -> None:
+        self._send({
+            "kind": "evt",
+            "name": "local_message",
+            "data": {
+                "dev_id": dev_id,
+                "msg": json.dumps(payload, separators=(",", ":")),
+            },
+        })
+
+    def _emit_local_connect(self, status: int, dev_id: str, msg: str) -> None:
+        self._send({
+            "kind": "evt",
+            "name": "local_connect",
+            "data": {"status": status, "dev_id": dev_id, "msg": msg},
+        })
+
+    # --- main loop ----------------------------------------------------
+
+    def run(self) -> None:
+        try:
+            for raw in self._read_lines():
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    print(f"[serve] bad json from shim: {e}", file=sys.stderr)
+                    continue
+                if msg.get("kind") != "req":
+                    continue
+                self._handle_request(msg)
+        finally:
+            self._cleanup()
+
+    def _cleanup(self) -> None:
+        # Drop our subscriptions and release each printer ref.
+        for dev_id in list(self._subscribed):
+            sess = self.server._printers.get(dev_id)
+            if sess is not None:
+                if self._state_cb:
+                    sess.remove_listener(
+                        lambda p, dev=dev_id: self._emit_local_message(dev, p)
+                    )
+                if self._connect_cb:
+                    sess.remove_connect_listener(self._connect_cb)
+                sess.release()
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def _handle_request(self, req: dict) -> None:
+        op = req.get("op", "")
+        args = req.get("args") or {}
+        rid = req.get("id")
+        handler = _OPS.get(op)
+        if handler is None:
+            self._send({
+                "kind": "rsp", "id": rid, "ok": False,
+                "error": {"code": -1, "message": f"unknown op: {op}"},
+            })
+            return
+        try:
+            result = handler(self, args)
+            self._send({"kind": "rsp", "id": rid, "ok": True, "result": result})
+        except _OpError as e:
+            self._send({
+                "kind": "rsp", "id": rid, "ok": False,
+                "error": {"code": e.code, "message": str(e)},
+            })
+        except Exception as e:
+            self._send({
+                "kind": "rsp", "id": rid, "ok": False,
+                "error": {"code": -128, "message": f"{type(e).__name__}: {e}"},
+            })
+
+
+# ---------------------------------------------------------------------------
+# Op handlers — small, one per `op` in PROTOCOL.md
+# ---------------------------------------------------------------------------
+
+def _op_hello(h: _ConnHandler, args: dict) -> dict:
+    abi = int(args.get("abi", 0))
+    if abi != ABI_VERSION:
+        raise _OpError(-100, f"abi mismatch: shim {abi}, bridge {ABI_VERSION}")
+    return {"bridge_version": SHIM_VERSION, "abi": ABI_VERSION,
+            "default_printer": None}
+
+
+def _op_connect_printer(h: _ConnHandler, args: dict) -> dict:
+    dev_id = str(args.get("dev_id", ""))
+    dev_ip = str(args.get("dev_ip", ""))
+    code = str(args.get("password", args.get("code", "")))
+    if not (dev_id and dev_ip and code):
+        raise _OpError(-1, "missing dev_id/dev_ip/password")
+    sess = h.server.get_or_open_printer(dev_id, dev_ip, code)
+    h._subscribed.add(dev_id)
+    listener = (lambda p, dev=dev_id: h._emit_local_message(dev, p))
+    sess.add_listener(listener)
+    sess.add_connect_listener(h._emit_local_connect)
+    h._state_cb = listener
+    h._connect_cb = h._emit_local_connect
+    return {}
+
+
+def _op_disconnect_printer(h: _ConnHandler, args: dict) -> dict:
+    for dev_id in list(h._subscribed):
+        sess = h.server._printers.get(dev_id)
+        if sess is not None:
+            if h._state_cb:
+                sess.remove_listener(h._state_cb)
+            if h._connect_cb:
+                sess.remove_connect_listener(h._connect_cb)
+            sess.release()
+        h._subscribed.discard(dev_id)
+    h._state_cb = None
+    h._connect_cb = None
+    return {}
+
+
+def _op_send_message_to_printer(h: _ConnHandler, args: dict) -> dict:
+    dev_id = str(args.get("dev_id", ""))
+    payload_json = args.get("json", "")
+    if not (dev_id and payload_json):
+        raise _OpError(-1, "missing dev_id/json")
+    sess = h.server._printers.get(dev_id)
+    if sess is None:
+        raise _OpError(-1, "printer not connected")
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+    except json.JSONDecodeError as e:
+        raise _OpError(-19, f"invalid json payload: {e}") from e
+    try:
+        sess.client.publish(payload, qos=int(args.get("qos", 1)))
+    except Exception as e:
+        raise _OpError(-4, f"publish failed: {e}") from e
+    return {}
+
+
+def _op_start_local_print(h: _ConnHandler, args: dict) -> dict:
+    dev_id = str(args.get("dev_id", ""))
+    dev_ip = str(args.get("dev_ip", ""))
+    code = str(args.get("password", ""))
+    filename = str(args.get("filename", ""))
+    if not (dev_id and dev_ip and code and filename):
+        raise _OpError(-1, "missing dev_id/dev_ip/password/filename")
+    creds = Creds(ip=dev_ip, code=code, serial=dev_id)
+    local = Path(filename)
+    if not local.is_file():
+        raise _OpError(-14, f"file not found: {filename}")
+    remote = local.name
+    try:
+        upload_file(creds, local, remote_name=remote)
+    except Exception as e:
+        raise _OpError(-20, f"FTPS upload failed: {e}") from e
+    sess = h.server._printers.get(dev_id)
+    if sess is None:
+        # Auto-connect for fire-and-forget print flows.
+        sess = h.server.get_or_open_printer(dev_id, dev_ip, code)
+    ams_mapping_str = args.get("ams_mapping") or "[0]"
+    try:
+        ams_mapping = json.loads(ams_mapping_str) if isinstance(ams_mapping_str, str) else ams_mapping_str
+    except json.JSONDecodeError:
+        ams_mapping = [0]
+    use_ams = bool(args.get("task_use_ams", True))
+    try:
+        start_print(
+            sess.client, remote,
+            use_ams=use_ams,
+            ams_slot=(ams_mapping[0] if ams_mapping else 0),
+            bed_levelling=bool(args.get("task_bed_leveling", True)),
+            flow_cali=bool(args.get("task_flow_cali", False)),
+            timelapse=bool(args.get("task_record_timelapse", False)),
+            vibration_cali=bool(args.get("task_vibration_cali", False)),
+            bed_type=str(args.get("task_bed_type", "textured_plate")),
+        )
+    except Exception as e:
+        raise _OpError(-4030, f"start_print MQTT failed: {e}") from e
+    return {}
+
+
+def _op_start_send_gcode_to_sdcard(h: _ConnHandler, args: dict) -> dict:
+    dev_ip = str(args.get("dev_ip", ""))
+    code = str(args.get("password", ""))
+    filename = str(args.get("filename", ""))
+    if not (dev_ip and code and filename):
+        raise _OpError(-1, "missing dev_ip/password/filename")
+    creds = Creds(ip=dev_ip, code=code, serial=str(args.get("dev_id", "")))
+    local = Path(filename)
+    if not local.is_file():
+        raise _OpError(-14, f"file not found: {filename}")
+    try:
+        upload_file(creds, local, remote_name=local.name)
+    except Exception as e:
+        raise _OpError(-5010, f"FTPS upload failed: {e}") from e
+    return {}
+
+
+def _op_subscribe_local(h: _ConnHandler, args: dict) -> dict:
+    dev_id = str(args.get("dev_id", ""))
+    interval = int(args.get("interval_s", 5))
+    enable = bool(args.get("enable", True))
+    sess = h.server._printers.get(dev_id) if dev_id else None
+    if sess is None:
+        raise _OpError(-1, "printer not connected")
+    if enable:
+        # The X2DClient already listens for state pushes once subscribed
+        # in connect; we just kick a fresh pushall here.
+        try:
+            sess.client.publish(
+                {"pushing": {"sequence_id": _next_seq(),
+                             "command": "pushall"}},
+            )
+        except Exception as e:
+            raise _OpError(-4, f"pushall publish failed: {e}") from e
+    return {"interval_s": interval, "enable": enable}
+
+
+def _op_get_version(h: _ConnHandler, args: dict) -> dict:
+    return {"version": "02.06.00.50"}  # matches BAMBU_NETWORK_AGENT_VERSION
+
+
+def _op_noop_ok(h: _ConnHandler, args: dict) -> dict:
+    """Cloud-only entry points return success-with-empty so the GUI's
+    paint paths don't choke on missing data."""
+    return {}
+
+
+def _op_login_status(h: _ConnHandler, args: dict) -> dict:
+    return {"logged_in": False}
+
+
+def _op_user_id(h: _ConnHandler, args: dict) -> dict:
+    return {"id": ""}
+
+
+def _op_user_presets(h: _ConnHandler, args: dict) -> dict:
+    return {"presets": {}}
+
+
+def _op_user_tasks(h: _ConnHandler, args: dict) -> dict:
+    return {"tasks": []}
+
+
+_OPS: dict[str, Callable[[_ConnHandler, dict], dict]] = {
+    "hello":                       _op_hello,
+    "get_version":                 _op_get_version,
+    "connect_printer":             _op_connect_printer,
+    "disconnect_printer":          _op_disconnect_printer,
+    "send_message_to_printer":     _op_send_message_to_printer,
+    "start_local_print":           _op_start_local_print,
+    "start_local_print_with_record": _op_start_local_print,
+    "start_send_gcode_to_sdcard":  _op_start_send_gcode_to_sdcard,
+    "subscribe_local":             _op_subscribe_local,
+    # cloud / catalog stubs
+    "connect_server":              _op_noop_ok,
+    "is_user_login":               _op_login_status,
+    "get_user_id":                 _op_user_id,
+    "get_user_presets":            _op_user_presets,
+    "get_user_tasks":              _op_user_tasks,
+    "start_print":                 _op_start_local_print,  # cloud → LAN
+}
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    sock_path = Path(args.sock).expanduser()
+    server = ServeServer(sock_path)
+    return server.serve_forever()
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     creds = Creds.resolve(args)
     latest_state: dict | None = None
@@ -481,6 +987,20 @@ def main() -> int:
     d.add_argument("--quiet", action="store_true",
                    help="Only emit on the HTTP endpoint, not stdout")
     d.set_defaults(fn=cmd_daemon)
+
+    sv = sub.add_parser(
+        "serve",
+        help="Run a Unix-socket RPC server for libbambu_networking.so "
+             "(see runtime/network_shim/PROTOCOL.md)",
+    )
+    sv.add_argument(
+        "--sock",
+        default=os.environ.get("X2D_BRIDGE_SOCK",
+                               str(Path.home() / ".x2d" / "bridge.sock")),
+        help="Unix socket path (default $X2D_BRIDGE_SOCK or "
+             "~/.x2d/bridge.sock)",
+    )
+    sv.set_defaults(fn=cmd_serve)
 
     args = p.parse_args()
     return args.fn(args)
