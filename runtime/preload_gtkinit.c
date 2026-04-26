@@ -177,23 +177,30 @@ void _Z10wxOnAssertPKciS0_S0_S0_(const char *f, int l, const char *fn, const cha
 }
 
 /*
- * GUI_App::config_wizard_startup() — force-return false so the WebGuideDialog
- * (Setup Wizard) never opens.
+ * GUI_App::config_wizard_startup() — historical attempt to skip the
+ * Setup Wizard via LD_PRELOAD interposition. KEPT AS A NO-OP MARKER
+ * so anyone reading this file sees the rationale.
  *
- * BambuStudio decides to pop the first-run wizard if either:
- *   - no AppConfig file existed pre-launch, OR
- *   - PresetBundle::PrinterPresetCollection::only_default_printers() returns true
+ * Why LD_PRELOAD can't actually intercept it:
+ *   - It's a non-virtual member function defined in GUI_App.cpp and
+ *     called directly from the same translation unit.
+ *   - BambuStudio is built with default symbol visibility: hidden, so
+ *     the symbol isn't in the binary's .dynsym (`nm -D bambu-studio`
+ *     returns no match).
+ *   - Without a dynsym entry, ld.so doesn't issue a PLT lookup for
+ *     this call — it's a direct relative `bl` instruction baked in at
+ *     link time. LD_PRELOAD interception requires PLT or vtable
+ *     dispatch; neither applies here.
  *
- * The second condition is what we hit even with a hand-crafted AppConfig
- * pre-seeded with `models` + `presets.printer` entries, because the linkage
- * between AppConfig's "models" section and the loaded printer presets is
- * runtime-dependent. Rather than reverse-engineer the exact linkage we just
- * make the startup path say "no wizard needed."
+ * Real mechanism: see patch_bambu_skip_wizard.py — a one-shot binary
+ * patch that overwrites the function's prologue with `mov w0, #0; ret`
+ * (8 bytes). install.sh calls it after unpacking the dist tarball.
+ * The script auto-discovers the offset via byte-signature scan, so
+ * it survives BambuStudio rebuilds without a manual offset bump.
  *
- * Side effect: the user has to pick a printer manually inside the main UI
- * (Filament Settings → Printer) before slicing inside the GUI. The CLI
- * pipeline (resolve_profile.py + bambu-studio --slice) is unaffected since
- * it never reads AppConfig.
+ * If a future BambuStudio refactor turns this into a virtual call or
+ * exports it in dynsym, the symbol below WOULD then start being honoured
+ * — leaving it in the shim is a cheap forward-compat hedge.
  */
 __attribute__((visibility("default")))
 _Bool _ZN6Slic3r3GUI7GUI_App21config_wizard_startupEv(void *self) {

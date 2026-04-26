@@ -437,18 +437,18 @@ For every item:
   - **Done when**: fresh launch + SSDP detection → user sees the Device
     tab populate without manually picking a preset.
 
-- [ ] **18. Replace `patch_bambu_skip_wizard.py` binary patch** with the
+- [x] **18. Replace `patch_bambu_skip_wizard.py` binary patch** with the
   LD_PRELOAD shim that's already exporting
   `_ZN6Slic3r3GUI7GUI_App21config_wizard_startupEv`.
   - **Sub-tasks**:
-    - [ ] Verify the symbol IS being intercepted (write a quick objdump
+    - [x] Verify the symbol IS being intercepted (write a quick objdump
       + LD_DEBUG=symbols probe).
-    - [ ] If yes: remove the binary-patch invocation from `install.sh`
+    - [x] If yes: remove the binary-patch invocation from `install.sh`
       and `run_gui.sh`.
-    - [ ] If the override isn't reaching wx — debug why and either add
+    - [x] If the override isn't reaching wx — debug why and either add
       a constructor-time hook or keep the binary patch as fallback,
       but log the discrepancy.
-    - [ ] Live-test: install fresh binary, no binary patch, launch →
+    - [x] Live-test: install fresh binary, no binary patch, launch →
       no first-run wizard.
   - **Done when**: binary-offset script is gone from the install path
     AND the wizard is still skipped.
