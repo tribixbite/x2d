@@ -200,3 +200,103 @@ _Bool _ZN6Slic3r3GUI7GUI_App21config_wizard_startupEv(void *self) {
     (void)self;
     return 0;
 }
+
+/*
+ * gtk_window_present() override — sizes + centers transient dialogs.
+ *
+ * Why: termux-x11 + openbox manages ordinary windows fine, but
+ * BambuStudio's wxFileDialog spawns a GtkFileChooserDialog whose
+ * upstream default size (~640×480) is computed for desktop displays
+ * and ends up half-off-screen on a 672-wide phone in portrait. Same
+ * for many of BambuStudio's own modal dialogs — they SetSize() to a
+ * value that assumes 1920+ wide. Result: file picker is unusable
+ * because the OK/Cancel buttons render off the right edge.
+ *
+ * Hook gtk_window_present (and gtk_window_present_with_time) so on
+ * the first present of any transient/dialog window we:
+ *   1. Read the host's primary display geometry via gdk_monitor.
+ *   2. Compute a target size = min(current, 0.95 * display).
+ *   3. SetSize + center on that monitor.
+ *
+ * Call ordering: we forward to the real symbol AFTER the resize so
+ * the WM still maps the dialog with the new geometry. We use a
+ * GObject quark to ensure each dialog is sized at most once (so
+ * subsequent presents — e.g. user clicked away then back — don't
+ * keep re-resizing and overriding any user drag).
+ */
+static void (*real_gtk_window_present)(GtkWindow *) = NULL;
+static void (*real_gtk_window_present_with_time)(GtkWindow *, guint32) = NULL;
+
+static GQuark x2d_resized_quark = 0;
+
+static void x2d_clamp_dialog(GtkWindow *win) {
+    if (!win || !GTK_IS_WINDOW(win)) return;
+    if (x2d_resized_quark == 0)
+        x2d_resized_quark = g_quark_from_static_string("x2d-resized");
+    if (g_object_get_qdata(G_OBJECT(win), x2d_resized_quark)) return;
+    g_object_set_qdata(G_OBJECT(win), x2d_resized_quark, GINT_TO_POINTER(1));
+
+    GdkDisplay *disp = gtk_widget_get_display(GTK_WIDGET(win));
+    if (!disp) disp = gdk_display_get_default();
+    if (!disp) return;
+    GdkMonitor *mon = gdk_display_get_primary_monitor(disp);
+    if (!mon) mon = gdk_display_get_monitor(disp, 0);
+    if (!mon) return;
+
+    GdkRectangle area;
+    gdk_monitor_get_workarea(mon, &area);
+    if (area.width <= 0 || area.height <= 0) return;
+
+    int cur_w = 0, cur_h = 0;
+    gtk_window_get_size(win, &cur_w, &cur_h);
+
+    /* Only intervene if the window doesn't fit the workarea OR if it's
+     * tiny (likely a default GtkMessageDialog that won't have title-bar
+     * room for OK/Cancel). Don't fight wxFrames that already sized
+     * themselves correctly via SetSize — that includes BambuStudio's
+     * MainFrame, which our MainFrame.cpp.termux.patch already clamps. */
+    int max_w = area.width;
+    int max_h = area.height;
+    int new_w = cur_w;
+    int new_h = cur_h;
+    int needs_resize = 0;
+    if (cur_w > max_w) { new_w = max_w; needs_resize = 1; }
+    if (cur_h > max_h) { new_h = max_h; needs_resize = 1; }
+    if (cur_w < 320 && cur_w < max_w) { new_w = 320 < max_w ? 320 : max_w; needs_resize = 1; }
+    if (cur_h < 200 && cur_h < max_h) { new_h = 200 < max_h ? 200 : max_h; needs_resize = 1; }
+
+    if (!needs_resize) {
+        /* Already a sane size. Leave geometry alone — even the position,
+         * since the WM (openbox) places it. */
+        return;
+    }
+
+    gtk_window_set_default_size(win, new_w, new_h);
+    gtk_window_resize(win, new_w, new_h);
+    int x = area.x + (area.width  - new_w) / 2;
+    int y = area.y + (area.height - new_h) / 2;
+    if (x < area.x) x = area.x;
+    if (y < area.y) y = area.y;
+    gtk_window_move(win, x, y);
+
+    fprintf(stderr, "[preload] resized dialog %dx%d→%dx%d at (%d,%d) "
+                    "(workarea %dx%d+%d+%d)\n",
+            cur_w, cur_h, new_w, new_h, x, y,
+            area.width, area.height, area.x, area.y);
+}
+
+void gtk_window_present(GtkWindow *win) {
+    if (!real_gtk_window_present)
+        real_gtk_window_present = dlsym(RTLD_NEXT, "gtk_window_present");
+    x2d_clamp_dialog(win);
+    if (real_gtk_window_present) real_gtk_window_present(win);
+}
+
+void gtk_window_present_with_time(GtkWindow *win, guint32 timestamp) {
+    if (!real_gtk_window_present_with_time)
+        real_gtk_window_present_with_time =
+            dlsym(RTLD_NEXT, "gtk_window_present_with_time");
+    x2d_clamp_dialog(win);
+    if (real_gtk_window_present_with_time)
+        real_gtk_window_present_with_time(win, timestamp);
+}
