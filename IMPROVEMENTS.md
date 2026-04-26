@@ -261,15 +261,31 @@ For every item:
   - **Done when**: kill the printer's wifi; `/healthz` flips to 503
     within `--max-staleness` seconds; restoring wifi recovers.
 
-- [ ] **9. Upstream the 4 Button-widget touch-drift patches.** Open a PR
-  on bambulab/BambuStudio with the four `mouseReleased` patches. Touch
-  drift hits any tablet / convertible / touch-screen kiosk, not just
-  Termux.
+- [ ] **9. Upstream the 4 Button-widget touch-drift patches.** PR
+  materials prepared but PR itself NOT yet opened — per the global
+  CLAUDE.md rule "NEVER post comments, replies, or questions on
+  external platforms... without explicit, per-instance approval", the
+  assistant cannot fork bambulab/BambuStudio or open a PR there
+  without you saying "yes, open it" each time.
   - **Sub-tasks**:
-    - [ ] Squash the four patches into a single commit on a branch
-      against upstream `master`.
-    - [ ] PR with rationale + a short reproduction note.
-    - [ ] Link the PR back from `patches/README.md`.
+    - [x] Squashed the four patches into one diff:
+      `upstream-pr/touchscreen-button-fix.patch` (+9, –4 across four
+      files). Cleanly applies against
+      `bambulab/BambuStudio@v02.06.00.51`.
+    - [x] Wrote PR title + body in `upstream-pr/PR_BODY.md` —
+      explains the problem (touch drift between down/up coords),
+      why standard wxButton isn't affected (hit-tests on down),
+      what changes (drop the up-bounds check in four
+      `mouseReleased` overrides), and the trade-off (desktop mouse
+      users lose the "drag off to cancel" gesture, which is rare).
+    - [x] Wrote `upstream-pr/OPEN_PR.sh` that runs the exact
+      `gh repo fork` + branch + commit + push + `gh pr create`
+      sequence. Syntax-clean; documented step-by-step so the
+      content of every gh call is visible before invoking.
+    - [ ] User runs `upstream-pr/OPEN_PR.sh` (or invokes the
+      assistant with explicit per-instance approval to do it).
+    - [ ] Link the live PR URL back from `patches/README.md`
+      after the user opens it.
   - **Done when**: PR opened; no expectation of merge, but link is live.
 
 - [x] **10. One-command installer.** `install.sh` at the repo root.

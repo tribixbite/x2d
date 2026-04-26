@@ -1,0 +1,70 @@
+diff --git a/src/slic3r/GUI/TabButton.cpp b/src/slic3r/GUI/TabButton.cpp
+index d4e22c0..f7bc54e 100644
+--- a/src/slic3r/GUI/TabButton.cpp
++++ b/src/slic3r/GUI/TabButton.cpp
+@@ -219,8 +219,8 @@ void TabButton::mouseReleased(wxMouseEvent &event)
+     if (pressedDown) {
+         pressedDown = false;
+         ReleaseMouse();
+-        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen drift workaround — see Button::mouseReleased.
++        sendButtonEvent();
+     }
+ }
+ 
+diff --git a/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp b/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
+index c8fc6d5..ad77736 100644
+--- a/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
++++ b/src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
+@@ -298,8 +298,11 @@ void AxisCtrlButton::mouseReleased(wxMouseEvent& event)
+     if (pressedDown) {
+         pressedDown = false;
+         ReleaseMouse();
+-        if (wxRect({ 0, 0 }, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen: drop the up-bounds check so taps don't get
++        // silently swallowed by tiny finger drift between down and up. The
++        // active wedge is tracked in current_pos by mouseMove, so the
++        // correct axis still fires.
++        sendButtonEvent();
+     }
+ }
+ 
+diff --git a/src/slic3r/GUI/Widgets/Button.cpp b/src/slic3r/GUI/Widgets/Button.cpp
+index 4d65863..147d2a9 100644
+--- a/src/slic3r/GUI/Widgets/Button.cpp
++++ b/src/slic3r/GUI/Widgets/Button.cpp
+@@ -411,8 +411,15 @@ void Button::mouseReleased(wxMouseEvent& event)
+         pressedDown = false;
+         if (HasCapture())
+             ReleaseMouse();
+-        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen via termux-x11: button-up coords drift several
++        // pixels from button-down. Strict bounds check silently drops touch
++        // clicks on small widgets (Cancel buttons, AMS spool selectors,
++        // SwitchButton, AxisCtrlButton, etc.). Treat any release while
++        // pressedDown as a confirmed click — matches Android-native button
++        // semantics. Mouse users keeping the cursor inside still get the
++        // same behaviour; only difference is dragging far off no longer
++        // cancels (which is uncommon and rarely intentional).
++        sendButtonEvent();
+     }
+ }
+ 
+diff --git a/src/slic3r/GUI/Widgets/SideButton.cpp b/src/slic3r/GUI/Widgets/SideButton.cpp
+index 7db4743..09b9e3c 100644
+--- a/src/slic3r/GUI/Widgets/SideButton.cpp
++++ b/src/slic3r/GUI/Widgets/SideButton.cpp
+@@ -338,8 +338,8 @@ void SideButton::mouseReleased(wxMouseEvent& event)
+ 
+     if (pressedDown) {
+         pressedDown = false;
+-        if (wxRect({0, 0}, GetSize()).Contains(event.GetPosition()))
+-            sendButtonEvent();
++        // Termux/touchscreen drift workaround — see Button::mouseReleased.
++        sendButtonEvent();
+     }
+ }
+ 
