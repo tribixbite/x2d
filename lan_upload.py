@@ -48,7 +48,6 @@ from __future__ import annotations
 import argparse
 import ftplib
 import logging
-import os
 import socket
 import ssl
 import sys

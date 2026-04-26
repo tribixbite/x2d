@@ -53,7 +53,7 @@ import os
 import ssl
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from ftplib import FTP_TLS
 from pathlib import Path
 from threading import Event, Thread
@@ -600,14 +600,17 @@ class ServeServer:
             cache = list(self._ssdp_cache.values())
         # Replay the cache so a fresh shim sees existing devices immediately.
         for parsed in cache:
-            try: fn(parsed)
+            try:
+                fn(parsed)
             except Exception as e:
                 print(f"[serve] ssdp replay raised: {e}", file=sys.stderr)
 
     def remove_ssdp_listener(self, fn: Callable[[dict], None]) -> None:
         with self._ssdp_lock:
-            try: self._ssdp_listeners.remove(fn)
-            except ValueError: pass
+            try:
+                self._ssdp_listeners.remove(fn)
+            except ValueError:
+                pass
 
     def _ensure_ssdp_thread(self) -> None:
         if self._ssdp_thread and self._ssdp_thread.is_alive():
@@ -620,7 +623,8 @@ class ServeServer:
         """Listen for Bambu's multicast NOTIFY broadcasts on UDP 2021
         and convert each into the JSON shape BambuStudio's
         DeviceManager::on_machine_alive expects."""
-        import socket as _socket, struct as _struct
+        import socket as _socket
+        import struct as _struct
         try:
             sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM, _socket.IPPROTO_UDP)
             sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
@@ -648,7 +652,8 @@ class ServeServer:
                 self._ssdp_cache[parsed["dev_id"]] = parsed
                 listeners = list(self._ssdp_listeners)
             for fn in listeners:
-                try: fn(parsed)
+                try:
+                    fn(parsed)
                 except Exception as e:
                     print(f"[serve] ssdp listener raised: {e}", file=sys.stderr)
 
@@ -923,7 +928,10 @@ def _op_connect_printer(h: _ConnHandler, args: dict) -> dict:
         raise _OpError(-1, "missing dev_id/dev_ip/password")
     sess = h.server.get_or_open_printer(dev_id, dev_ip, code)
     h._subscribed.add(dev_id)
-    listener = (lambda p, dev=dev_id: h._emit_local_message(dev, p))
+
+    def listener(p: str, dev: str = dev_id) -> None:
+        h._emit_local_message(dev, p)
+
     sess.add_listener(listener)
     sess.add_connect_listener(h._emit_local_connect)
     h._state_cb = listener
@@ -1334,7 +1342,6 @@ def cmd_camera(args: argparse.Namespace) -> int:
     stop_event = Event()
 
     def ffmpeg_pump():
-        boundary = b"--frame\r\n"
         backoff = 1.0
         while not stop_event.is_set():
             cmd = [
@@ -1375,11 +1382,17 @@ def cmd_camera(args: argparse.Namespace) -> int:
                                 latest_frame["data"] = frame
                                 latest_frame["ts"]   = time.time()
             finally:
-                try: proc.terminate(); proc.wait(timeout=2)
-                except Exception: pass
-                try: proc.kill()
-                except Exception: pass
-            if stop_event.is_set(): break
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if stop_event.is_set():
+                break
             print(f"[camera] reconnecting in {backoff:.1f}s", file=sys.stderr)
             stop_event.wait(backoff)
             backoff = min(backoff * 2, 30.0)
@@ -1422,14 +1435,17 @@ def cmd_camera(args: argparse.Namespace) -> int:
                 with state_lock:
                     frame = latest_frame["data"]
                 if not frame:
-                    self.send_response(503); self.end_headers(); return
+                    self.send_response(503)
+                    self.end_headers()
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(frame)))
                 self.end_headers()
                 self.wfile.write(frame)
             else:
-                self.send_response(404); self.end_headers()
+                self.send_response(404)
+                self.end_headers()
 
     class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         daemon_threads = True

@@ -18,13 +18,15 @@ Usage:
 Modifies the .3mf in-place (safe — writes to a temp file then moves).
 """
 from __future__ import annotations
-import argparse, io, struct, sys, tempfile, zipfile
+import argparse
+import io
+import sys
+import zipfile
 from pathlib import Path
 
 # numpy-stl is pulled in by the user's existing slicer pipeline
 from stl import mesh as stl_mesh  # type: ignore
 from PIL import Image, ImageDraw  # type: ignore
-import numpy as np
 
 
 def render_silhouette(stl_path: Path, size: tuple[int, int]) -> Image.Image:

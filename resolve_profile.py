@@ -14,7 +14,9 @@ Usage:
   # writes a flat JSON with all inherited/included keys merged.
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse
+import json
+import sys
 from pathlib import Path
 
 
