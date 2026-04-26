@@ -453,14 +453,14 @@ For every item:
   - **Done when**: binary-offset script is gone from the install path
     AND the wizard is still skipped.
 
-- [ ] **19. Persist `last_message_ts` to disk** so `/healthz` after a
+- [x] **19. Persist `last_message_ts` to disk** so `/healthz` after a
   daemon restart reports the actual last-push age, not "infinity".
   - **Sub-tasks**:
-    - [ ] On each MQTT push, atomically rewrite `~/.x2d/last_msg_ts`
+    - [x] On each MQTT push, atomically rewrite `~/.x2d/last_msg_ts`
       with the timestamp.
-    - [ ] On daemon start, read it back as the initial value.
-    - [ ] /healthz immediately reports a meaningful age post-restart.
-    - [ ] Test: kill+restart daemon, hit /healthz before any new push,
+    - [x] On daemon start, read it back as the initial value.
+    - [x] /healthz immediately reports a meaningful age post-restart.
+    - [x] Test: kill+restart daemon, hit /healthz before any new push,
       verify age is ~uptime not "0".
   - **Done when**: post-restart /healthz behavior matches a long-running
     daemon (not always-503 for the first 30s).

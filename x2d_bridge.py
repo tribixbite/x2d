@@ -206,6 +206,10 @@ def sign_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 class X2DClient:
     PORT = 8883
+    # Persistent last-message timestamp (item #19). Lets /healthz report
+    # a meaningful age immediately after a daemon restart instead of
+    # always-stale until the first new push arrives.
+    _TS_PATH = Path.home() / ".x2d" / "last_message_ts"
 
     def __init__(self, creds: Creds, on_state: Callable[[dict], None] | None = None):
         self.creds = creds
@@ -213,6 +217,17 @@ class X2DClient:
         self._connected = Event()
         self._got_state = Event()
         self._latest_state: dict | None = None
+        # Restore last-known ts from disk so /healthz works on first
+        # request post-restart. If the file is missing, malformed, or
+        # claims a future time, fall through to "0" (treated as
+        # "no message ever received").
+        self._last_message_ts = 0.0
+        try:
+            ts = float(self._TS_PATH.read_text().strip())
+            if 0 < ts <= time.time():
+                self._last_message_ts = ts
+        except (FileNotFoundError, ValueError, OSError):
+            pass
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -243,7 +258,21 @@ class X2DClient:
         except (ValueError, UnicodeDecodeError):
             return
         self._latest_state = payload
-        self._last_message_ts = time.time()
+        now = time.time()
+        self._last_message_ts = now
+        # Persist atomically (item #19). Cheap — even at 10 Hz this is
+        # a few hundred bytes/s of writeback. Keep the parent dir mode
+        # exclusive (creds live there too).
+        try:
+            self._TS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._TS_PATH.with_suffix(self._TS_PATH.suffix + ".tmp")
+            tmp.write_text(f"{now}\n")
+            os.replace(tmp, self._TS_PATH)
+        except OSError as e:
+            # Don't let a transient FS error kill the listener — log once.
+            if not getattr(self, "_ts_persist_warned", False):
+                print(f"[x2d-bridge] last_msg_ts persist failed: {e}", file=sys.stderr)
+                self._ts_persist_warned = True
         self._got_state.set()
         if self.on_state:
             try:
