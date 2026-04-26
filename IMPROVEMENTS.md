@@ -20,7 +20,7 @@ For every item:
 
 ## Items
 
-- [ ] **1. Stub `libbambu_networking.so` for aarch64.** Native shared
+- [x] **1. Stub `libbambu_networking.so` for aarch64.** Native shared
   library that exports the full NetworkAgent C ABI surface (~100 typedef'd
   function pointers visible in `bs-bionic/src/slic3r/Utils/NetworkAgent.hpp`).
   LAN-relevant entry points (`publish_topic_msg`, `start_print`,
@@ -30,17 +30,17 @@ For every item:
   real plug-in, so every "Connect / AMS sync / Print" button in the GUI
   actually works.
   - **Sub-tasks**:
-    - [ ] Read NetworkAgent.{hpp,cpp} fully; enumerate every typedef and
+    - [x] Read NetworkAgent.{hpp,cpp} fully; enumerate every typedef and
       its calling convention. — 105 typedef'd function pointers,
       `bambu_networking.hpp` for callback signatures + struct layouts.
-    - [ ] Define the RPC protocol (JSON line-delimited over
+    - [x] Define the RPC protocol (JSON line-delimited over
       `~/.x2d/bridge.sock`) and document in `runtime/network_shim/PROTOCOL.md`.
-    - [ ] Add bridge-side: `x2d_bridge.py serve` subcommand that listens
+    - [x] Add bridge-side: `x2d_bridge.py serve` subcommand that listens
       on the socket, dispatches RPCs, emits async events for state pushes.
       Op set: hello / get_version / connect_printer / disconnect_printer /
       send_message_to_printer / start_local_print[_with_record] /
       start_send_gcode_to_sdcard / subscribe_local + cloud no-op stubs.
-    - [ ] Implement the .so in `runtime/network_shim/` (Makefile, since
+    - [x] Implement the .so in `runtime/network_shim/` (Makefile, since
       CMake would have pulled in the BambuStudio build tree).
       `libbambu_networking.so` exports all 103 `bambu_network_*` plus
       21 `ft_*` symbols. LAN entry points marshal to the socket; cloud
@@ -48,26 +48,26 @@ For every item:
       thread reads JSON-line events and dispatches them via the
       host-registered `QueueOnMainFn` so callbacks land on the GTK
       main thread.
-    - [ ] BambuStudio plugin discovery: data-dir is
+    - [x] BambuStudio plugin discovery: data-dir is
       `~/.config/BambuStudioInternal/` (the `BBL_INTERNAL_TESTING` build
       we use); plug-ins go in `<data-dir>/plugins/`. Two .so's required:
       `libbambu_networking.so` (the shim) and `libBambuSource.so` (an
       empty stub — `get_bambu_source_entry()` only checks the handle is
       non-null to gate `create_network_agent = true`).
-    - [ ] Self-test harness at `runtime/network_shim/tests/test_shim_e2e.py`
+    - [x] Self-test harness at `runtime/network_shim/tests/test_shim_e2e.py`
       that dlopens the .so, asserts every host-expected symbol is
       exported, then exercises the full bridge round-trip against a
       live X2D (handshake → connect → state event → disconnect).
       `python3.12 runtime/network_shim/tests/test_shim_e2e.py` →
       ALL TESTS PASSED on real hardware.
-    - [ ] End-to-end load + handshake test in the live GUI under
+    - [x] End-to-end load + handshake test in the live GUI under
       termux-x11. Launched bambu-studio with `run_gui.sh`, openbox
       managed the window, the shim was confirmed mapped into the
       bambu-studio address space at `/proc/<pid>/maps`, the bridge
       subprocess auto-spawned, and the `[x2d-shim]` stderr trace
       shows `create_agent ok` + `bridge handshake ok` followed by a
       successful Device-tab navigation via xdotool click.
-    - [ ] SSDP auto-discovery in the bridge.
+    - [x] SSDP auto-discovery in the bridge.
       Reverse-engineered the X2D's NOTIFY broadcast shape live (UDP
       port 2021, multicast group 239.255.255.250, headers
       `Location: <dev_ip>` + `USN: <serial>` + `DevModel.bambu.com:
@@ -86,20 +86,26 @@ For every item:
       registered `OnMsgArrivedFn` callback. Smoke-tested live: real
       X2D's NOTIFY parsed correctly into `dev_name=x2d dev_type=N6
       dev_ip=192.168.x.y bind=occupied` within 40s of start_discovery.
-    - [ ] Final end-to-end test in the live GUI. Launched bambu under
-      termux-x11 + openbox with the freshly-installed shim. SSDP
-      NOTIFY arrived from the X2D within ~30s (Monitor task observed
-      the multicast). Switched to the Prepare tab; the Printer panel
-      at top of the sidebar now shows a **green WiFi icon** —
-      BambuStudio's `DeviceManager::on_machine_alive` only paints
-      that icon once `localMachineList` has a known-online entry,
-      which only happens via our shim's `set_on_ssdp_msg_fn` →
-      `evt:ssdp_msg` from the bridge. Screenshot:
-      `docs/ssdp-live-proof.png`. The Print-button click on a sliced
-      plate is the same `start_local_print` C-ABI call that
+    - [x] Final end-to-end test in the live GUI on Samsung S25 Ultra
+      (1080×2340, ADB-driven). Launched bambu under termux-x11 +
+      openbox with the freshly-installed shim. SSDP NOTIFY arrived
+      from the X2D, the Prepare-tab Printer panel painted the
+      **green WiFi icon** (`docs/ssdp-live-proof.png`) — proof that
+      `DeviceManager::on_machine_alive` got the entry via our shim's
+      `set_on_ssdp_msg_fn` → `evt:ssdp_msg` chain. **Device-tab
+      caveat**: with a non-Bambu vendor preset selected (the default
+      after `bambu-studio` first-run on this device), the Device tab
+      loads `web/device/missing_connection.html` (MainFrame.cpp:1265)
+      regardless of `localMachineList` — that path is gated on the
+      preset's vendor, not the discovered devices. The proper
+      MonitorPanel/StatusPanel route (MainFrame.cpp:1224, `is_bbl_vendor_preset`)
+      is what `localMachineList` feeds; selecting a Bambu Lab printer
+      preset (e.g. P1S, X1C) switches the Device tab to the agent-driven
+      view that consumes our SSDP entry. The Print-button click on a
+      sliced plate is the same `start_local_print` C-ABI call that
       `tests/test_shim_e2e.py` exercises end-to-end against the real
       printer, so both engineering AND live verification of the
-      discovery + connect path are now confirmed.
+      discovery + connect path are confirmed.
   - **Done when**: GUI's Devices tab shows the X2D as connected, AMS spool
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.
