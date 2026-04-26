@@ -664,6 +664,61 @@ class ServeServer:
         t.start()
         self._ssdp_thread = t
 
+    def _seed_appconfig_for_ssdp(self, parsed: dict) -> None:
+        """Item #17: when we see the FIRST SSDP NOTIFY of the bridge's
+        lifetime, ensure the user's BambuStudio.conf has a Bambu vendor
+        preset selected. Without this, freshly-installed users land on
+        the missing_connection.html fallback even though their printer
+        is broadcasting itself.
+
+        Idempotent: a marker file at ~/.x2d/.ssdp_seeded prevents
+        re-patching across bridge restarts. Atomic write so a crash
+        mid-write doesn't corrupt the user's AppConfig."""
+        import os as _os
+        marker = Path.home() / ".x2d" / ".ssdp_seeded"
+        if marker.exists():
+            return
+        appconf = Path.home() / ".config" / "BambuStudioInternal" / "BambuStudio.conf"
+        if not appconf.exists() or appconf.stat().st_size == 0:
+            # No AppConfig yet — install.sh will seed it on next install
+            # run. We can't sensibly create one out of nothing here.
+            return
+        try:
+            data = json.loads(appconf.read_text())
+        except (json.JSONDecodeError, OSError):
+            return  # Don't touch a config we can't parse.
+        presets = data.setdefault("presets", {})
+        current = presets.get("printer", "")
+        # If already on a Bambu vendor preset, leave alone.
+        if current.lower().startswith("bambu lab"):
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            return
+        # Patch the same gate keys install.sh #11 sets.
+        data.setdefault("vendors", {})["BBL"] = "1"
+        models = data.get("models") or []
+        if not any(m.get("vendor") == "BBL" for m in models):
+            models.append({
+                "vendor": "BBL",
+                "model": "Bambu Lab X1 Carbon",
+                "nozzle_diameter": '"0.4"',
+            })
+            data["models"] = models
+        presets["printer"]   = "Bambu Lab X1 Carbon 0.4 nozzle"
+        presets["filament"]  = "Bambu PLA Basic @BBL X1C"
+        presets.setdefault("print", "0.20mm Standard @BBL X1C")
+        if not isinstance(presets.get("filaments"), list) or not presets["filaments"]:
+            presets["filaments"] = ["Bambu PLA Basic @BBL X1C"]
+        # Atomic write
+        tmp = appconf.with_suffix(appconf.suffix + ".tmp-x2d")
+        tmp.write_text(json.dumps(data, indent=4))
+        _os.replace(tmp, appconf)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+        print(f"[serve] ssdp seed: patched {appconf} (printer→Bambu Lab X1 Carbon, "
+              f"triggered by {parsed.get('dev_name', '?')} @ {parsed.get('dev_ip', '?')})",
+              file=sys.stderr)
+
     def _ssdp_loop(self) -> None:
         """Listen for Bambu's multicast NOTIFY broadcasts on UDP 2021
         and convert each into the JSON shape BambuStudio's
@@ -696,6 +751,12 @@ class ServeServer:
             with self._ssdp_lock:
                 self._ssdp_cache[parsed["dev_id"]] = parsed
                 listeners = list(self._ssdp_listeners)
+            # Fire-and-forget: ensure the AppConfig has a Bambu preset
+            # so the GUI's Device tab works on first launch (#17).
+            try:
+                self._seed_appconfig_for_ssdp(parsed)
+            except Exception as e:
+                print(f"[serve] ssdp seed failed: {e}", file=sys.stderr)
             for fn in listeners:
                 try:
                     fn(parsed)
@@ -798,6 +859,11 @@ class ServeServer:
             self._stop.set()
         _signal.signal(_signal.SIGINT, _stop_handler)
         _signal.signal(_signal.SIGTERM, _stop_handler)
+
+        # Start SSDP discovery up-front so the AppConfig auto-pop (#17)
+        # fires even when no shim has connected yet (e.g. when run_gui.sh's
+        # watchdog brought us up before bambu-studio's plug-in load).
+        self._ensure_ssdp_thread()
 
         print(f"[serve] listening on {self.sock_path}", file=sys.stderr)
         while not self._stop.is_set():

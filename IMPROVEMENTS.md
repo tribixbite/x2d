@@ -424,15 +424,15 @@ For every item:
   - **Done when**: `~/.config/BambuStudioInternal/user/` populates with
     the curated presets after first launch.
 
-- [ ] **17. Auto-pop Bambu preset on first SSDP NOTIFY.**
+- [x] **17. Auto-pop Bambu preset on first SSDP NOTIFY.**
   - **Sub-tasks**:
-    - [ ] Bridge tracks "first device alive seen" per session.
-    - [ ] On that event, bridge calls `set_user_selected_machine` AND
+    - [x] Bridge tracks "first device alive seen" per session.
+    - [x] On that event, bridge calls `set_user_selected_machine` AND
       writes `presets.printer = "<seeded-bambu-preset>"` to
       AppConfig.conf.
-    - [ ] GUI picks up the preset switch (may need a reload event —
+    - [x] GUI picks up the preset switch (may need a reload event —
       verify whether AppConfig is hot-reloaded or only on next launch).
-    - [ ] If hot-reload doesn't work, fall back to surfacing a banner
+    - [x] If hot-reload doesn't work, fall back to surfacing a banner
       in the Prepare panel: "X2D detected — switch printer preset?"
   - **Done when**: fresh launch + SSDP detection → user sees the Device
     tab populate without manually picking a preset.
