@@ -233,23 +233,23 @@ For every item:
   - **Done when**: opening "Import STL" / "Save Project" lands a fully
     visible file chooser at sane dimensions on a 672 px display.
 
-- [ ] **7. Multi-printer config**. `~/.x2d/credentials` accepts
+- [x] **7. Multi-printer config**. `~/.x2d/credentials` accepts
   multiple `[printer:NAME]` sections; `x2d_bridge --printer NAME
   status` selects which one. The plain `[printer]` is still the
   unnamed default. `X2D_PRINTER` env var works as a fallback.
   - **Sub-tasks**:
-    - [ ] Updated `Creds.resolve` with section-name picker logic.
+    - [x] Updated `Creds.resolve` with section-name picker logic.
       Adds an explicit `name` field to the dataclass so downstream
       code can tell which printer it ended up talking to.
-    - [ ] Resolution order: `--printer` flag → `X2D_PRINTER` env →
+    - [x] Resolution order: `--printer` flag → `X2D_PRINTER` env →
       plain `[printer]` if present → single `[printer:NAME]`
       auto-pick if only one exists → otherwise error with the list
       of available names. `Creds.list_names()` helper exposed for
       multi-printer-aware callers.
-    - [ ] Smoke-tested all four cases (ambiguous, valid name, invalid
+    - [x] Smoke-tested all four cases (ambiguous, valid name, invalid
       name, list_names) against a temporary `~/.x2d/credentials` —
       every branch produced the expected output.
-    - [ ] README documents the new layout in the LAN-bridge section.
+    - [x] README documents the new layout in the LAN-bridge section.
   - **Done when**: two printer credential sections work; `--printer
     <name>` switches.
 
