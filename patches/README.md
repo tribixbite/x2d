@@ -26,5 +26,12 @@ done
 | `MainFrame.cpp.termux.patch` | Clamp the initial frame size and the `SetMinSize` floor to the primary display's client area. Without this, BambuStudio creates the main frame at `FromDIP(1200)×FromDIP(800)` with a `1000×600` min — wider than any typical phone-portrait X11 surface, which pushes the topbar's max/min/close buttons off the right edge so the user can't even reach them to maximize/minimize. We default-construct `wxDisplay(0u)` (the primary display) here because passing `this` returns `wxNOT_FOUND` from inside the frame constructor. |
 | `Plater.cpp.termux.patch` | Clamp the Sidebar's default + min width to `min(42 * em_unit, display_width / 3)` (with a `15 * em_unit` floor so the printer/filament widgets don't overflow). Upstream's hard-coded `42 * em_unit` (~504 px) takes 75% of a portrait phone display, leaving no room for the 3D viewport or the Object/Plate panes. Three call-sites updated: the `Sidebar` constructor's initial wxSize, `Sidebar::msw_rescale` SetMinSize, and the wxAui pane's BestSize in `Plater::priv::priv`. On a normal landscape desktop the clamp is a no-op. |
 
+The four `*.cpp.termux.patch` widget patches (`Button`, `AxisCtrlButton`,
+`SideButton`, `TabButton`) have been proposed upstream as a single
+combined PR with a 15 px `Inflate` slop instead of the strict-bounds
+removal: <https://github.com/bambulab/BambuStudio/pull/10385>. If/when
+that lands, the four widget patches here become unnecessary — keep
+`Plater.cpp`, `MainFrame.cpp`, `BBLTopbar.{cpp,hpp}` only.
+
 All patches are minimal — they don't reformat or reorganise surrounding code,
 so rebases against upstream BambuStudio should be straightforward.

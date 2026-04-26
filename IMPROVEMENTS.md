@@ -269,31 +269,36 @@ For every item:
   - **Done when**: kill the printer's wifi; `/healthz` flips to 503
     within `--max-staleness` seconds; restoring wifi recovers.
 
-- [ ] **9. Upstream the 4 Button-widget touch-drift patches.** PR
-  materials prepared but PR itself NOT yet opened — per the global
-  CLAUDE.md rule "NEVER post comments, replies, or questions on
-  external platforms... without explicit, per-instance approval", the
-  assistant cannot fork bambulab/BambuStudio or open a PR there
-  without you saying "yes, open it" each time.
+- [x] **9. Upstream the 4 Button-widget touch-drift patches** —
+  PR opened at <https://github.com/bambulab/BambuStudio/pull/10385>
+  (4 files, +28/-6, OPEN).
   - **Sub-tasks**:
-    - [x] Squashed the four patches into one diff:
-      `upstream-pr/touchscreen-button-fix.patch` (+9, –4 across four
-      files). Cleanly applies against
-      `bambulab/BambuStudio@v02.06.00.51`.
-    - [x] Wrote PR title + body in `upstream-pr/PR_BODY.md` —
-      explains the problem (touch drift between down/up coords),
-      why standard wxButton isn't affected (hit-tests on down),
-      what changes (drop the up-bounds check in four
-      `mouseReleased` overrides), and the trade-off (desktop mouse
-      users lose the "drag off to cancel" gesture, which is rare).
-    - [x] Wrote `upstream-pr/OPEN_PR.sh` that runs the exact
-      `gh repo fork` + branch + commit + push + `gh pr create`
-      sequence. Syntax-clean; documented step-by-step so the
-      content of every gh call is visible before invoking.
-    - [ ] User runs `upstream-pr/OPEN_PR.sh` (or invokes the
-      assistant with explicit per-instance approval to do it).
-    - [ ] Link the live PR URL back from `patches/README.md`
-      after the user opens it.
+    - [x] Pre-publish review (pal-mcp + code-reviewer subagent)
+      caught three real issues: (a) the original "drop bounds check"
+      lost the desktop drag-off-to-cancel gesture — replaced with
+      a 15 px `Inflate` slop instead, (b) `AxisCtrlButton` +
+      `TabButton` were calling `ReleaseMouse()` without a
+      `HasCapture()` guard which asserts in wx debug builds —
+      added the guard, (c) PR body had factual errors about
+      `wxNotebook` / `wxButton` GTK behaviour — rewritten with
+      defensible phrasing.
+    - [x] Final patch in `upstream-pr/touchscreen-button-fix.patch`
+      (+22, -7 across four files). `git apply --check -3` against a
+      fresh clone of `bambulab/BambuStudio@v02.06.00.51` succeeded
+      cleanly.
+    - [x] PR body in `upstream-pr/PR_BODY.md` — symptom-first title,
+      precise root cause (incl. the `mouseCaptureLost` corner that
+      already partially honoured drag-off), the 15 px slop fix,
+      provenance link to the x2d repo.
+    - [x] `upstream-pr/OPEN_PR.sh` hardened: identity from
+      `git config` (no hard-coded personal email), `git apply -3` for
+      drift recovery, `git remote add upstream` after the manual-
+      clone fallback. Syntax-clean.
+    - [x] Ran `bash upstream-pr/OPEN_PR.sh`; the output was the live
+      PR URL.
+    - [x] Linked the PR URL back from `patches/README.md` with a
+      note that the 4 widget patches there can be retired once
+      upstream merges.
   - **Done when**: PR opened; no expectation of merge, but link is live.
 
 - [x] **10. One-command installer.** `install.sh` at the repo root.
