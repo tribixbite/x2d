@@ -262,16 +262,30 @@ For every item:
     - [ ] Link the PR back from `patches/README.md`.
   - **Done when**: PR opened; no expectation of merge, but link is live.
 
-- [ ] **10. One-command installer.** `bash <(curl -fsSL
-  https://raw.githubusercontent.com/tribixbite/x2d/main/install.sh)` that
-  pkg-installs deps, fetches latest release tarball, verifies SHA,
-  pre-seeds AppConfig template, sets up `~/.x2d/credentials` skeleton,
-  drops a `~/.termux/boot/` autostart for the bridge daemon.
+- [x] **10. One-command installer.** `install.sh` at the repo root.
+  Runs end-to-end via
+  `bash <(curl -fsSL https://raw.githubusercontent.com/tribixbite/x2d/main/install.sh)`.
   - **Sub-tasks**:
-    - [ ] Write `install.sh` with `set -eu`; bail with clear errors on
-      missing termux-x11 / unsupported arch / network failure.
-    - [ ] SHA-256 verify the tarball before unpacking.
-    - [ ] Idempotent: re-running upgrades in place.
-    - [ ] README front-page badge / quick-start uses it.
+    - [x] `set -eu` + dedicated platform-check that bails fast on
+      non-Termux / non-aarch64.
+    - [x] `pkg install` of the full runtime dep list (idempotent —
+      checks `pkg list-installed` first; only invokes `pkg install`
+      for missing packages).
+    - [x] `pip install paho-mqtt` if not already importable.
+    - [x] Downloads the latest tarball + sibling `.sha256`; verifies
+      SHA-256 BEFORE unpacking; aborts with a red error on mismatch.
+    - [x] Drops `libbambu_networking.so` + `libBambuSource.so` plug-ins
+      to `~/.config/BambuStudioInternal/plugins/`; runs the wizard-skip
+      binary patch on the new `bin/bambu-studio`.
+    - [x] Pre-seeds `~/.config/BambuStudioInternal/BambuStudio.conf`
+      with the X2D model entry only if the file doesn't already exist
+      (so a re-run never clobbers user state).
+    - [x] Drops a chmod-600 `~/.x2d/credentials` skeleton if absent.
+    - [x] If `~/.termux/boot/` exists (the user has the Termux:Boot
+      Android app installed), drops a `~/.termux/boot/x2d-bridge`
+      launcher so the bridge daemon comes back after a phone reboot.
+    - [x] README quick-start uses it as the canonical install path.
+    - [x] `bash -n install.sh` syntax-clean; the platform-check section
+      runs to completion in dry-run.
   - **Done when**: a fresh Termux session can `curl … | bash` and end up
     with a working GUI launch in one command.

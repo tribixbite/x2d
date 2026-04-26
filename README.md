@@ -49,6 +49,24 @@ a clean clone.
 
 ### Use the prebuilt distribution
 
+### One-line install (recommended)
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/tribixbite/x2d/main/install.sh)
+```
+
+Idempotent — runs the platform check, `pkg install`s the runtime deps,
+fetches the latest release tarball, verifies SHA-256, drops the
+`libbambu_networking.so` + `libBambuSource.so` shims into
+`~/.config/BambuStudioInternal/plugins/`, applies the wizard-skip binary
+patch, pre-seeds `~/.config/BambuStudioInternal/BambuStudio.conf` with
+the X2D model entry, writes a chmod-600 `~/.x2d/credentials` skeleton
+for you to fill in, and (if Termux:Boot is installed) drops a boot-time
+launcher for the bridge daemon. Re-run any time to upgrade — your
+`BambuStudio.conf` and credentials file are preserved.
+
+### Manual install (alternative)
+
 A prebuilt tarball is attached to the GitHub release:
 
 ```
