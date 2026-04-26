@@ -298,6 +298,23 @@ Loopback binds keep the open path even with a token configured? — no:
 once you set a token, loopback also enforces it, so the same `curl`
 command works against both `127.0.0.1` and a LAN-exposed bind.
 
+### Filament presets without a cloud account
+
+When no cloud session exists, `bambu_network_get_user_presets`
+falls back to a local catalog so the GUI's AMS spool dropdown
+isn't empty:
+
+* All `instantiation: true` BBL filament profiles shipped under
+  `resources/profiles/BBL/filament/` (1464 entries on the current
+  binary — every Bambu vendor variant for every supported model).
+* A small community-curated set under
+  `runtime/network_shim/data/community_filaments.json` covering
+  Generic PLA / PETG / ABS / TPU / ASA plus Polymaker / Prusament /
+  eSun / Hatchbox flavours. Edit that file to add your own.
+
+If you sign in via `cloud-login`, the cloud-synced presets take
+precedence — the local fallback only activates anonymously.
+
 ### Bambu cloud login (optional)
 
 The bridge can talk to the Bambu Lab cloud REST API to populate the

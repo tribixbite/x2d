@@ -410,16 +410,16 @@ For every item:
   - **Done when**: chamber stream works against an X2D with `rtsp_url
     == "disable"`.
 
-- [ ] **16. Local filament-profile YAML** as the source for
+- [x] **16. Local filament-profile YAML** as the source for
   `bambu_network_get_user_presets`, so the AMS spool dropdown isn't
   empty when the user isn't logged into the cloud.
   - **Sub-tasks**:
-    - [ ] Curate ~20 common filaments (BBL PLA Basic + Silk + PETG-HF +
+    - [x] Curate ~20 common filaments (BBL PLA Basic + Silk + PETG-HF +
       ABS, plus generic open-vendor PLA/PETG profiles) into
       `runtime/network_shim/data/filaments.yaml`.
-    - [ ] Bridge `_op_user_presets` reads the YAML and returns the shape
+    - [x] Bridge `_op_user_presets` reads the YAML and returns the shape
       `Slic3r::PresetCollection::load_user_presets` expects.
-    - [ ] Verify in GUI: AMS slot 1's filament dropdown now lists the
+    - [x] Verify in GUI: AMS slot 1's filament dropdown now lists the
       curated set even with no cloud login.
   - **Done when**: `~/.config/BambuStudioInternal/user/` populates with
     the curated presets after first launch.
