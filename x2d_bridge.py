@@ -584,6 +584,121 @@ class ServeServer:
         self._printers: dict[str, _PrinterSession] = {}
         self._printers_lock = __import__("threading").Lock()
         self._stop = Event()
+        self._ssdp_listeners: list[Callable[[dict], None]] = []
+        self._ssdp_lock = __import__("threading").Lock()
+        # Cache of {dev_id: parsed_dict} so we can re-emit the most-recent
+        # SSDP notify to a newly-connecting shim without waiting for the
+        # printer's next 30-second broadcast.
+        self._ssdp_cache: dict[str, dict] = {}
+        self._ssdp_thread: Thread | None = None
+
+    # --- SSDP discovery -----------------------------------------------
+
+    def add_ssdp_listener(self, fn: Callable[[dict], None]) -> None:
+        with self._ssdp_lock:
+            self._ssdp_listeners.append(fn)
+            cache = list(self._ssdp_cache.values())
+        # Replay the cache so a fresh shim sees existing devices immediately.
+        for parsed in cache:
+            try: fn(parsed)
+            except Exception as e:
+                print(f"[serve] ssdp replay raised: {e}", file=sys.stderr)
+
+    def remove_ssdp_listener(self, fn: Callable[[dict], None]) -> None:
+        with self._ssdp_lock:
+            try: self._ssdp_listeners.remove(fn)
+            except ValueError: pass
+
+    def _ensure_ssdp_thread(self) -> None:
+        if self._ssdp_thread and self._ssdp_thread.is_alive():
+            return
+        t = Thread(target=self._ssdp_loop, name="ssdp", daemon=True)
+        t.start()
+        self._ssdp_thread = t
+
+    def _ssdp_loop(self) -> None:
+        """Listen for Bambu's multicast NOTIFY broadcasts on UDP 2021
+        and convert each into the JSON shape BambuStudio's
+        DeviceManager::on_machine_alive expects."""
+        import socket as _socket, struct as _struct
+        try:
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM, _socket.IPPROTO_UDP)
+            sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            sock.bind(("", 2021))
+            sock.setsockopt(_socket.IPPROTO_IP, _socket.IP_ADD_MEMBERSHIP,
+                            _struct.pack("4sl",
+                                         _socket.inet_aton("239.255.255.250"),
+                                         _socket.INADDR_ANY))
+            sock.settimeout(1.0)
+        except OSError as e:
+            print(f"[serve] ssdp bind failed: {e}", file=sys.stderr)
+            return
+        print("[serve] ssdp listening on udp/2021 (239.255.255.250)", file=sys.stderr)
+        while not self._stop.is_set():
+            try:
+                data, addr = sock.recvfrom(4096)
+            except (_socket.timeout, BlockingIOError):
+                continue
+            except OSError:
+                break
+            parsed = self._parse_ssdp(data, addr[0])
+            if parsed is None:
+                continue
+            with self._ssdp_lock:
+                self._ssdp_cache[parsed["dev_id"]] = parsed
+                listeners = list(self._ssdp_listeners)
+            for fn in listeners:
+                try: fn(parsed)
+                except Exception as e:
+                    print(f"[serve] ssdp listener raised: {e}", file=sys.stderr)
+
+    @staticmethod
+    def _parse_ssdp(data: bytes, src_ip: str) -> dict | None:
+        """Extract the on_machine_alive fields from a Bambu NOTIFY.
+        Format example:
+            NOTIFY * HTTP/1.1\r\n
+            Location: 192.168.x.y\r\n
+            USN: <serial>\r\n
+            DevModel.bambu.com: N6\r\n
+            DevName.bambu.com: x2d\r\n
+            DevConnect.bambu.com: cloud|lan\r\n
+            DevBind.bambu.com: free|occupied\r\n
+            Devseclink.bambu.com: secure\r\n
+            DevVersion.bambu.com: 01.01.00.00\r\n
+        """
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+        if not text.startswith("NOTIFY "):
+            return None
+        headers: dict[str, str] = {}
+        for line in text.split("\r\n")[1:]:
+            if ":" not in line:
+                continue
+            k, _, v = line.partition(":")
+            headers[k.strip().lower()] = v.strip()
+        usn = headers.get("usn", "")
+        if not usn:
+            return None
+        dev_ip = headers.get("location", src_ip) or src_ip
+        connect_type = headers.get("devconnect.bambu.com", "lan").lower()
+        if connect_type == "cloud":
+            # The bridge replaces what the cloud plug-in would do, so
+            # tell the host this is reachable as a LAN device.
+            connect_type = "lan"
+        return {
+            "dev_name":       headers.get("devname.bambu.com", ""),
+            "dev_id":         usn,
+            "dev_ip":         dev_ip,
+            "dev_type":       headers.get("devmodel.bambu.com", ""),
+            "dev_signal":     "",  # Bambu doesn't advertise signal strength in SSDP
+            "connect_type":   connect_type,
+            "bind_state":     headers.get("devbind.bambu.com", "free").lower(),
+            "sec_link":       headers.get("devseclink.bambu.com", ""),
+            "ssdp_version":   headers.get("devversion.bambu.com", ""),
+            "connection_name": "",
+        }
 
     # --- printer registry ---------------------------------------------
 
@@ -680,6 +795,7 @@ class _ConnHandler:
         self._subscribed: set[str] = set()
         self._state_cb: Callable[[dict], None] | None = None
         self._connect_cb: Callable[[int, str, str], None] | None = None
+        self._ssdp_cb: Callable[[dict], None] | None = None
 
     # --- I/O primitives ----------------------------------------------
 
@@ -753,6 +869,9 @@ class _ConnHandler:
                 if self._connect_cb:
                     sess.remove_connect_listener(self._connect_cb)
                 sess.release()
+        if self._ssdp_cb is not None:
+            self.server.remove_ssdp_listener(self._ssdp_cb)
+            self._ssdp_cb = None
         try:
             self.sock.close()
         except OSError:
@@ -905,6 +1024,31 @@ def _op_start_send_gcode_to_sdcard(h: _ConnHandler, args: dict) -> dict:
     return {}
 
 
+def _op_start_discovery(h: _ConnHandler, args: dict) -> dict:
+    """Begin (or stop) SSDP listener; pipe each parsed device to this
+    shim as `evt:ssdp_msg`. Idempotent — re-arming twice doesn't
+    duplicate listeners."""
+    enable = bool(args.get("start", True))
+    if not enable:
+        # Tear down this shim's listener.
+        if h._ssdp_cb is not None:
+            h.server.remove_ssdp_listener(h._ssdp_cb)
+            h._ssdp_cb = None
+        return {}
+
+    h.server._ensure_ssdp_thread()
+    if h._ssdp_cb is None:
+        def emit(parsed: dict) -> None:
+            h._send({
+                "kind": "evt",
+                "name": "ssdp_msg",
+                "data": {"json": json.dumps(parsed, separators=(",", ":"))},
+            })
+        h._ssdp_cb = emit
+        h.server.add_ssdp_listener(emit)
+    return {}
+
+
 def _op_subscribe_local(h: _ConnHandler, args: dict) -> dict:
     dev_id = str(args.get("dev_id", ""))
     interval = int(args.get("interval_s", 5))
@@ -961,6 +1105,7 @@ _OPS: dict[str, Callable[[_ConnHandler, dict], dict]] = {
     "start_local_print_with_record": _op_start_local_print,
     "start_send_gcode_to_sdcard":  _op_start_send_gcode_to_sdcard,
     "subscribe_local":             _op_subscribe_local,
+    "start_discovery":             _op_start_discovery,
     # cloud / catalog stubs
     "connect_server":              _op_noop_ok,
     "is_user_login":               _op_login_status,

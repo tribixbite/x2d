@@ -39,6 +39,17 @@ static void marshal_call(Agent* a, Cb cb, Apply&& apply) {
 void register_bridge_event_handlers(Agent* a) {
     if (!a || !a->bridge) return;
 
+    a->bridge->on_event("ssdp_msg", [a](const json& evt) {
+        std::string js = evt.value("data", json::object()).value("json", "");
+        if (js.empty()) return;
+        BBL::OnMsgArrivedFn cb;
+        {
+            std::lock_guard<std::mutex> g(a->cb_mu);
+            cb = a->on_ssdp_msg;
+        }
+        marshal_call(a, cb, [js](const auto& fn) { fn(js); });
+    });
+
     a->bridge->on_event("local_message", [a](const json& evt) {
         auto data = evt.value("data", json::object());
         std::string dev_id = data.value("dev_id", "");

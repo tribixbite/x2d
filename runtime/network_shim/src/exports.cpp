@@ -228,10 +228,15 @@ int bambu_network_update_cert(void* /*agent*/) { return BAMBU_NETWORK_SUCCESS; }
 
 void bambu_network_install_device_cert(void* /*agent*/, std::string /*dev_id*/, bool /*lan_only*/) {}
 
-bool bambu_network_start_discovery(void* /*agent*/, bool /*start*/, bool /*sending*/) {
-    // LAN discovery is via the bridge socket; nothing for the host to do
-    // here (it polls the device list separately).
-    return true;
+bool bambu_network_start_discovery(void* agent, bool start, bool /*sending*/) {
+    auto* a = as_agent(agent);
+    if (!a) return false;
+    if (!a->bridge->is_connected()) return false;
+    // Tell the bridge to (de)activate its SSDP listener for THIS shim.
+    json reply = a->bridge->request("start_discovery", json{
+        {"start", start}
+    }, 4000);
+    return bridge_rc(reply, BAMBU_NETWORK_ERR_INVALID_RESULT) == BAMBU_NETWORK_SUCCESS;
 }
 
 // ---------------------------------------------------------------------------

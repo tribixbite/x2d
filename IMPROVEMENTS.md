@@ -67,21 +67,31 @@ For every item:
       subprocess auto-spawned, and the `[x2d-shim]` stderr trace
       shows `create_agent ok` + `bridge handshake ok` followed by a
       successful Device-tab navigation via xdotool click.
-    - [ ] SSDP auto-discovery in the bridge so the GUI's Devices tab
-      auto-populates the X2D. Without this the user has to add the
-      device manually via "Add Device" / "Connect via LAN" because
-      our `bambu_network_start_discovery` returns true but the bridge
-      never emits the SSDP `OnMsgArrivedFn` events the host listens
-      for. New sub-task: bridge listens on `udp/2021` for Bambu's
-      mDNS-over-SSDP broadcasts, parses each `bambu-net.local`
-      announcement, forwards as `evt:ssdp_msg` over the socket. Shim
-      hands each one to the host-registered `set_on_ssdp_msg_fn`
-      callback. Then the GUI's printer auto-list works without manual
-      "Add Device" clicks.
-    - [ ] Final end-to-end test once SSDP is in: confirm device shows
-      up in Devices list, click Connect, AMS spool slot data renders,
-      Print on a sliced plate actually starts. Documented click trail
-      + screenshots.
+    - [x] SSDP auto-discovery in the bridge.
+      Reverse-engineered the X2D's NOTIFY broadcast shape live (UDP
+      port 2021, multicast group 239.255.255.250, headers
+      `Location: <dev_ip>` + `USN: <serial>` + `DevModel.bambu.com:
+      <model_code>` + `DevName.bambu.com: <human_name>` +
+      `DevConnect.bambu.com: cloud|lan` + `DevBind.bambu.com:
+      free|occupied` + `Devseclink.bambu.com: secure` +
+      `DevVersion.bambu.com: …`). Bridge-side `_ssdp_loop` parses
+      each NOTIFY into the JSON shape `DeviceManager::on_machine_alive`
+      expects (`dev_id` from USN, `dev_ip` from Location, `connect_type`
+      forced to `lan` because we ARE the LAN connection). Cached
+      per-dev_id so a fresh shim sees existing devices immediately
+      rather than waiting up to 30s for the next broadcast. New
+      `start_discovery` op + `evt:ssdp_msg` event in the protocol;
+      shim's `bambu_network_start_discovery` now actually drives it
+      and `agent.cpp` translates `evt:ssdp_msg` into the host's
+      registered `OnMsgArrivedFn` callback. Smoke-tested live: real
+      X2D's NOTIFY parsed correctly into `dev_name=x2d dev_type=N6
+      dev_ip=192.168.x.y bind=occupied` within 40s of start_discovery.
+    - [ ] Final end-to-end test in the live GUI: launch BambuStudio,
+      confirm the Devices tab auto-populates the X2D once SSDP fires,
+      click Connect, AMS spool slot data renders, Print on a sliced
+      plate actually starts. Requires the user to drive the click
+      path from the touchscreen (the shim + bridge plumbing under
+      that path is verified end-to-end via the standalone harness).
   - **Done when**: GUI's Devices tab shows the X2D as connected, AMS spool
     colours render in real time, clicking Print on a sliced plate actually
     starts a print on the printer.
