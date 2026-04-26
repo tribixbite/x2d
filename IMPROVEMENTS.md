@@ -275,11 +275,11 @@ For every item:
   - **Done when**: kill the printer's wifi; `/healthz` flips to 503
     within `--max-staleness` seconds; restoring wifi recovers.
 
-- [ ] **9. Upstream the 4 Button-widget touch-drift patches** —
+- [x] **9. Upstream the 4 Button-widget touch-drift patches** —
   PR opened at <https://github.com/bambulab/BambuStudio/pull/10385>
   (4 files, +28/-6, OPEN).
   - **Sub-tasks**:
-    - [ ] Pre-publish review (pal-mcp + code-reviewer subagent)
+    - [x] Pre-publish review (pal-mcp + code-reviewer subagent)
       caught three real issues: (a) the original "drop bounds check"
       lost the desktop drag-off-to-cancel gesture — replaced with
       a 15 px `Inflate` slop instead, (b) `AxisCtrlButton` +
@@ -288,21 +288,21 @@ For every item:
       added the guard, (c) PR body had factual errors about
       `wxNotebook` / `wxButton` GTK behaviour — rewritten with
       defensible phrasing.
-    - [ ] Final patch in `upstream-pr/touchscreen-button-fix.patch`
+    - [x] Final patch in `upstream-pr/touchscreen-button-fix.patch`
       (+22, -7 across four files). `git apply --check -3` against a
       fresh clone of `bambulab/BambuStudio@v02.06.00.51` succeeded
       cleanly.
-    - [ ] PR body in `upstream-pr/PR_BODY.md` — symptom-first title,
+    - [x] PR body in `upstream-pr/PR_BODY.md` — symptom-first title,
       precise root cause (incl. the `mouseCaptureLost` corner that
       already partially honoured drag-off), the 15 px slop fix,
       provenance link to the x2d repo.
-    - [ ] `upstream-pr/OPEN_PR.sh` hardened: identity from
+    - [x] `upstream-pr/OPEN_PR.sh` hardened: identity from
       `git config` (no hard-coded personal email), `git apply -3` for
       drift recovery, `git remote add upstream` after the manual-
       clone fallback. Syntax-clean.
-    - [ ] Ran `bash upstream-pr/OPEN_PR.sh`; the output was the live
+    - [x] Ran `bash upstream-pr/OPEN_PR.sh`; the output was the live
       PR URL.
-    - [ ] Linked the PR URL back from `patches/README.md` with a
+    - [x] Linked the PR URL back from `patches/README.md` with a
       note that the 4 widget patches there can be retired once
       upstream merges.
   - **Done when**: PR opened; no expectation of merge, but link is live.
