@@ -79,3 +79,4 @@ UNANSWERED_QUESTIONS.md
 # network_shim build artefacts
 runtime/network_shim/src/*.o
 runtime/network_shim/*.so
+!docs/*.png
