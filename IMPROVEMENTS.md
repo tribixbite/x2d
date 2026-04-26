@@ -253,25 +253,25 @@ For every item:
   - **Done when**: two printer credential sections work; `--printer
     <name>` switches.
 
-- [ ] **8. `/healthz` endpoint.** Daemon HTTP exposes `/healthz` that
+- [x] **8. `/healthz` endpoint.** Daemon HTTP exposes `/healthz` that
   returns 200 + `{"healthy":true,...}` JSON if a printer state push
   arrived within `--max-staleness` (default 30s), 503 otherwise.
   Catches the silent-MQTT-disconnect case where `/state` would
   serve stale JSON for minutes.
   - **Sub-tasks**:
-    - [ ] `X2DClient._on_message` records `last_message_ts`; exposed
+    - [x] `X2DClient._on_message` records `last_message_ts`; exposed
       as a `last_message_ts` property.
-    - [ ] `_serve_http` accepts a `get_last_ts` callback + a
+    - [x] `_serve_http` accepts a `get_last_ts` callback + a
       `max_staleness` window. The handler computes `age = now - last`
       and returns 200/503 accordingly with a small JSON diagnostic
       body (healthy / last_message_ts / last_message_age_s /
       max_staleness_s).
-    - [ ] `cmd_daemon` wires it through; `--max-staleness 30.0` is
+    - [x] `cmd_daemon` wires it through; `--max-staleness 30.0` is
       the new CLI flag.
-    - [ ] Smoke-test: launched the daemon, hit `/healthz`, got
+    - [x] Smoke-test: launched the daemon, hit `/healthz`, got
       `200 OK` with `{healthy:true, last_message_age_s:0.51, ...}`.
       The 503 path is the same handler with one branch flipped.
-    - [ ] README updated under "LAN bridge" with `/healthz` example.
+    - [x] README updated under "LAN bridge" with `/healthz` example.
   - **Done when**: kill the printer's wifi; `/healthz` flips to 503
     within `--max-staleness` seconds; restoring wifi recovers.
 
