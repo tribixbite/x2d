@@ -1036,6 +1036,205 @@ def cmd_jog(args: argparse.Namespace) -> int:
     return _publish_one(args, _print_cmd("gcode_line", param=gcode))
 
 
+# ---------------------------------------------------------------------------
+# `camera` subcommand — RTSPS-to-MJPEG proxy.
+#
+# Bambu's GUI streams the printer's chamber camera via either:
+#   * `rtsps://bblp:<code>@<ip>:322/streaming/live/1`
+#     — standard RTSPS, works iff the printer's own "LAN-mode liveview"
+#     toggle is enabled (Settings → Network → Liveview on the touchscreen,
+#     OR the `ipcam.rtsp_url` field comes back as a real URL instead of
+#     "disable" in the printer's pushed state).
+#   * The closed proprietary "LVL_Local" protocol on TCP port 6000, only
+#     speakable through the x86_64-only libBambuSource.so. Not usable on
+#     aarch64 until that protocol is reverse-engineered.
+#
+# This subcommand wraps the RTSPS path with ffmpeg → MJPEG-over-HTTP so a
+# phone browser at http://127.0.0.1:8766/cam.mjpeg sees the stream live.
+# Multiple browser clients tee off the same single ffmpeg subprocess.
+# Surfaces a clear error when the printer reports rtsp_url=disable.
+# ---------------------------------------------------------------------------
+
+def cmd_camera(args: argparse.Namespace) -> int:
+    import http.server
+    import shutil
+    import signal as _signal
+    import socketserver
+    import subprocess as _sp
+    from threading import Lock as _Lock
+
+    creds = Creds.resolve(args)
+
+    # Pre-flight: poke the printer's state to confirm RTSP is enabled.
+    if not args.skip_check:
+        try:
+            cli = X2DClient(creds)
+            cli.connect(timeout=8.0)
+            state = cli.request_state(timeout=8.0)
+            cli.disconnect()
+            ipcam = state.get("print", {}).get("ipcam", {})
+            rtsp_url = ipcam.get("rtsp_url", "disable")
+            if rtsp_url == "disable":
+                print(
+                    "[camera] printer reports ipcam.rtsp_url=\"disable\".\n"
+                    "         Enable LAN-mode liveview on the printer's\n"
+                    "         touchscreen (Settings → Network → Liveview)\n"
+                    "         and re-run. Or pass --skip-check to try anyway.",
+                    file=sys.stderr,
+                )
+                return 2
+            elif rtsp_url and not rtsp_url.startswith(("rtsp://", "rtsps://")):
+                print(f"[camera] unexpected ipcam.rtsp_url: {rtsp_url}",
+                      file=sys.stderr)
+                return 2
+            print(f"[camera] printer rtsp_url=ok ({rtsp_url[:40]}...)",
+                  file=sys.stderr)
+        except Exception as e:
+            print(f"[camera] state-pre-flight failed: {e} — continuing anyway",
+                  file=sys.stderr)
+
+    if shutil.which("ffmpeg") is None:
+        print("[camera] ffmpeg not installed. `pkg install ffmpeg` first.",
+              file=sys.stderr)
+        return 2
+
+    rtsp_url_full = (
+        f"rtsps://bblp:{creds.code}@{creds.ip}:{args.port}/streaming/live/1"
+    )
+
+    # Single shared frame buffer + cv. ffmpeg writes JPEG frames here;
+    # every HTTP client reads the latest. We never queue history — old
+    # frames are dropped, viewers see live.
+    state_lock = _Lock()
+    latest_frame = {"data": b"", "ts": 0.0}
+    stop_event = Event()
+
+    def ffmpeg_pump():
+        boundary = b"--frame\r\n"
+        backoff = 1.0
+        while not stop_event.is_set():
+            cmd = [
+                "ffmpeg",
+                "-loglevel", "error",
+                "-rtsp_transport", "tcp",
+                "-i", rtsp_url_full,
+                "-an",                      # drop audio
+                "-c:v", "mjpeg",
+                "-q:v", "5",
+                "-f", "image2pipe",
+                "-update", "1",             # write each frame as a complete JPEG
+                "-"
+            ]
+            print(f"[camera] spawning ffmpeg (port {args.port})", file=sys.stderr)
+            proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE,
+                             close_fds=True)
+            try:
+                jpeg_buf = b""
+                while not stop_event.is_set():
+                    chunk = proc.stdout.read(65536)
+                    if not chunk:
+                        err = proc.stderr.read().decode(errors="replace")[-400:]
+                        print(f"[camera] ffmpeg eof; stderr tail: {err}",
+                              file=sys.stderr)
+                        break
+                    jpeg_buf += chunk
+                    # MJPEG single-image output writes back-to-back JPEGs.
+                    # Split on SOI marker (0xFFD8) — keep the most-recent
+                    # complete frame.
+                    while True:
+                        idx = jpeg_buf.find(b"\xff\xd8", 1)
+                        if idx == -1:
+                            break
+                        frame, jpeg_buf = jpeg_buf[:idx], jpeg_buf[idx:]
+                        if frame.startswith(b"\xff\xd8") and frame.endswith(b"\xff\xd9"):
+                            with state_lock:
+                                latest_frame["data"] = frame
+                                latest_frame["ts"]   = time.time()
+            finally:
+                try: proc.terminate(); proc.wait(timeout=2)
+                except Exception: pass
+                try: proc.kill()
+                except Exception: pass
+            if stop_event.is_set(): break
+            print(f"[camera] reconnecting in {backoff:.1f}s", file=sys.stderr)
+            stop_event.wait(backoff)
+            backoff = min(backoff * 2, 30.0)
+
+    pump = Thread(target=ffmpeg_pump, name="camera-pump", daemon=True)
+    pump.start()
+
+    # Tiny HTTP server. Two endpoints:
+    #   /cam.mjpeg  → multipart/x-mixed-replace (browser-renderable)
+    #   /cam.jpg    → single latest JPEG
+    class CameraHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_): return
+        def do_GET(self):  # noqa: N802
+            if self.path in ("/cam.mjpeg", "/"):
+                self.send_response(200)
+                self.send_header("Content-Type",
+                                 "multipart/x-mixed-replace; boundary=frame")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                last_ts = 0.0
+                try:
+                    while not stop_event.is_set():
+                        with state_lock:
+                            frame = latest_frame["data"]
+                            ts    = latest_frame["ts"]
+                        if frame and ts > last_ts:
+                            last_ts = ts
+                            self.wfile.write(b"--frame\r\n")
+                            self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                            self.wfile.write(
+                                f"Content-Length: {len(frame)}\r\n\r\n".encode())
+                            self.wfile.write(frame)
+                            self.wfile.write(b"\r\n")
+                            self.wfile.flush()
+                        else:
+                            time.sleep(0.05)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+            elif self.path == "/cam.jpg":
+                with state_lock:
+                    frame = latest_frame["data"]
+                if not frame:
+                    self.send_response(503); self.end_headers(); return
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(frame)))
+                self.end_headers()
+                self.wfile.write(frame)
+            else:
+                self.send_response(404); self.end_headers()
+
+    class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    host, _, port = args.bind.rpartition(":")
+    host = host or "127.0.0.1"
+    port = int(port)
+    server = ThreadingServer((host, port), CameraHandler)
+
+    def _stop(signum, frame):  # noqa: ARG001
+        stop_event.set()
+        server.shutdown()
+    _signal.signal(_signal.SIGINT,  _stop)
+    _signal.signal(_signal.SIGTERM, _stop)
+
+    print(f"[camera] streaming at http://{host}:{port}/cam.mjpeg "
+          f"(JPEG snapshot at /cam.jpg). Ctrl-C to quit.",
+          file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_event.set()
+        server.server_close()
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     sock_path = Path(args.sock).expanduser()
     server = ServeServer(sock_path)
@@ -1187,6 +1386,19 @@ def main() -> int:
     jg.add_argument("distance", type=float, help="mm to move (negative for reverse)")
     jg.add_argument("--feed", type=int, default=1500, help="Feedrate in mm/min")
     jg.set_defaults(fn=cmd_jog)
+
+    cm = sub.add_parser(
+        "camera",
+        help="Spawn ffmpeg → MJPEG-over-HTTP proxy for the printer's chamber camera",
+    )
+    cm.add_argument("--bind", default="127.0.0.1:8766",
+                    help="HTTP bind addr (default 127.0.0.1:8766)")
+    cm.add_argument("--port", type=int, default=322,
+                    help="Printer's RTSPS port (default 322)")
+    cm.add_argument("--skip-check", action="store_true",
+                    help="Skip the ipcam.rtsp_url pre-flight (useful when "
+                         "MQTT can't reach the printer but RTSP is open)")
+    cm.set_defaults(fn=cmd_camera)
 
     sv = sub.add_parser(
         "serve",

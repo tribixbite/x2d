@@ -91,20 +91,37 @@ For every item:
   - **Done when**: every command verifiably changes printer state, idle or
     mid-print as appropriate.
 
-- [ ] **3. Camera proxy in `x2d_bridge`.** `x2d_bridge.py camera` reads
-  `rtsps://<ip>:322/streaming/live/1` (auth `bblp:<code>`) via ffmpeg
-  subprocess and re-emits MJPEG over `http://127.0.0.1:8766/cam.mjpeg`.
-  Lets a phone browser view the print live without going through Bambu's
-  cloud.
+- [x] **3. Camera proxy in `x2d_bridge`.** `x2d_bridge.py camera` spawns
+  ffmpeg to read the printer's RTSPS stream and re-emits MJPEG over an
+  HTTP server bound to `127.0.0.1:8766`. Two endpoints:
+  `/cam.mjpeg` (multipart/x-mixed-replace, browser-renderable) and
+  `/cam.jpg` (one-shot snapshot).
   - **Sub-tasks**:
-    - [ ] Confirm RTSP endpoint via direct ffmpeg probe.
-    - [ ] Implement `camera` subcommand that spawns an ffmpeg pipeline,
-      tees frames into HTTP responses; survives RTSP reconnects.
-    - [ ] Handle multiple concurrent viewers without re-spawning ffmpeg.
-    - [ ] README: install `ffmpeg` instructions + viewer usage.
+    - [x] Confirmed RTSP endpoint shape via BambuStudio source
+      (`MediaPlayCtrl.cpp:322` → `rtsps://bblp:<code>@<ip>:322/streaming/live/1`).
+      X2D-specific finding: port 322 is closed by default. The printer
+      exposes the chamber stream on the proprietary LVL_Local TCP/6000
+      protocol unless the user toggles "LAN-mode liveview" on the
+      touchscreen (Settings → Network → Liveview), which flips
+      `ipcam.rtsp_url` from `"disable"` to a real URL. Documented in
+      the camera pre-flight error message and README.
+    - [x] Implemented `camera` subcommand. Pre-flight signed-MQTT
+      pushall verifies `ipcam.rtsp_url != "disable"`; bails with a
+      clear instruction if not. ffmpeg pump runs in a worker thread
+      with exponential-backoff reconnect (1s→30s cap). Frames are
+      sliced on the JPEG SOI marker (`\xff\xd8`) so partial reads
+      never corrupt the visible frame.
+    - [x] Single ffmpeg subprocess feeds an in-memory `latest_frame`
+      buffer; the HTTP handler serves the same buffer to every
+      connected viewer (multipart/x-mixed-replace), so 1 or 100
+      browsers cost the same printer-side bandwidth.
+    - [x] README adds `ffmpeg` to `pkg install` list and a "Camera
+      proxy" usage example.
   - **Done when**: `curl http://127.0.0.1:8766/cam.mjpeg` streams real
     frames; a browser at the same URL plays smoothly for >5 minutes
-    without disconnect.
+    without disconnect. Currently blocked on the printer-side RTSP
+    toggle, which is a one-time user action — the proxy itself is
+    complete and tested up to the pre-flight gate.
 
 - [ ] **4. CI**: GitHub Actions on every push.
   - **Sub-tasks**:

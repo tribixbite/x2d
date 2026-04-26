@@ -68,7 +68,7 @@ pkg install \
     fontconfig freetype libpng libjpeg libtiff \
     openssl curl libcurl \
     opencv libdbus libwebp \
-    libavcodec libswscale libavutil \
+    libavcodec libswscale libavutil ffmpeg \
     python python-cryptography xdotool \
     openbox
 pip install paho-mqtt
@@ -195,6 +195,30 @@ x2d_bridge.py gcode "M115"               # send arbitrary gcode_line
 Payload schemas reverse-engineered from
 `bs-bionic/src/slic3r/GUI/DeviceManager.cpp::MachineObject::command_*`
 so the printer behaviour matches what the official GUI sends.
+
+### Camera proxy
+
+The printer's chamber camera streams over RTSPS, but only after you
+**enable LAN-mode liveview on the printer's touchscreen**
+(Settings → Network → Liveview). Otherwise the stream lives on a closed
+proprietary protocol on TCP/6000 that requires the x86\_64-only
+`libBambuSource.so` to decode.
+
+Once enabled, run:
+
+```
+x2d_bridge.py camera                     # bind 127.0.0.1:8766 by default
+x2d_bridge.py camera --bind 0.0.0.0:8766 # expose on LAN (be careful!)
+```
+
+Then point any browser at `http://127.0.0.1:8766/cam.mjpeg` for the
+multipart MJPEG stream, or `/cam.jpg` for a one-shot snapshot. Multiple
+viewers share one ffmpeg subprocess, so bandwidth to the printer is
+constant regardless of how many people are watching.
+
+Pre-flight checks `ipcam.rtsp_url` via signed MQTT and bails with a
+clear hint if liveview is still disabled. Pass `--skip-check` to bypass
+(useful when MQTT is flaky but RTSP is open).
 
 ## What's broken on Termux without these patches
 
