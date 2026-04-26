@@ -80,5 +80,77 @@ export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
 # targets without GLX (which termux-x11 doesn't expose either).
 export EGL_PLATFORM=surfaceless
 
+# ---------------------------------------------------------------------
+# Bridge supervisor (item #12).
+#
+# The shim spawns x2d_bridge.py serve once on first connect_printer. If
+# that bridge dies (paho segfault, OOM, network blip), the socket file
+# lingers and every subsequent shim RPC fails with ECONNREFUSED — the
+# GUI silently loses Connect / AMS / Print until the user restarts
+# everything. Watchdog: bash loop with 1→2→5→10→30s backoff, log
+# rotated at 1 MiB. Trapped on EXIT.
+# ---------------------------------------------------------------------
+
+X2D_HOME="${HOME}/.x2d"
+mkdir -p "${X2D_HOME}"
+BRIDGE_SOCK="${X2D_HOME}/bridge.sock"
+BRIDGE_LOG="${X2D_HOME}/bridge.log"
+
+# bridge_py: prefer the canonical install path, fall back to the repo
+# checkout (developer mode), then PATH lookup. Mirrors the candidates
+# baked into runtime/network_shim/src/bridge_client.cpp.
+for cand in \
+    "${HERE}/helpers/x2d_bridge.py" \
+    "${HERE}/x2d_bridge.py" \
+    "/data/data/com.termux/files/home/git/x2d/x2d_bridge.py"
+do
+    if [[ -f "$cand" ]]; then
+        BRIDGE_PY="$cand"
+        break
+    fi
+done
+
+bridge_watchdog() {
+    local backoff=1
+    while true; do
+        # Log rotation: cap at 1 MiB, keep one .1 generation.
+        if [[ -f "${BRIDGE_LOG}" ]] && \
+           (( $(stat -c %s "${BRIDGE_LOG}" 2>/dev/null || echo 0) > 1048576 )); then
+            mv -f "${BRIDGE_LOG}" "${BRIDGE_LOG}.1"
+            : > "${BRIDGE_LOG}"
+        fi
+        # Stale socket cleanup — Unix sockets aren't auto-removed when
+        # the owner dies and bind() fails with EADDRINUSE on retry.
+        [[ -S "${BRIDGE_SOCK}" ]] && rm -f "${BRIDGE_SOCK}"
+        echo "[$(date +%H:%M:%S)] watchdog: spawning x2d_bridge serve" >> "${BRIDGE_LOG}"
+        python3.12 "${BRIDGE_PY}" serve --sock "${BRIDGE_SOCK}" \
+            >> "${BRIDGE_LOG}" 2>&1
+        local rc=$?
+        echo "[$(date +%H:%M:%S)] watchdog: bridge exited rc=$rc; sleeping ${backoff}s" \
+            >> "${BRIDGE_LOG}"
+        sleep "${backoff}"
+        case $backoff in
+            1)  backoff=2  ;;
+            2)  backoff=5  ;;
+            5)  backoff=10 ;;
+            10) backoff=30 ;;
+        esac
+    done
+}
+
+if [[ -n "${BRIDGE_PY:-}" ]] && \
+   ! pgrep -f "x2d_bridge.py serve" >/dev/null 2>&1; then
+    bridge_watchdog &
+    BRIDGE_WATCHDOG_PID=$!
+    trap 'kill -TERM "${BRIDGE_WATCHDOG_PID}" 2>/dev/null; \
+          pkill -TERM -f "x2d_bridge.py serve" 2>/dev/null' EXIT
+    # Wait up to 3s for the bridge to bind the socket so the shim's
+    # first ensure_socket() finds it ready and skips its own spawn.
+    for _ in 1 2 3 4 5 6; do
+        [[ -S "${BRIDGE_SOCK}" ]] && break
+        sleep 0.5
+    done
+fi
+
 cd "$(dirname "${BS_BIN}")"
 exec "${BS_BIN}" "$@"

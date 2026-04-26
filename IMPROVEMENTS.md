@@ -351,13 +351,13 @@ For every item:
   - **Done when**: brand-new install → Device tab is the agent-driven
     monitor view, not the OctoPrint-style placeholder.
 
-- [ ] **12. Auto-restart `x2d_bridge serve` on crash** in `run_gui.sh`.
+- [x] **12. Auto-restart `x2d_bridge serve` on crash** in `run_gui.sh`.
   - **Sub-tasks**:
-    - [ ] Replace the one-shot bridge spawn with a watchdog loop that
+    - [x] Replace the one-shot bridge spawn with a watchdog loop that
       respawns within 5s with exponential backoff capped at 30s.
-    - [ ] Stderr → rotating log at `~/.x2d/bridge.log` (size cap, 3
+    - [x] Stderr → rotating log at `~/.x2d/bridge.log` (size cap, 3
       generations).
-    - [ ] Integration test: kill the bridge mid-GUI session, observe it
+    - [x] Integration test: kill the bridge mid-GUI session, observe it
       relaunches and the shim's BridgeClient reconnects.
   - **Done when**: bridge can crash without taking the GUI's connectivity
     with it.
