@@ -47,6 +47,11 @@ a clean clone.
 
 ## Quick start
 
+**TL;DR runtime guide:** see [docs/QUICKSTART.md](docs/QUICKSTART.md)
+for the install → credentials → launch → connect → print walkthrough,
+plus copy-pasteable shortcuts for every print-control verb, the
+camera proxy URLs, and a troubleshooting table.
+
 ### Use the prebuilt distribution
 
 ### One-line install (recommended)
