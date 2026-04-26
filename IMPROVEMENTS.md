@@ -132,13 +132,13 @@ For every item:
   - **Done when**: every command verifiably changes printer state, idle or
     mid-print as appropriate.
 
-- [ ] **3. Camera proxy in `x2d_bridge`.** `x2d_bridge.py camera` spawns
+- [x] **3. Camera proxy in `x2d_bridge`.** `x2d_bridge.py camera` spawns
   ffmpeg to read the printer's RTSPS stream and re-emits MJPEG over an
   HTTP server bound to `127.0.0.1:8766`. Two endpoints:
   `/cam.mjpeg` (multipart/x-mixed-replace, browser-renderable) and
   `/cam.jpg` (one-shot snapshot).
   - **Sub-tasks**:
-    - [ ] Confirmed RTSP endpoint shape via BambuStudio source
+    - [x] Confirmed RTSP endpoint shape via BambuStudio source
       (`MediaPlayCtrl.cpp:322` → `rtsps://bblp:<code>@<ip>:322/streaming/live/1`).
       X2D-specific finding: port 322 is closed by default. The printer
       exposes the chamber stream on the proprietary LVL_Local TCP/6000
@@ -146,17 +146,17 @@ For every item:
       touchscreen (Settings → Network → Liveview), which flips
       `ipcam.rtsp_url` from `"disable"` to a real URL. Documented in
       the camera pre-flight error message and README.
-    - [ ] Implemented `camera` subcommand. Pre-flight signed-MQTT
+    - [x] Implemented `camera` subcommand. Pre-flight signed-MQTT
       pushall verifies `ipcam.rtsp_url != "disable"`; bails with a
       clear instruction if not. ffmpeg pump runs in a worker thread
       with exponential-backoff reconnect (1s→30s cap). Frames are
       sliced on the JPEG SOI marker (`\xff\xd8`) so partial reads
       never corrupt the visible frame.
-    - [ ] Single ffmpeg subprocess feeds an in-memory `latest_frame`
+    - [x] Single ffmpeg subprocess feeds an in-memory `latest_frame`
       buffer; the HTTP handler serves the same buffer to every
       connected viewer (multipart/x-mixed-replace), so 1 or 100
       browsers cost the same printer-side bandwidth.
-    - [ ] README adds `ffmpeg` to `pkg install` list and a "Camera
+    - [x] README adds `ffmpeg` to `pkg install` list and a "Camera
       proxy" usage example.
   - **Done when**: `curl http://127.0.0.1:8766/cam.mjpeg` streams real
     frames; a browser at the same URL plays smoothly for >5 minutes
