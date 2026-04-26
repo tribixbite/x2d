@@ -9,11 +9,14 @@
 #     a continuation prompt. The runtime feeds that prompt back to Claude
 #     as if the user had said it, and Claude keeps going.
 #   * The Stop hook fires for every session end — including ones triggered
-#     by our own block. The runtime sets `stop_hook_active: true` in the
-#     stdin JSON for those re-entries; we honour that flag and exit 0
-#     immediately so Claude can actually stop when the work is done.
-#   * We count `^- \[ \]` lines in IMPROVEMENTS.md. Zero unchecked items
-#     means everything is shipped, so we let Claude exit cleanly.
+#     by our own block. We deliberately ignore `stop_hook_active` because
+#     this loop is supposed to keep firing across many turns until the
+#     ledger is empty. The natural termination is "0 unchecked items" —
+#     `pending == 0` makes the script exit 0 without emitting JSON, so
+#     Claude is free to stop. If you want to bail out manually, edit
+#     IMPROVEMENTS.md to flip the open boxes (or Ctrl+C the session).
+#   * We count `^- \[ \] \*\*` lines in IMPROVEMENTS.md (top-level only;
+#     sub-task checkboxes don't keep the loop alive on their own).
 #
 # Output JSON shape:
 #   { "decision": "block",
@@ -28,11 +31,10 @@ set -uo pipefail
 ROOT="/data/data/com.termux/files/home/git/x2d"
 LEDGER="${ROOT}/IMPROVEMENTS.md"
 
-input="$(cat)"
-active="$(printf '%s' "$input" | jq -r '.stop_hook_active // false' 2>/dev/null || printf 'false')"
-if [ "$active" = "true" ]; then
-    exit 0
-fi
+# Drain stdin so Claude Code's hook plumbing doesn't see EPIPE, but we
+# don't actually need any field from the JSON. We DO NOT honour
+# stop_hook_active — see header comment.
+cat >/dev/null
 
 if [ ! -f "$LEDGER" ]; then
     exit 0
