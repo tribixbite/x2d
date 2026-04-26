@@ -264,6 +264,29 @@ Pre-flight checks `ipcam.rtsp_url` via signed MQTT and bails with a
 clear hint if liveview is still disabled. Pass `--skip-check` to bypass
 (useful when MQTT is flaky but RTSP is open).
 
+### Exposing the daemon / camera on the LAN
+
+`/state` `/healthz` `/cam.mjpeg` `/cam.jpg` are open on loopback by
+default (single-user local use). Binding non-loopback (`--http
+0.0.0.0:8765` or `--bind 0.0.0.0:8766`) requires a bearer token,
+otherwise every request returns `401 Unauthorized` with a
+`WWW-Authenticate: Bearer` hint:
+
+```
+# Generate a long random token, then:
+export X2D_AUTH_TOKEN=$(openssl rand -hex 32)
+x2d_bridge.py daemon --http 0.0.0.0:8765
+x2d_bridge.py camera --bind 0.0.0.0:8766
+
+# From another box on the LAN:
+curl -H "Authorization: Bearer $X2D_AUTH_TOKEN" http://<phone>:8765/healthz
+```
+
+`--auth-token` on the command line takes precedence over the env var.
+Loopback binds keep the open path even with a token configured? — no:
+once you set a token, loopback also enforces it, so the same `curl`
+command works against both `127.0.0.1` and a LAN-exposed bind.
+
 ### Bambu cloud login (optional)
 
 The bridge can talk to the Bambu Lab cloud REST API to populate the

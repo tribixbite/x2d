@@ -379,16 +379,16 @@ For every item:
   - **Done when**: with a logged-in session, the GUI's user-account
     dropdown shows the user's name.
 
-- [ ] **14. Bearer-token auth + bind-host flag** for daemon HTTP.
+- [x] **14. Bearer-token auth + bind-host flag** for daemon HTTP.
   - **Sub-tasks**:
-    - [ ] `--auth-token TOKEN` and `--bind HOST:PORT` (already partly
+    - [x] `--auth-token TOKEN` and `--bind HOST:PORT` (already partly
       there for `daemon`; extend to `camera`).
-    - [ ] Handler returns `401 Unauthorized` with `WWW-Authenticate:
+    - [x] Handler returns `401 Unauthorized` with `WWW-Authenticate:
       Bearer` if the token is wrong/missing AND the bind host isn't
       loopback.
-    - [ ] Loopback bind (`127.0.0.1`) keeps the no-auth shortcut so
+    - [x] Loopback bind (`127.0.0.1`) keeps the no-auth shortcut so
       local scripts don't break.
-    - [ ] README docs the LAN-exposure recipe with auth.
+    - [x] README docs the LAN-exposure recipe with auth.
   - **Done when**: `daemon --bind 0.0.0.0:8765 --auth-token xyz` rejects
     `curl http://<phone-ip>:8765/state` without `Authorization: Bearer xyz`.
 

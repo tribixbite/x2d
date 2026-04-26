@@ -377,10 +377,51 @@ def start_print(client: X2DClient, gcode_filename: str, *,
 # Optional HTTP status endpoint (so other tools can poll a JSON URL)
 # ---------------------------------------------------------------------------
 
+def _is_loopback(host: str) -> bool:
+    """True if the host is a loopback address (auth not required).
+    Anything else (LAN IP, 0.0.0.0) is treated as exposed and gates
+    on bearer-token auth when one is configured."""
+    return host in {"127.0.0.1", "::1", "localhost", ""}
+
+
+def _check_bearer(handler, expected: str | None, host: str) -> bool:
+    """Return True if the request is authorized. Loopback binds with
+    no token configured stay open (single-user local case). Any
+    non-loopback bind requires a token; missing/wrong token → 401
+    with WWW-Authenticate. Sends the response on rejection so the
+    caller just returns."""
+    if not expected:
+        if not _is_loopback(host):
+            handler.send_response(401)
+            handler.send_header("WWW-Authenticate", 'Bearer realm="x2d", '
+                                'error="invalid_request", '
+                                'error_description="--auth-token required for non-loopback binds"')
+            handler.end_headers()
+            return False
+        return True
+    auth = handler.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        handler.send_response(401)
+        handler.send_header("WWW-Authenticate", 'Bearer realm="x2d"')
+        handler.end_headers()
+        return False
+    presented = auth[len("Bearer "):].strip()
+    # Constant-time compare so we don't leak token length via timing.
+    import hmac
+    if not hmac.compare_digest(presented, expected):
+        handler.send_response(401)
+        handler.send_header("WWW-Authenticate", 'Bearer realm="x2d", '
+                            'error="invalid_token"')
+        handler.end_headers()
+        return False
+    return True
+
+
 def _serve_http(bind: str,
                 get_state: Callable[[], dict | None],
                 get_last_ts: Callable[[], float] | None = None,
-                max_staleness: float = 30.0) -> None:
+                max_staleness: float = 30.0,
+                auth_token: str | None = None) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     host_part, _, port_part = bind.rpartition(":")
@@ -392,6 +433,8 @@ def _serve_http(bind: str,
             return
 
         def do_GET(self):
+            if not _check_bearer(self, auth_token, host):
+                return
             if self.path == "/state":
                 state = get_state()
                 body = json.dumps(state or {}, indent=2).encode()
@@ -425,8 +468,10 @@ def _serve_http(bind: str,
                 self.end_headers()
 
     server = ThreadingHTTPServer((host, port), Handler)
+    auth_state = "auth required" if auth_token else \
+                 ("OPEN — loopback only" if _is_loopback(host) else "OPEN — exposed; pass --auth-token to require Bearer")
     print(f"[x2d-bridge] HTTP listening on http://{host}:{port}/state "
-          f"(+ /healthz, max-staleness {max_staleness}s)",
+          f"(+ /healthz, max-staleness {max_staleness}s; {auth_state})",
           file=sys.stderr)
     server.serve_forever()
 
@@ -1436,6 +1481,8 @@ def cmd_camera(args: argparse.Namespace) -> int:
     class CameraHandler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_): return
         def do_GET(self):  # noqa: N802
+            if not _check_bearer(self, args.auth_token or None, host):
+                return
             if self.path in ("/cam.mjpeg", "/"):
                 self.send_response(200)
                 self.send_header("Content-Type",
@@ -1535,7 +1582,8 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     if args.http:
         Thread(target=_serve_http,
                args=(args.http, lambda: latest_state,
-                     lambda: cli.last_message_ts, float(args.max_staleness)),
+                     lambda: cli.last_message_ts, float(args.max_staleness),
+                     args.auth_token or None),
                daemon=True).start()
 
     period = max(1, int(args.interval))
@@ -1648,6 +1696,12 @@ def main() -> int:
     d.add_argument("--max-staleness", type=float, default=30.0,
                    help="Seconds since last printer state push beyond which "
                         "/healthz returns 503 (default 30)")
+    d.add_argument("--auth-token",
+                   default=os.environ.get("X2D_AUTH_TOKEN", ""),
+                   help="Bearer token required for HTTP requests when "
+                        "--http binds non-loopback. Default $X2D_AUTH_TOKEN. "
+                        "Loopback binds (127.0.0.1) stay open even without "
+                        "a token (single-user local case).")
     d.set_defaults(fn=cmd_daemon)
 
     # ----- print-control verbs -----------------------------------------
@@ -1717,6 +1771,10 @@ def main() -> int:
     cm.add_argument("--skip-check", action="store_true",
                     help="Skip the ipcam.rtsp_url pre-flight (useful when "
                          "MQTT can't reach the printer but RTSP is open)")
+    cm.add_argument("--auth-token",
+                    default=os.environ.get("X2D_AUTH_TOKEN", ""),
+                    help="Bearer token required for HTTP requests when "
+                         "--bind is non-loopback. Default $X2D_AUTH_TOKEN.")
     cm.set_defaults(fn=cmd_camera)
 
     cli_login = sub.add_parser(
