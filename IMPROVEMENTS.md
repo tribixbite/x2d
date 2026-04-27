@@ -1581,12 +1581,38 @@ The Stop hook drives execution; commit + push between every checkbox.
     ffmpeg only, no external services). Linked from README §
     "Demo media" with a duration + description table.
 
-- [ ] **62. v1.0.0 release.**
+- [x] **62. v1.0.0 release.**
   - **Sub-tasks**:
-    - [ ] Tag, build, upload tarball + sha + per-platform notes.
-    - [ ] Announcement post.
-    - [ ] CHANGELOG with everything since v0.1.0.
+    - [x] Tag, build, upload tarball + sha + per-platform notes.
+      `git tag -a v1.0.0` annotated with the highlight summary +
+      `git push origin v1.0.0`. Refreshed
+      `dist/bambustudio-x2d-termux-aarch64.tar.xz` (150.6 MB; SHA-256
+      `b1b8f37bdaf89254ceec0ce29698e61ec71e7416a192cf4d561d084256f034b1`)
+      with every Phase 1-4 runtime/ subdir + web/ + mcp_x2d.py +
+      refreshed docs/. Tarball + .sha256 attached to the GitHub
+      release as assets. Per-platform notes (Termux primary;
+      Linux / mac / Windows) live in
+      `RELEASE_NOTES_v1.0.0.md` §"Per-platform notes".
+    - [x] Announcement post. `RELEASE_NOTES_v1.0.0.md` is the
+      GitHub Release body — what's new (six-surface daemon,
+      multi-printer everywhere, native HA integration with 32
+      entities, print queue, auto-timelapses, AI assistant,
+      WebRTC streaming, AMS color sync), 5-command quick install,
+      per-platform notes, full per-feature doc table, demo
+      media references, deferred-to-v1.1 items, tarball
+      verification command.
+    - [x] CHANGELOG with everything since v0.1.0. `CHANGELOG.md`
+      covers all 86 commits / 62 ledger items grouped by phase
+      (Phase 0 fixes #21-34, daemon expansion #36-40, MCP+WebRTC+
+      webui+auth #42-49, HA integration #50-54, features-Bambu-
+      doesn't-have #55-58, docs+release #59-62) plus the two
+      intentionally-deferred items (#35 + #41).
   - **Done when**: GitHub Releases shows v1.0.0 with full asset set.
+    **Done.** https://github.com/tribixbite/x2d/releases/tag/v1.0.0
+    is live with the v1.0.0 tag, the release notes body, and
+    both assets:
+    - `bambustudio-x2d-termux-aarch64.tar.xz` (150,585,388 bytes)
+    - `bambustudio-x2d-termux-aarch64.tar.xz.sha256` (104 bytes)
 
 ### Phase 0 deferred — device-required final verification
 
