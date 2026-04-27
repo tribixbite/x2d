@@ -735,18 +735,6 @@ The Stop hook drives execution; commit + push between every checkbox.
     `latest_state()` was non-None, and the bulk-disconnect on
     `_stop` released the proactive ref cleanly with no underflow.
 
-- [ ] **41. Print the rumi frame end-to-end via the GUI.**
-  - **Sub-tasks**:
-    - [ ] Open `rumi_frame.stl` (or `rumi.gcode.3mf`) in Prepare.
-    - [ ] Slice plate → no assertion popups.
-    - [ ] AMS slot 3 (brown/orange) auto-mapped.
-    - [ ] Click Print plate → SelectMachine dialog → X2D shown.
-    - [ ] Send → upload + start_print → physical print starts.
-    - [ ] Watch StatusPanel populate with live progress.
-  - **Done when**: photo of the rumi_frame.stl printing on the X2D
-    in PLA from AMS slot 3, taken via ADB screenshot of the camera
-    tab if streaming works OR documented physical observation.
-
 ### Phase 2 — MCP + WebRTC + thin web UI (items 42-49)
 
 - [ ] **42. MCP server stdio module** at `runtime/mcp/server.py`.
@@ -951,3 +939,19 @@ The Stop hook drives execution; commit + push between every checkbox.
       X2D state.
   - **Done when**: a brand new user can launch and use the GUI with
     zero papercuts.
+
+- [ ] **41. Print the rumi frame end-to-end via the GUI.** (Deferred to
+  end alongside #35 — requires ADB to drive the GUI and an actual
+  filament+plate ready on the printer; the bridge-side `start_print`
+  path is exercised by `runtime/network_shim/tests/test_shim_e2e.py`,
+  so the C-ABI surface is proven independent of this manual run.)
+  - **Sub-tasks**:
+    - [ ] Open `rumi_frame.stl` (or `rumi.gcode.3mf`) in Prepare.
+    - [ ] Slice plate → no assertion popups.
+    - [ ] AMS slot 3 (brown/orange) auto-mapped.
+    - [ ] Click Print plate → SelectMachine dialog → X2D shown.
+    - [ ] Send → upload + start_print → physical print starts.
+    - [ ] Watch StatusPanel populate with live progress.
+  - **Done when**: photo of the rumi_frame.stl printing on the X2D
+    in PLA from AMS slot 3, taken via ADB screenshot of the camera
+    tab if streaming works OR documented physical observation.
