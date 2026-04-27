@@ -588,14 +588,14 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: Prepare tab's AMS field shows "4 slots" with colors
     matching the printer's actual AMS state, no manual click needed.
 
-- [ ] **30. Network combobox lists SSDP X2D under "Other Device".**
+- [x] **30. Network combobox lists SSDP X2D under "Other Device".**
   Currently it shows nothing — only Bind options. The SSDP-discovered
   device should appear as a one-click selectable item.
   - **Sub-tasks**:
-    - [ ] Trace SelectMachinePop's "Other Device" populate logic.
-    - [ ] Wire the DeviceManager.localMachineList into that populate
+    - [x] Trace SelectMachinePop's "Other Device" populate logic.
+    - [x] Wire the DeviceManager.localMachineList into that populate
       path so SSDP-discovered devices show.
-    - [ ] Verify ADB: open bind popup, see "x2d (192.168.0.138)"
+    - [x] Verify ADB: open bind popup, see "x2d (192.168.0.138)"
       under Other Device, click → auto-fills Connect dialog.
   - **Done when**: LAN-discovered printer is one click away from
     being added.

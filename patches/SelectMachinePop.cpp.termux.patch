@@ -1,8 +1,24 @@
 diff --git a/src/slic3r/GUI/SelectMachinePop.cpp b/src/slic3r/GUI/SelectMachinePop.cpp
-index 7d4e568..da0fc53 100644
+index 7d4e568..eb5b9fc 100644
 --- a/src/slic3r/GUI/SelectMachinePop.cpp
 +++ b/src/slic3r/GUI/SelectMachinePop.cpp
-@@ -854,8 +854,15 @@ void SelectMachinePopup::OnLeftUp(wxMouseEvent &event)
+@@ -509,8 +509,13 @@ void SelectMachinePopup::update_other_devices()
+ 
+     for (auto &elem : m_free_machine_list) {
+         MachineObject *     mobj = elem.second;
+-        /* do not show printer bind state is empty */
+-        if (!mobj->is_avaliable()) continue;
++        /* do not show printer bind state is empty —
++         * Termux source patch (item #30): allow LAN-mode printers
++         * through even when bind_state == "occupied". An X2D bound
++         * to another account (DevBind.bambu.com: occupied) is still
++         * locally reachable via Access Code. Without this patch the
++         * SSDP-discovered X2D never appears under "Other Device". */
++        if (!mobj->is_avaliable() && !mobj->is_lan_mode_printer()) continue;
+ 
+         if (!wxGetApp().is_user_login() && !mobj->is_lan_mode_printer())
+             continue;
+@@ -854,8 +859,15 @@ void SelectMachinePopup::OnLeftUp(wxMouseEvent &event)
          //bind with access code
          auto dc_rect = m_panel_direct_connection->ClientToScreen(wxPoint(0, 0));
          if (mouse_pos.x > dc_rect.x && mouse_pos.y > dc_rect.y && mouse_pos.x < (dc_rect.x + m_panel_direct_connection->GetSize().x) && mouse_pos.y < (dc_rect.y + m_panel_direct_connection->GetSize().y)) {
@@ -18,7 +34,7 @@ index 7d4e568..da0fc53 100644
          }
  
          //hyper link
-@@ -1088,8 +1095,21 @@ PinCodePanel::PinCodePanel(wxWindow* parent, int type, wxWindowID winid /*= wxID
+@@ -1088,8 +1100,21 @@ PinCodePanel::PinCodePanel(wxWindow* parent, int type, wxWindowID winid /*= wxID
           }
       }
       else if (m_type == 1) {
