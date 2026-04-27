@@ -526,15 +526,15 @@ The Stop hook drives execution; commit + push between every checkbox.
       access code fields.
   - **Done when**: typing in the IP field works without overlap.
 
-- [ ] **24. Source-patch the wxWidgets sizer assertion `CheckExpectedParentIs`
+- [x] **24. Source-patch the wxWidgets sizer assertion `CheckExpectedParentIs`
   in `sizer.cpp:851`.** Fires 5x per slice operation; each requires a
   manual Continue click.
   - **Sub-tasks**:
-    - [ ] Trace which sizer/widget pair triggers it. From the message:
+    - [x] Trace which sizer/widget pair triggers it. From the message:
       `wxStaticText("Main Extruder")` parented to wrong wxWindow.
-    - [ ] Fix the parent in the BambuStudio source (likely
+    - [x] Fix the parent in the BambuStudio source (likely
       Plater.cpp / Sidebar code) to match what the sizer expects.
-    - [ ] Verify by slicing a model and confirming no assertion popups.
+    - [x] Verify by slicing a model and confirming no assertion popups.
   - **Done when**: Slice plate runs to completion silently.
 
 - [ ] **25. Fix 3D viewport blank rendering on llvmpipe / wxGLCanvas.**

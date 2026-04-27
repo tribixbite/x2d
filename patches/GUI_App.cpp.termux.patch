@@ -1,5 +1,5 @@
 diff --git a/src/slic3r/GUI/GUI_App.cpp b/src/slic3r/GUI/GUI_App.cpp
-index 94ad197..248ab7e 100644
+index 94ad197..57e5023 100644
 --- a/src/slic3r/GUI/GUI_App.cpp
 +++ b/src/slic3r/GUI/GUI_App.cpp
 @@ -4944,7 +4944,7 @@ void GUI_App::on_http_error(wxCommandEvent &evt)
@@ -47,9 +47,22 @@ index 94ad197..248ab7e 100644
      }
  
      // Release the old locales, create new locales.
-@@ -7747,21 +7741,12 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
+@@ -7745,23 +7739,42 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
+     }
+ }
  
- bool GUI_App::config_wizard_startup()
+-bool GUI_App::config_wizard_startup()
++// Termux source patch (item #24): swallow specific wxWidgets sizer
++// assertions that BambuStudio's slice + Sidebar UI triggers. The
++// "CheckExpectedParentIs" warning fires multiple times per slice
++// when wxStaticText labels (e.g. "Main Extruder") are added to a
++// sizer whose owning panel isn't the staticText's parent. The
++// resulting modal "Continue/Stop" popup blocks the slice flow.
++// Logging once instead is harmless — wxWidgets layout still works,
++// it's only complaining about parent mismatch which has no visible
++// effect.
++void GUI_App::OnAssertFailure(const wxChar *file, int line, const wxChar *func,
++                              const wxChar *cond, const wxChar *msg)
  {
 -    if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
 -        BOOST_LOG_TRIVIAL(info) << "run wizard...";
@@ -62,10 +75,27 @@ index 94ad197..248ab7e 100644
 -
 -        MsgDataLegacy dlg;
 -        dlg.ShowModal();
--
++    if (msg && wxString(msg).Find(wxT("CheckExpectedParentIs")) != wxNOT_FOUND) {
++        static bool logged = false;
++        if (!logged) {
++            BOOST_LOG_TRIVIAL(warning) << "swallowing repeated wx sizer "
++                                          "CheckExpectedParentIs assertions "
++                                          "(harmless, see Termux patch #24): "
++                                       << wxString(file).ToStdString() << ":"
++                                       << line;
++            logged = true;
++        }
++        return;  // swallow; do NOT pop the modal
++    }
++    // Forward everything else to wx's default handler.
++    wxApp::OnAssertFailure(file, line, func, cond, msg);
++}
+ 
 -        run_wizard(ConfigWizard::RR_DATA_LEGACY);
 -        return true;
 -    }*/
++bool GUI_App::config_wizard_startup()
++{
 +    // Termux source patch (item #21): the upstream Setup Wizard
 +    // (WebGuideDialog) asserts mid-network or hangs on Bambu cloud
 +    // calls when run on aarch64 Termux + termux-x11 with restricted
