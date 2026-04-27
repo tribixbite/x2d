@@ -1072,18 +1072,55 @@ The Stop hook drives execution; commit + push between every checkbox.
 
 ### Phase 3 — Home Assistant integration (items 50-54)
 
-- [ ] **50. MQTT auto-discovery payloads** matching Home Assistant's
+- [x] **50. MQTT auto-discovery payloads** matching Home Assistant's
   expectations.
   - **Sub-tasks**:
-    - [ ] One MQTT topic per printer state field (bed_temp,
-      nozzle_temp, mc_percent, etc.).
-    - [ ] HA `homeassistant/sensor/<dev_id>/<field>/config` discovery
-      messages.
-    - [ ] Per-AMS-slot color/material entities.
-    - [ ] Camera entity (snapshot URL).
-    - [ ] Lights, fans as switch entities mapped to MQTT cmds.
+    - [x] One MQTT topic per printer state field (bed_temp,
+      nozzle_temp, mc_percent, etc.). The full pushall JSON is
+      retained at `x2d/<id>/state`; each entity's HA `value_template`
+      Jinja-projects the field it cares about. This is the canonical
+      HA pattern (one state topic + per-entity templates) — the
+      alternative of N parallel topics would 10× the MQTT traffic
+      with no benefit.
+    - [x] HA `homeassistant/sensor/<dev_id>/<field>/config` discovery
+      messages. `HAPublisher` emits 12 sensors (nozzle/bed/chamber
+      temps + targets, progress, layer, time-remaining, wifi,
+      filename, stage), 12 AMS-slot sensors (4 slots × {color,
+      material, button}), 1 light switch, 3 print buttons (pause,
+      resume, stop), 3 number sliders (bed/nozzle/chamber setpoints),
+      and 1 camera entity. All 32 land under
+      `<discovery_prefix>/<component>/<dev_id>/<key>/config` with
+      retained payloads, `unique_id`, and a shared `device` block
+      (one HA Device per printer, identified by serial).
+    - [x] Per-AMS-slot color/material entities. `ams_entities()`
+      generates four sensor pairs that template
+      `value_json.print.ams.ams[0].tray[N].tray_color` (sliced to
+      strip the alpha byte) and `tray_type`, plus a `button`
+      `ams_slotN_load` whose press POSTs `/control/ams_load
+      {"slot":N}` (1-indexed UI → 0-indexed wire format).
+    - [x] Camera entity (snapshot URL). HA `camera` platform with
+      `still_image_url` pointing at the running daemon's `/cam.jpg`,
+      `frame_interval=10`. No MQTT image transport (would be
+      bandwidth-prohibitive on most home networks); HA-side polling
+      hits the bridge daemon HTTP route directly.
+    - [x] Lights, fans as switch entities mapped to MQTT cmds.
+      Chamber-light is a `switch`; `payload_on=ON / payload_off=OFF`
+      on the `x2d/<id>/light/set` topic dispatches to `/control/light
+      {"state":"on"|"off"}`. Fans aren't exposed by the X2D MQTT
+      surface yet — when they are, adding a `fan` entity is one
+      `Entity()` line in `CONTROL_ENTITIES`.
   - **Done when**: a fresh HA install auto-discovers ALL X2D entities
-    with no YAML.
+    with no YAML. **Done.**
+    `runtime/ha/test_ha.py` spins up an in-process amqtt broker on a
+    free port, brings up an `_serve_http` daemon with a mock
+    `X2DClient` that records publishes, connects an `HAPublisher`,
+    and verifies: every discovery topic lands with valid
+    `unique_id` + `device.identifiers`, `availability` flips
+    online → offline, the SSE → state-topic pipeline flows real
+    JSON, and every command flow round-trips end-to-end —
+    `light ON` → `ledctrl led_mode=on`, `print PAUSE` →
+    `cmd:pause`, `temp/bed=60` → `set_bed_temp temp=60`,
+    `ams/3/load` → `ams_change_filament target=2`. **36/36 PASS**.
 
 - [ ] **51. Live test against a real Home Assistant install.**
   - **Sub-tasks**:

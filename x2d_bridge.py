@@ -2653,6 +2653,39 @@ def cmd_webrtc(args: argparse.Namespace) -> int:
                        stun_servers=stun)
 
 
+def cmd_ha_publish(args: argparse.Namespace) -> int:
+    """Bridge a running x2d_bridge.py daemon's state to a Home Assistant
+    MQTT broker via the HA discovery protocol (item #50)."""
+    try:
+        from runtime.ha.publisher import run as _run_ha
+    except ImportError as e:
+        print(f"[x2d-bridge] HA publisher import failed: {e}\n"
+              "  Required: paho-mqtt (already a bridge dep).",
+              file=sys.stderr)
+        return 2
+    # Resolve serial from creds if --device-serial wasn't passed.
+    device_serial = args.device_serial
+    if not device_serial:
+        try:
+            ns = argparse.Namespace(ip=None, code=None, serial=None,
+                                     printer=(args.printer or None))
+            creds = Creds.resolve(ns)
+            device_serial = creds.serial
+        except SystemExit:
+            device_serial = args.printer or "default"
+    return _run_ha(
+        broker=args.broker,
+        daemon_url=args.daemon_url,
+        printer=args.printer or "",
+        device_serial=device_serial,
+        device_model=args.device_model,
+        discovery_prefix=args.discovery_prefix,
+        broker_username=args.broker_username or None,
+        broker_password=args.broker_password or None,
+        daemon_token=args.daemon_token or None,
+    )
+
+
 def cmd_printers(_args: argparse.Namespace) -> int:
     """List every [printer] / [printer:NAME] section in ~/.x2d/credentials.
     Output is JSON: `{"printers": [{"name": "", "ip": "...", "serial": "..."}, …]}`
@@ -2906,6 +2939,32 @@ def main() -> int:
              "the empty string.",
     )
     pl.set_defaults(fn=cmd_printers)
+
+    ha = sub.add_parser(
+        "ha-publish",
+        help="Bridge state from a running daemon to a Home Assistant "
+             "MQTT broker via HA discovery (item #50). Forwards "
+             "command topics back to /control/<verb> on the daemon.",
+    )
+    ha.add_argument("--broker", default="127.0.0.1:1883",
+                    help="MQTT broker host:port (default 127.0.0.1:1883)")
+    ha.add_argument("--broker-username", default=os.environ.get("X2D_HA_USER", ""),
+                    help="MQTT broker username (or $X2D_HA_USER)")
+    ha.add_argument("--broker-password", default=os.environ.get("X2D_HA_PASS", ""),
+                    help="MQTT broker password (or $X2D_HA_PASS)")
+    ha.add_argument("--daemon-url", default="http://127.0.0.1:8765",
+                    help="x2d_bridge daemon HTTP base URL")
+    ha.add_argument("--daemon-token", default=os.environ.get("X2D_AUTH_TOKEN", ""),
+                    help="Bearer token for the daemon (--auth-token side)")
+    ha.add_argument("--printer", default="",
+                    help="Printer name (matches --printer on daemon)")
+    ha.add_argument("--device-serial", default="",
+                    help="HA device identifier (defaults to printer's serial)")
+    ha.add_argument("--device-model", default="X2D",
+                    help="Model string for HA device card (default X2D)")
+    ha.add_argument("--discovery-prefix", default="homeassistant",
+                    help="HA discovery topic prefix (default homeassistant)")
+    ha.set_defaults(fn=cmd_ha_publish)
 
     wr = sub.add_parser(
         "webrtc",
