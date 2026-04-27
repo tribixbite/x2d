@@ -258,7 +258,7 @@ def main() -> int:
             ("button", "resume"),
             ("button", "stop"),
             ("button", "ams_slot3_load"),
-            ("camera", "snapshot"),
+            ("image", "snapshot"),
         ]:
             topic = f"homeassistant/{component}/{device_id}/{key}/config"
             payload = sniffer.wait_for(topic, timeout=3)

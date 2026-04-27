@@ -170,14 +170,19 @@ CONTROL_ENTITIES: list[Entity] = [
 ]
 
 
-# Camera entity references the bridge daemon's /cam.jpg URL directly.
-def camera_entity(snapshot_url: str) -> Entity:
+# Camera entity — published to a real MQTT topic where the publisher
+# pushes JPEG bytes periodically. HA's `mqtt.image` platform requires
+# `image_topic`; we satisfy that with `x2d/<id>/snapshot` and let the
+# next-iteration upload loop in #53 handle the actual byte push.
+# The discovery payload here just registers the entity; bytes start
+# flowing once #53 lands.
+def camera_entity(snapshot_url: str, base_topic: str) -> Entity:
     return Entity(
-        "camera", "snapshot", "Chamber camera",
+        "image", "snapshot", "Chamber camera",
         "", "", "", "", "mdi:camera",
-        extra={"topic":          "",  # we use URL-based, not topic
-                "still_image_url": snapshot_url,
-                "frame_interval":  10})
+        extra={"image_topic":   f"{base_topic}/snapshot",
+                "content_type":  "image/jpeg",
+                "url_template":  snapshot_url})
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +229,8 @@ class HAPublisher:
         # __BASE__ before any subscribe.
         self._entities = list(SENSOR_ENTITIES) + ams_entities() + \
                          list(CONTROL_ENTITIES) + [
-                             camera_entity(self.daemon_url + "/cam.jpg")]
+                             camera_entity(self.daemon_url + "/cam.jpg",
+                                            self.base_topic)]
         self._client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2, self._client_id)
         if broker_username:
@@ -281,7 +287,7 @@ class HAPublisher:
             payload["state_topic"] = self._state_topic()
             if entity.value_template:
                 payload["value_template"] = entity.value_template
-        if entity.component == "camera":
+        if entity.component in ("camera", "image"):
             payload.pop("availability_topic", None)
         if entity.unit:           payload["unit_of_measurement"] = entity.unit
         if entity.device_class:   payload["device_class"]        = entity.device_class

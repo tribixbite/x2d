@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "core.restore_state",
+  "data": [
+    {
+      "state": {"entity_id":"conversation.home_assistant","state":"unknown","attributes":{"friendly_name":"Home Assistant","supported_features":1},"last_changed":"2026-04-27T10:04:37.694107+00:00","last_reported":"2026-04-27T10:04:37.694107+00:00","last_updated":"2026-04-27T10:04:37.694107+00:00","context":{"id":"01KQ76BSDY98QG1SA9STJTYB0B","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:04:38.451954+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_ams_slot1_load","state":"unknown","attributes":{"icon":"mdi:tray-arrow-up","friendly_name":"Bambu Lab X2D AMS slot 1 load"},"last_changed":"2026-04-27T10:00:36.164435+00:00","last_reported":"2026-04-27T10:00:36.164435+00:00","last_updated":"2026-04-27T10:00:36.164435+00:00","context":{"id":"01KQ764DJ4GNRJJH92TEN9VHKN","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_ams_slot2_load","state":"unknown","attributes":{"icon":"mdi:tray-arrow-up","friendly_name":"Bambu Lab X2D AMS slot 2 load"},"last_changed":"2026-04-27T10:00:36.163479+00:00","last_reported":"2026-04-27T10:00:36.163479+00:00","last_updated":"2026-04-27T10:00:36.163479+00:00","context":{"id":"01KQ764DJ3N3GHEV1W4WK8W03F","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_ams_slot3_load","state":"unknown","attributes":{"icon":"mdi:tray-arrow-up","friendly_name":"Bambu Lab X2D AMS slot 3 load"},"last_changed":"2026-04-27T10:00:36.163756+00:00","last_reported":"2026-04-27T10:00:36.163756+00:00","last_updated":"2026-04-27T10:00:36.163756+00:00","context":{"id":"01KQ764DJ3N6D1KYF6RV9P1EJY","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_ams_slot4_load","state":"unknown","attributes":{"icon":"mdi:tray-arrow-up","friendly_name":"Bambu Lab X2D AMS slot 4 load"},"last_changed":"2026-04-27T10:00:36.163598+00:00","last_reported":"2026-04-27T10:00:36.163598+00:00","last_updated":"2026-04-27T10:00:36.163598+00:00","context":{"id":"01KQ764DJ310EEY8495H3TZET7","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_pause","state":"unknown","attributes":{"icon":"mdi:pause","friendly_name":"Bambu Lab X2D Pause print"},"last_changed":"2026-04-27T10:00:36.164362+00:00","last_reported":"2026-04-27T10:00:36.164362+00:00","last_updated":"2026-04-27T10:00:36.164362+00:00","context":{"id":"01KQ764DJ4W93VZBX9CHXZ5JAM","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_resume","state":"unknown","attributes":{"icon":"mdi:play","friendly_name":"Bambu Lab X2D Resume print"},"last_changed":"2026-04-27T10:00:36.163911+00:00","last_reported":"2026-04-27T10:00:36.163911+00:00","last_updated":"2026-04-27T10:00:36.163911+00:00","context":{"id":"01KQ764DJ3MVHRVBYQEQJBVGC7","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"button.x2d_20p9aj612700155_stop","state":"unknown","attributes":{"icon":"mdi:stop","friendly_name":"Bambu Lab X2D Stop print"},"last_changed":"2026-04-27T10:00:36.163644+00:00","last_reported":"2026-04-27T10:00:36.163644+00:00","last_updated":"2026-04-27T10:00:36.163644+00:00","context":{"id":"01KQ764DJ3WJN92SD4C2Z4V0SK","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"number.x2d_20p9aj612700155_bed_set","state":"0","attributes":{"min":0.0,"max":110.0,"step":1.0,"mode":"slider","unit_of_measurement":"°C","device_class":"temperature","icon":"mdi:thermometer","friendly_name":"Bambu Lab X2D Bed setpoint"},"last_changed":"2026-04-27T10:00:36.174545+00:00","last_reported":"2026-04-27T10:00:36.174545+00:00","last_updated":"2026-04-27T10:00:36.174545+00:00","context":{"id":"01KQ764DJECHE0EYW7S6MR869S","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_max_value": 110.0,
+        "native_min_value": 0.0,
+        "native_step": 1.0,
+        "native_unit_of_measurement": "°C",
+        "native_value": 0
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"number.x2d_20p9aj612700155_nozzle_set","state":"0","attributes":{"min":0.0,"max":320.0,"step":1.0,"mode":"slider","unit_of_measurement":"°C","device_class":"temperature","icon":"mdi:printer-3d-nozzle-heat","friendly_name":"Bambu Lab X2D Nozzle setpoint"},"last_changed":"2026-04-27T10:00:36.174631+00:00","last_reported":"2026-04-27T10:00:36.174631+00:00","last_updated":"2026-04-27T10:00:36.174631+00:00","context":{"id":"01KQ764DJE0SEJPYK93QTSQDVK","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_max_value": 320.0,
+        "native_min_value": 0.0,
+        "native_step": 1.0,
+        "native_unit_of_measurement": "°C",
+        "native_value": 0
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"number.x2d_20p9aj612700155_chamber_set","state":"unknown","attributes":{"min":0.0,"max":60.0,"step":1.0,"mode":"slider","unit_of_measurement":"°C","device_class":"temperature","icon":"mdi:thermometer-lines","friendly_name":"Bambu Lab X2D Chamber setpoint"},"last_changed":"2026-04-27T10:00:36.164000+00:00","last_reported":"2026-04-27T10:00:36.164000+00:00","last_updated":"2026-04-27T10:00:36.164000+00:00","context":{"id":"01KQ764DJ3H6YT45VEFA6N6EAF","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_max_value": 60.0,
+        "native_min_value": 0.0,
+        "native_step": 1.0,
+        "native_unit_of_measurement": "°C",
+        "native_value": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_nozzle_temp","state":"26.0","attributes":{"state_class":"measurement","unit_of_measurement":"°C","device_class":"temperature","friendly_name":"Bambu Lab X2D Nozzle temperature"},"last_changed":"2026-04-27T10:00:36.174759+00:00","last_reported":"2026-04-27T10:00:36.174759+00:00","last_updated":"2026-04-27T10:00:36.174759+00:00","context":{"id":"01KQ764DJE0BCRBMFM3RNDPR87","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "26.0",
+        "native_unit_of_measurement": "°C"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot2_material","state":"PLA","attributes":{"icon":"mdi:printer-3d-nozzle","friendly_name":"Bambu Lab X2D AMS slot 2 material"},"last_changed":"2026-04-27T10:00:36.174961+00:00","last_reported":"2026-04-27T10:00:36.174961+00:00","last_updated":"2026-04-27T10:00:36.174961+00:00","context":{"id":"01KQ764DJEEJ104S6XTAP0BTZW","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "PLA",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_nozzle_target","state":"0","attributes":{"state_class":"measurement","unit_of_measurement":"°C","device_class":"temperature","friendly_name":"Bambu Lab X2D Nozzle target"},"last_changed":"2026-04-27T10:00:36.174729+00:00","last_reported":"2026-04-27T10:00:36.174729+00:00","last_updated":"2026-04-27T10:00:36.174729+00:00","context":{"id":"01KQ764DJECWEVX4WQ56R8XHB8","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "0",
+        "native_unit_of_measurement": "°C"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot3_color","state":"#A03CF7","attributes":{"icon":"mdi:palette","friendly_name":"Bambu Lab X2D AMS slot 3 color"},"last_changed":"2026-04-27T10:00:36.174938+00:00","last_reported":"2026-04-27T10:00:36.174938+00:00","last_updated":"2026-04-27T10:00:36.174938+00:00","context":{"id":"01KQ764DJE8Z53Q73R9KVMGQ2E","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "#A03CF7",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_bed_temp","state":"24.0","attributes":{"state_class":"measurement","unit_of_measurement":"°C","device_class":"temperature","friendly_name":"Bambu Lab X2D Bed temperature"},"last_changed":"2026-04-27T10:00:36.174865+00:00","last_reported":"2026-04-27T10:00:36.174865+00:00","last_updated":"2026-04-27T10:00:36.174865+00:00","context":{"id":"01KQ764DJEC6AN9B8GBB710NHB","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "24.0",
+        "native_unit_of_measurement": "°C"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot3_material","state":"PLA","attributes":{"icon":"mdi:printer-3d-nozzle","friendly_name":"Bambu Lab X2D AMS slot 3 material"},"last_changed":"2026-04-27T10:00:36.174837+00:00","last_reported":"2026-04-27T10:00:36.174837+00:00","last_updated":"2026-04-27T10:00:36.174837+00:00","context":{"id":"01KQ764DJEE5EYFXHFVMB5KEBQ","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "PLA",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_bed_target","state":"0","attributes":{"state_class":"measurement","unit_of_measurement":"°C","device_class":"temperature","friendly_name":"Bambu Lab X2D Bed target"},"last_changed":"2026-04-27T10:00:36.174892+00:00","last_reported":"2026-04-27T10:00:36.174892+00:00","last_updated":"2026-04-27T10:00:36.174892+00:00","context":{"id":"01KQ764DJE4TSYYPPG8WK1GM41","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "0",
+        "native_unit_of_measurement": "°C"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot4_color","state":"#AF7933","attributes":{"icon":"mdi:palette","friendly_name":"Bambu Lab X2D AMS slot 4 color"},"last_changed":"2026-04-27T10:00:36.174983+00:00","last_reported":"2026-04-27T10:00:36.174983+00:00","last_updated":"2026-04-27T10:00:36.174983+00:00","context":{"id":"01KQ764DJEGR8VYSGZF5TGRJPY","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "#AF7933",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_chamber_temp","state":"unknown","attributes":{"state_class":"measurement","unit_of_measurement":"°C","device_class":"temperature","friendly_name":"Bambu Lab X2D Chamber temperature"},"last_changed":"2026-04-27T10:00:36.163734+00:00","last_reported":"2026-04-27T10:00:36.163734+00:00","last_updated":"2026-04-27T10:00:36.163734+00:00","context":{"id":"01KQ764DJ32S8MQA5PY04QAFWC","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": null,
+        "native_unit_of_measurement": "°C"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot4_material","state":"PLA","attributes":{"icon":"mdi:printer-3d-nozzle","friendly_name":"Bambu Lab X2D AMS slot 4 material"},"last_changed":"2026-04-27T10:00:36.174916+00:00","last_reported":"2026-04-27T10:00:36.174916+00:00","last_updated":"2026-04-27T10:00:36.174916+00:00","context":{"id":"01KQ764DJE4Q0XW3NS1ZNWYTD5","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "PLA",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_progress","state":"100","attributes":{"state_class":"measurement","unit_of_measurement":"%","icon":"mdi:progress-clock","friendly_name":"Bambu Lab X2D Print progress"},"last_changed":"2026-04-27T10:00:36.174594+00:00","last_reported":"2026-04-27T10:00:36.174594+00:00","last_updated":"2026-04-27T10:00:36.174594+00:00","context":{"id":"01KQ764DJECTFTQ475SNJ90TSC","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "100",
+        "native_unit_of_measurement": "%"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_current_layer","state":"unknown","attributes":{"state_class":"measurement","icon":"mdi:layers","friendly_name":"Bambu Lab X2D Current layer"},"last_changed":"2026-04-27T10:00:36.163366+00:00","last_reported":"2026-04-27T10:00:36.163366+00:00","last_updated":"2026-04-27T10:00:36.163366+00:00","context":{"id":"01KQ764DJ3FMSW6P8FQ19DEJEW","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": null,
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_total_layers","state":"6","attributes":{"state_class":"measurement","icon":"mdi:layers-outline","friendly_name":"Bambu Lab X2D Total layers"},"last_changed":"2026-04-27T10:00:36.175030+00:00","last_reported":"2026-04-27T10:00:36.175030+00:00","last_updated":"2026-04-27T10:00:36.175030+00:00","context":{"id":"01KQ764DJFEQG1PY26Z16F5Z9R","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "6",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_remaining","state":"0","attributes":{"state_class":"measurement","unit_of_measurement":"min","device_class":"duration","icon":"mdi:clock-outline","friendly_name":"Bambu Lab X2D Time remaining"},"last_changed":"2026-04-27T10:00:36.174669+00:00","last_reported":"2026-04-27T10:00:36.174669+00:00","last_updated":"2026-04-27T10:00:36.174669+00:00","context":{"id":"01KQ764DJE2CEWY6WRAZJM5Q7Y","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "0",
+        "native_unit_of_measurement": "min"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_wifi","state":"-58","attributes":{"state_class":"measurement","unit_of_measurement":"dBm","device_class":"signal_strength","friendly_name":"Bambu Lab X2D Wi-Fi signal"},"last_changed":"2026-04-27T10:00:36.174787+00:00","last_reported":"2026-04-27T10:00:36.174787+00:00","last_updated":"2026-04-27T10:00:36.174787+00:00","context":{"id":"01KQ764DJEVBE4PYG547ZFMQ0P","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "-58",
+        "native_unit_of_measurement": "dBm"
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_filename","state":"mira_frame.gcode","attributes":{"icon":"mdi:file","friendly_name":"Bambu Lab X2D Print job"},"last_changed":"2026-04-27T10:00:36.174474+00:00","last_reported":"2026-04-27T10:00:36.174474+00:00","last_updated":"2026-04-27T10:00:36.174474+00:00","context":{"id":"01KQ764DJEY7YQ637GFCRSMZ3Q","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "mira_frame.gcode",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_stage","state":"FINISH","attributes":{"icon":"mdi:state-machine","friendly_name":"Bambu Lab X2D Stage"},"last_changed":"2026-04-27T10:00:36.174696+00:00","last_reported":"2026-04-27T10:00:36.174696+00:00","last_updated":"2026-04-27T10:00:36.174696+00:00","context":{"id":"01KQ764DJEFD29W9YMGKTKM5K1","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "FINISH",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot1_color","state":"unknown","attributes":{"icon":"mdi:palette","friendly_name":"Bambu Lab X2D AMS slot 1 color"},"last_changed":"2026-04-27T10:00:36.164414+00:00","last_reported":"2026-04-27T10:00:36.164414+00:00","last_updated":"2026-04-27T10:00:36.164414+00:00","context":{"id":"01KQ764DJ4VT7HCAY25VY4X3Q1","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": null,
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot1_material","state":"","attributes":{"icon":"mdi:printer-3d-nozzle","friendly_name":"Bambu Lab X2D AMS slot 1 material"},"last_changed":"2026-04-27T10:00:36.174812+00:00","last_reported":"2026-04-27T10:00:36.174812+00:00","last_updated":"2026-04-27T10:00:36.174812+00:00","context":{"id":"01KQ764DJEBK1K672QSD30GPGD","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"sensor.x2d_20p9aj612700155_ams_slot2_color","state":"#F95D73","attributes":{"icon":"mdi:palette","friendly_name":"Bambu Lab X2D AMS slot 2 color"},"last_changed":"2026-04-27T10:00:36.175004+00:00","last_reported":"2026-04-27T10:00:36.175004+00:00","last_updated":"2026-04-27T10:00:36.175004+00:00","context":{"id":"01KQ764DJFPA8TNVHF4GXJEV4Q","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "#F95D73",
+        "native_unit_of_measurement": null
+      },
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    },
+    {
+      "state": {"entity_id":"switch.x2d_20p9aj612700155_light","state":"off","attributes":{"icon":"mdi:lightbulb","friendly_name":"Bambu Lab X2D Chamber light"},"last_changed":"2026-04-27T10:00:36.175055+00:00","last_reported":"2026-04-27T10:00:36.175055+00:00","last_updated":"2026-04-27T10:00:36.175055+00:00","context":{"id":"01KQ764DJFY22MNCFBD8P64XKP","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "2026-04-27T10:00:36.202482+00:00"
+    }
+  ]
+}
