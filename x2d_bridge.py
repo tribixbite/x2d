@@ -2705,35 +2705,91 @@ def cmd_webrtc(args: argparse.Namespace) -> int:
 
 def cmd_ha_publish(args: argparse.Namespace) -> int:
     """Bridge a running x2d_bridge.py daemon's state to a Home Assistant
-    MQTT broker via the HA discovery protocol (item #50)."""
+    MQTT broker via the HA discovery protocol (item #50). Without
+    `--printer`, spawns one HAPublisher per `[printer:NAME]` section
+    in ~/.x2d/credentials so HA gets a separate Device per printer
+    (item #54). Connection failures are isolated — if one printer's
+    publisher errors out, the others stay up."""
     try:
-        from runtime.ha.publisher import run as _run_ha
+        from runtime.ha.publisher import HAPublisher
     except ImportError as e:
         print(f"[x2d-bridge] HA publisher import failed: {e}\n"
               "  Required: paho-mqtt (already a bridge dep).",
               file=sys.stderr)
         return 2
-    # Resolve serial from creds if --device-serial wasn't passed.
-    device_serial = args.device_serial
-    if not device_serial:
+
+    # Build the work list: one entry per printer.
+    if args.printer:
+        targets = [(args.printer, args.device_serial)]
+    else:
+        names = Creds.list_names() or [""]
+        targets = []
+        for name in names:
+            serial = ""
+            try:
+                ns = argparse.Namespace(ip=None, code=None, serial=None,
+                                         printer=(name or None))
+                creds = Creds.resolve(ns)
+                serial = creds.serial
+            except SystemExit:
+                pass
+            targets.append((name, serial))
+    if args.device_serial and len(targets) == 1:
+        targets = [(targets[0][0], args.device_serial)]
+
+    host_part, _, port_part = args.broker.rpartition(":")
+    host = host_part or args.broker
+    port = int(port_part) if port_part.isdigit() else 1883
+
+    logging.basicConfig(
+        level=os.environ.get("X2D_HA_LOG", "INFO"),
+        format="[%(asctime)s] %(name)s %(levelname)s %(message)s")
+
+    publishers: list = []
+    failed: list[tuple[str, str]] = []
+    for name, serial in targets:
         try:
-            ns = argparse.Namespace(ip=None, code=None, serial=None,
-                                     printer=(args.printer or None))
-            creds = Creds.resolve(ns)
-            device_serial = creds.serial
-        except SystemExit:
-            device_serial = args.printer or "default"
-    return _run_ha(
-        broker=args.broker,
-        daemon_url=args.daemon_url,
-        printer=args.printer or "",
-        device_serial=device_serial,
-        device_model=args.device_model,
-        discovery_prefix=args.discovery_prefix,
-        broker_username=args.broker_username or None,
-        broker_password=args.broker_password or None,
-        daemon_token=args.daemon_token or None,
-    )
+            pub = HAPublisher(
+                broker_host=host, broker_port=port,
+                broker_username=args.broker_username or None,
+                broker_password=args.broker_password or None,
+                daemon_url=args.daemon_url,
+                daemon_token=args.daemon_token or None,
+                discovery_prefix=args.discovery_prefix,
+                printer_name=name or "",
+                device_serial=serial or name or "default",
+                device_model=args.device_model)
+            pub.start()
+            publishers.append(pub)
+            print(f"[x2d-ha] {name or '<default>'}: started "
+                  f"device_id={pub.device_id} base_topic={pub.base_topic}",
+                  file=sys.stderr, flush=True)
+        except Exception as e:
+            failed.append((name, str(e)))
+            print(f"[x2d-ha] {name or '<default>'}: start failed: {e} "
+                  "— other printers continue", file=sys.stderr)
+
+    if not publishers:
+        print(f"[x2d-ha] no publishers started: {failed}", file=sys.stderr)
+        return 2
+
+    # Run until interrupted.
+    import signal as _signal
+    stop = Event()
+    def _handle(_n, _f): stop.set()
+    _signal.signal(_signal.SIGINT, _handle)
+    _signal.signal(_signal.SIGTERM, _handle)
+    try:
+        while not stop.is_set():
+            stop.wait(1)
+    finally:
+        for p in publishers:
+            try: p.stop()
+            except Exception: pass
+    return 0
+
+
+import logging  # used by cmd_ha_publish above
 
 
 def cmd_printers(_args: argparse.Namespace) -> int:

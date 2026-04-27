@@ -121,17 +121,32 @@ matching `--auth-token` on the daemon side. The publisher will attach
 
 ## 6. Multi-printer
 
-Run one publisher per `[printer:NAME]` section in
-`~/.x2d/credentials`:
+Run `ha-publish` without `--printer` and it spawns one HAPublisher
+thread per `[printer:NAME]` section in `~/.x2d/credentials`,
+sharing one process. Each printer gets its own HA Device with
+distinct `device.identifiers`, namespaced `unique_id`s, and
+isolated availability/state/command topics:
 
 ```bash
-for name in studio garage; do
-  python3.12 x2d_bridge.py ha-publish \
-      --broker 127.0.0.1:1883 \
-      --printer "$name" \
-      --daemon-url http://127.0.0.1:8765 &
-done
+# ~/.x2d/credentials
+[printer:studio]
+ip = 192.168.1.42
+code = 12345678
+serial = 03ABC0001234567
+
+[printer:garage]
+ip = 192.168.1.43
+code = 87654321
+serial = 03DEF0007654321
+
+# one process drives both
+python3.12 x2d_bridge.py ha-publish \
+    --broker 127.0.0.1:1883 \
+    --daemon-url http://127.0.0.1:8765
 ```
 
-Each gets its own HA Device. Item #54 will fold this into a single
-publisher process for less daemon spam.
+Failures are isolated per-printer — if one publisher errors during
+startup the others stay up; if one publisher crashes mid-run, the
+others keep flowing.
+
+Use `--printer NAME` to drive only one printer (single-process mode).

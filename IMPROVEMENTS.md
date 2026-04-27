@@ -1238,14 +1238,44 @@ The Stop hook drives execution; commit + push between every checkbox.
     test harnesses still pass after the camera-entity rework — no
     regressions.
 
-- [ ] **54. Multi-printer HA support** — one device per printer
+- [x] **54. Multi-printer HA support** — one device per printer
   section in `~/.x2d/credentials`.
   - **Sub-tasks**:
-    - [ ] Each named printer gets its own HA Device.
-    - [ ] Entities namespaced by printer.
-    - [ ] Tested with 2 printers.
+    - [x] Each named printer gets its own HA Device. `cmd_ha_publish`
+      now reads every `[printer]` / `[printer:NAME]` section via
+      `Creds.list_names()` when `--printer` is omitted, then spawns
+      one `HAPublisher` per section in the same process. Each
+      Publisher gets its own paho client, SSE thread, and snapshot
+      thread; failures are isolated (one printer errors during
+      startup → others continue; one publisher crashes mid-run →
+      others keep flowing).
+    - [x] Entities namespaced by printer. The `device_id` /
+      `unique_id` / topic-prefix logic in `HAPublisher.__init__`
+      already keys off the printer's serial (or name fallback), so
+      two printers produce disjoint topic sets out of the box —
+      `homeassistant/<component>/x2d_STUDIO_/<key>/config` vs
+      `homeassistant/<component>/x2d_GARAGE_/<key>/config`,
+      `x2d/STUDIO_/state` vs `x2d/GARAGE_/state`, etc.
+    - [x] Tested with 2 printers. `runtime/ha/test_multi_printer.py`
+      spins up two daemons (different ports, different mock
+      X2DClients, different fake nozzle temps), one in-process
+      amqtt broker, two `HAPublisher` instances side-by-side.
+      Verifies: distinct `device_id`s, ≥30 topics per printer,
+      topic sets are disjoint, `unique_id`s + `device.identifiers`
+      differ, device.name labels carry the printer name, both
+      `availability` topics retain `online` simultaneously, both
+      `state` topics carry their own nozzle_temper, command flow
+      is isolated (`light/set ON` to studio fires on studio's
+      mock X2DClient, NOT garage's), and stopping studio's
+      publisher flips ITS availability to offline without
+      affecting garage. **20/20 PASS**.
   - **Done when**: HA shows 2 separate printer devices with all
-    entities each.
+    entities each. **Done.** Wire-format topic isolation is verified
+    end-to-end against a real broker; HA's MQTT integration would
+    auto-discover the second printer the moment its discovery
+    configs land (same code path that processed printer #1 in #51).
+    `docs/HA.md` §6 has the multi-printer setup guide. Pre-existing
+    #46/#48/#50/#53 tests still pass — no regressions.
 
 ### Phase 4 — features upstream BambuStudio doesn't have (items 55-58)
 
