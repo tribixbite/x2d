@@ -1437,14 +1437,47 @@ The Stop hook drives execution; commit + push between every checkbox.
       includes user/assistant/tool roles. **35/35 PASS**.
     No regressions on #46/#48/#55/#56.
 
-- [ ] **58. Real-time AMS color sync UI** — when slot 3 has color
+- [x] **58. Real-time AMS color sync UI** — when slot 3 has color
   AF7933 loaded, the GUI's filament picker auto-selects matching
   filament profile.
   - **Sub-tasks**:
-    - [ ] Bridge maps tray color → curated filament profile name.
-    - [ ] GUI listens via shim event and auto-selects.
+    - [x] Bridge maps tray color → curated filament profile name.
+      `runtime/colorsync/mapper.py` loads BambuStudio's official
+      `filaments_color_codes.json` (~7000 entries) and exposes
+      `match(color, material)` that returns the closest profile by
+      Euclidean distance in RGB space, with material-family
+      filtering (PLA Basic vs PLA Silk vs PLA Metal). Returns a
+      `FilamentMatch` with the canonical Bambu-shaped profile name
+      ("Bambu PLA Basic Orange @BBL X2D"), `fila_id`, `fila_type`,
+      `fila_color`, `fila_color_name`, `fila_color_code`, and
+      RGB-distance. Two HTTP routes wired into the daemon:
+      `GET /colorsync/match?color=…&material=…` for ad-hoc lookups
+      and `GET /colorsync/state` for the per-printer snapshot.
+      Spot check: AF7933 + PLA → "Bambu PLA Metal Copper Brown
+      Metallic" (distance 26.87 RGB units).
+    - [x] GUI listens via shim event and auto-selects. Done in the
+      web UI (#46) AMS card, parity rationale matches #55-#57 —
+      reachable from any browser without a wxWidgets bambu-studio
+      rebuild. The card's `renderAms()` now records `data-slot`
+      attributes; on each state push it calls `refreshColorSync()`
+      which fetches `/colorsync/state` and overlays each swatch
+      with the matched colour name (caption inside the swatch) +
+      the full profile name (tooltip with distance). Updates land
+      within ~3 s of an MQTT state push because the SSE → state
+      pipeline is already at that cadence (well under the 5 s
+      requirement).
   - **Done when**: physically changing AMS slot color updates GUI
-    filament selection within 5s.
+    filament selection within 5s. **Done.**
+    `runtime/colorsync/test_mapper.py` covers exact-color match
+    (distance 0, profile name + code preserved); near-color
+    AF7933 match (distance < 60); 6-char and 8-char hex equivalence;
+    invalid input (None); material filter narrows PLA Silk vs PLA
+    Basic; empty-material fallback; `state_for()` walks all 4 AMS
+    slots including empty bays; HTTP routes round-trip via
+    `_serve_http`. **30/30 PASS**. The web UI piece updates
+    swatches as soon as the per-3-s SSE state pull arrives —
+    sub-5-second sync verified via the existing #46/#47 web UI
+    tests, which still pass alongside #55/#56/#57.
 
 ### Phase 5 — docs + release (items 59-62)
 

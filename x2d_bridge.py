@@ -909,6 +909,31 @@ def _serve_http(bind: str,
                 jobs = [j.to_dict() for j in queue_mgr.list()]
                 self._send_json({"jobs": jobs})
                 return
+            # Item #58: AMS color → filament profile match.
+            if path == "/colorsync/match":
+                qs = urllib.parse.parse_qs(url.query)
+                color = (qs.get("color", [""])[0] or "").strip()
+                material = (qs.get("material", [""])[0] or "").strip()
+                if not color:
+                    self._send_json({"error":
+                        "expected ?color=RRGGBB[AA]&material=…"},
+                        status=400); return
+                from runtime.colorsync.mapper import match as _cs_match
+                m = _cs_match(color, material=material or None)
+                if m is None:
+                    self._send_json({"error":
+                        f"no match for color={color!r}"},
+                        status=404); return
+                from dataclasses import asdict as _asdict
+                self._send_json(_asdict(m))
+                return
+            if path == "/colorsync/state":
+                from runtime.colorsync.mapper import state_for as _cs_state
+                printers_out: dict = {}
+                for p in names:
+                    printers_out[p] = _cs_state(get_state(p))
+                self._send_json({"printers": printers_out})
+                return
             # Item #56: timelapse browser — listing + per-frame +
             # stitched MP4 fetch.
             if path == "/timelapses":

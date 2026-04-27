@@ -230,6 +230,7 @@
         const div = document.createElement("div");
         const empty = !tray || !tray.tray_color;
         div.className = "swatch" + (empty ? " empty" : "");
+        div.dataset.slot = slotIdx;
         if (!empty) {
           div.style.background = "#" + tray.tray_color.slice(0, 6);
           div.title = `${tray.tray_type} ${tray.tray_sub_brands || ""}`.trim();
@@ -242,6 +243,42 @@
         grid.appendChild(div);
       });
     });
+    // Item #58: pull color → filament-profile matches and overlay
+    // the resolved profile name as a tooltip + caption under each
+    // swatch.
+    refreshColorSync();
+  }
+
+  let _csTimer = null;
+  async function refreshColorSync() {
+    if (_csTimer) return;  // de-dupe rapid state pushes
+    _csTimer = setTimeout(() => { _csTimer = null; }, 1500);
+    try {
+      const r = await fetch("/colorsync/state");
+      if (!r.ok) return;
+      const data = await r.json();
+      const slots = (data.printers || {})[activePrinter || ""] || [];
+      slots.forEach((s) => {
+        const swatch = document.querySelector(
+          `#ams-slots .swatch[data-slot="${s.slot}"]`);
+        if (!swatch) return;
+        if (!s.match) {
+          swatch.title = swatch.title || "";
+          return;
+        }
+        const m = s.match;
+        const dist = (m.distance || 0).toFixed(0);
+        swatch.title = `${m.profile} (Δ${dist})`;
+        // Overlay the short colour name as a sub-caption.
+        let cap = swatch.querySelector(".swatch-cap");
+        if (!cap) {
+          cap = document.createElement("span");
+          cap.className = "swatch-cap";
+          swatch.appendChild(cap);
+        }
+        cap.textContent = m.fila_color_name || "";
+      });
+    } catch (e) { /* ignore */ }
   }
 
   // --- control actions -------------------------------------------------
