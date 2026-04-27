@@ -700,16 +700,40 @@ The Stop hook drives execution; commit + push between every checkbox.
     `_ACCESS_LOG_MAX_BYTES` to 200 and writing 10 records — `.log.1`
     rotated as expected.
 
-- [ ] **40. Bridge auto-connect on SSDP-creds match (Phase 0.5
+- [x] **40. Bridge auto-connect on SSDP-creds match (Phase 0.5
   carryover, kept for resilience).**
   - **Sub-tasks**:
-    - [ ] When SSDP NOTIFY's dev_id matches a creds section's serial,
-      bridge opens the MQTT subscription proactively.
-    - [ ] Cached state replays on every shim subscribe.
-    - [ ] Even if Phase 0 fixes the GUI Connect path, this gives
-      sub-second StatusPanel population on launch.
+    - [x] When SSDP NOTIFY's dev_id matches a creds section's serial,
+      bridge opens the MQTT subscription proactively. `ServeServer`
+      loads `~/.x2d/credentials` at startup into `_known_creds`
+      (`{serial: (code, name)}`), and `_ssdp_loop` calls
+      `_maybe_auto_connect(parsed)` on every NOTIFY. On a match the
+      session is acquired through the existing `get_or_open_printer`
+      path with one persistent refcount, so the MQTT connection
+      survives shim subscribe/unsubscribe cycles. IP changes are
+      tolerated — `get_or_open_printer` rebuilds on `dev_ip`/`code`
+      mismatch and the old proactive ref is released.
+    - [x] Cached state replays on every shim subscribe. Already
+      implemented by item #29 — `_PrinterSession._latest_state` is
+      populated by `_dispatch_state` (the on-state callback) and
+      `_op_subscribe_local` flushes it to the new subscriber via
+      `latest_state()` immediately on subscribe.
+    - [x] Even if Phase 0 fixes the GUI Connect path, this gives
+      sub-second StatusPanel population on launch. Live test below
+      shows MQTT state arrives ~5s after auto-connect (one full
+      `pushall` round-trip), so the very first shim subscribe sees
+      a populated state cache rather than the 30s wait for the
+      next push.
   - **Done when**: Device tab shows live state immediately on launch
-    without ANY user action in the GUI.
+    without ANY user action in the GUI. **Done.** Live verification
+    against real X2D `20P9AJ612700155 @ 192.168.0.138`:
+    `python3.12 -c "from x2d_bridge import ServeServer; …"` →
+    SSDP NOTIFY parsed at t=6s, auto-connect fired
+    (`[serve] auto-connect 20P9AJ612700155@192.168.0.138 (proactive,
+    matched creds section '<default>')`), MQTT state cached
+    within ~5s of acquire. `_proactive_sessions` held one entry,
+    `latest_state()` was non-None, and the bulk-disconnect on
+    `_stop` released the proactive ref cleanly with no underflow.
 
 - [ ] **41. Print the rumi frame end-to-end via the GUI.**
   - **Sub-tasks**:

@@ -928,6 +928,42 @@ class ServeServer:
         # printer's next 30-second broadcast.
         self._ssdp_cache: dict[str, dict] = {}
         self._ssdp_thread: Thread | None = None
+        # Item #40: serial → (code, name) map loaded from ~/.x2d/credentials
+        # so the SSDP loop can recognise our own printers when their NOTIFY
+        # arrives and open the MQTT subscription proactively.
+        self._known_creds: dict[str, tuple[str, str]] = self._load_known_creds()
+        # Refcount holder: any session opened proactively from SSDP (item #40)
+        # gets one persistent acquire() so the connection survives across
+        # shim subscribe/unsubscribe cycles. Released on serve_forever exit.
+        self._proactive_sessions: dict[str, _PrinterSession] = {}
+
+    @staticmethod
+    def _load_known_creds() -> dict[str, tuple[str, str]]:
+        """Read every [printer] / [printer:NAME] section in
+        ~/.x2d/credentials and return {serial: (code, name)}. Quietly
+        returns {} if the file is missing or malformed — the bridge stays
+        usable for unrecognised printers via the lazy shim path."""
+        path = Path.home() / ".x2d" / "credentials"
+        if not path.exists():
+            return {}
+        cp = configparser.ConfigParser()
+        try:
+            cp.read(path)
+        except configparser.Error:
+            return {}
+        out: dict[str, tuple[str, str]] = {}
+        for section in cp.sections():
+            if section == "printer":
+                name = ""
+            elif section.startswith("printer:"):
+                name = section.split(":", 1)[1]
+            else:
+                continue
+            serial = cp.get(section, "serial", fallback="").strip()
+            code = cp.get(section, "code", fallback="").strip()
+            if serial and code:
+                out[serial] = (code, name)
+        return out
 
     # --- SSDP discovery -----------------------------------------------
 
@@ -1049,6 +1085,17 @@ class ServeServer:
             _metric_global_inc("ssdp_notifies_total")
             with self._ssdp_lock:
                 listeners = list(self._ssdp_listeners)
+            # Item #40: proactive auto-connect. If this NOTIFY's USN
+            # matches a credentials section's serial, open the MQTT
+            # subscription before any shim asks. _PrinterSession is
+            # refcounted, so a persistent acquire() here keeps the
+            # connection live across shim subscribe/unsubscribe cycles
+            # — and the cached state replay (#29) means the GUI's
+            # StatusPanel populates within milliseconds of subscribe.
+            try:
+                self._maybe_auto_connect(parsed)
+            except Exception as e:
+                print(f"[serve] ssdp auto-connect failed: {e}", file=sys.stderr)
             # Fire-and-forget: ensure the AppConfig has a Bambu preset
             # so the GUI's Device tab works on first launch (#17).
             try:
@@ -1108,6 +1155,58 @@ class ServeServer:
             "ssdp_version":   headers.get("devversion.bambu.com", ""),
             "connection_name": "",
         }
+
+    def _maybe_auto_connect(self, parsed: dict) -> None:
+        """Item #40: open MQTT proactively when an SSDP NOTIFY matches a
+        known credentials section. Idempotent — only one persistent
+        acquire() per serial, so repeated NOTIFYs (every ~30s) don't
+        rack up the refcount. IP changes are tolerated because
+        get_or_open_printer rebuilds the session on mismatch."""
+        dev_id = parsed.get("dev_id", "")
+        dev_ip = parsed.get("dev_ip", "")
+        if not dev_id or not dev_ip:
+            return
+        creds = self._known_creds.get(dev_id)
+        if creds is None:
+            return
+        code, _name = creds
+        with self._printers_lock:
+            existing = self._proactive_sessions.get(dev_id)
+            existing_ip = existing.dev_ip if existing else None
+        # If we already hold a proactive ref AND IP is unchanged → done.
+        if existing is not None and existing_ip == dev_ip:
+            return
+        # Either fresh or IP changed; acquire (will rebuild on IP mismatch).
+        try:
+            sess = self.get_or_open_printer(dev_id, dev_ip, code)
+        except _OpError as e:
+            print(f"[serve] auto-connect {dev_id}@{dev_ip} failed: {e}",
+                  file=sys.stderr)
+            return
+        with self._printers_lock:
+            stale = self._proactive_sessions.get(dev_id)
+            self._proactive_sessions[dev_id] = sess
+        # Drop the previous proactive ref now that the new one is in place.
+        if stale is not None and stale is not sess:
+            try:
+                stale.release()
+            except Exception:
+                pass
+        print(f"[serve] auto-connect {dev_id}@{dev_ip} (proactive, "
+              f"matched creds section {_name or '<default>'!r})",
+              file=sys.stderr)
+
+    def _release_proactive_sessions(self) -> None:
+        """Drop the persistent SSDP-driven refs at shutdown so MQTT
+        connections close cleanly."""
+        with self._printers_lock:
+            sessions = list(self._proactive_sessions.values())
+            self._proactive_sessions.clear()
+        for sess in sessions:
+            try:
+                sess.release()
+            except Exception:
+                pass
 
     # --- printer registry ---------------------------------------------
 
@@ -1182,6 +1281,9 @@ class ServeServer:
             self.sock_path.unlink()
         except FileNotFoundError:
             pass
+        # Drop SSDP-driven proactive refs (#40) before the bulk close
+        # so refcounts don't underflow when we hit the disconnect loop.
+        self._release_proactive_sessions()
         # Disconnect every active printer cleanly.
         with self._printers_lock:
             for sess in self._printers.values():
