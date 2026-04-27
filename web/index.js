@@ -70,6 +70,8 @@
   function boot() {
     // Queue card init (#55)
     initQueue();
+    // Timelapse card init (#56)
+    initTimelapses();
     // ?capture=1 disables SSE + camera polling so headless screenshot
     // tools (chromium-browser --headless --screenshot) don't block on
     // a never-ending page-load. Inject a one-shot fake state so the
@@ -449,4 +451,133 @@
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
     }[c]));
   }
+
+  // ===== timelapse card (#56) =================================
+  const $tlSelect = document.getElementById("tl-select");
+  const $tlMeta   = document.getElementById("tl-meta");
+  const $tlThumbs = document.getElementById("tl-thumbs");
+  const $tlStitch = document.getElementById("tl-stitch");
+  const $tlPlay   = document.getElementById("tl-play");
+  const $tlVideo  = document.getElementById("tl-video");
+  let _tlJobs = [];
+
+  function initTimelapses() {
+    if (!$tlSelect) return;
+    $tlSelect.addEventListener("change", onTlSelect);
+    $tlStitch.addEventListener("click",  onTlStitch);
+    $tlPlay.addEventListener("click",    onTlPlay);
+    refreshTimelapses();
+    setInterval(refreshTimelapses, 8000);
+  }
+
+  async function refreshTimelapses() {
+    try {
+      const r = await fetch("/timelapses");
+      if (!r.ok) return;
+      const data = await r.json();
+      _tlJobs = data.jobs || [];
+      const prev = $tlSelect.value;
+      $tlSelect.innerHTML = '<option value="">— pick a job —</option>';
+      _tlJobs.forEach(j => {
+        const o = document.createElement("option");
+        o.value = `${j.printer}/${j.job_id}`;
+        o.textContent = `${j.printer}: ${j.subtask_name || j.job_id} ` +
+          `(${j.frame_count} frames` +
+          (j.mp4_ready ? ", MP4" : "") + ")";
+        $tlSelect.appendChild(o);
+      });
+      if (prev) $tlSelect.value = prev;
+    } catch (e) { /* ignore */ }
+  }
+
+  function currentJob() {
+    return _tlJobs.find(j => `${j.printer}/${j.job_id}` === $tlSelect.value);
+  }
+
+  async function onTlSelect() {
+    const job = currentJob();
+    $tlVideo.hidden = true;
+    $tlVideo.removeAttribute("src");
+    if (!job) {
+      $tlMeta.textContent = "";
+      $tlThumbs.innerHTML = '<div class="empty">no job selected</div>';
+      $tlStitch.disabled = true;
+      $tlPlay.disabled = true;
+      return;
+    }
+    const dur = job.ended && job.started
+      ? Math.round((job.ended - job.started) / 60) + " min"
+      : "in progress";
+    $tlMeta.textContent =
+      `${job.frame_count} frames · ${dur} · ` +
+      (job.mp4_ready ? `MP4 ${(job.mp4_size/1024/1024).toFixed(1)} MB` : "no MP4 yet");
+    $tlStitch.disabled = job.frame_count === 0;
+    $tlPlay.disabled = !job.mp4_ready;
+
+    // Load frame list
+    $tlThumbs.innerHTML = '<div class="empty">loading…</div>';
+    try {
+      const url = `/timelapses/${encodeURIComponent(job.printer)}/${encodeURIComponent(job.job_id)}`;
+      const r = await fetch(url);
+      const data = await r.json();
+      const frames = data.frames || [];
+      $tlThumbs.innerHTML = "";
+      if (!frames.length) {
+        $tlThumbs.innerHTML = '<div class="empty">no frames yet</div>';
+        return;
+      }
+      // Show up to 24 thumbnails (sample evenly).
+      const N = Math.min(24, frames.length);
+      const stride = Math.max(1, Math.floor(frames.length / N));
+      for (let i = 0; i < frames.length; i += stride) {
+        const img = document.createElement("img");
+        img.src = `${url}/${frames[i]}`;
+        img.alt = frames[i];
+        img.loading = "lazy";
+        img.addEventListener("click", () => {
+          $tlVideo.hidden = true;
+          window.open(img.src, "_blank");
+        });
+        $tlThumbs.appendChild(img);
+      }
+    } catch (e) {
+      $tlThumbs.innerHTML = '<div class="empty">load failed</div>';
+    }
+  }
+
+  async function onTlStitch() {
+    const job = currentJob();
+    if (!job) return;
+    $tlStitch.disabled = true;
+    $tlStitch.textContent = "stitching…";
+    try {
+      const url = `/timelapses/${encodeURIComponent(job.printer)}/${encodeURIComponent(job.job_id)}/stitch`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fps: 30 }),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        log(`stitched ${data.frames} frames → ${(data.size/1024/1024).toFixed(1)} MB`);
+      } else {
+        log("stitch failed: " + (data.error || "unknown"));
+      }
+      await refreshTimelapses();
+      onTlSelect();
+    } finally {
+      $tlStitch.disabled = false;
+      $tlStitch.textContent = "stitch MP4";
+    }
+  }
+
+  function onTlPlay() {
+    const job = currentJob();
+    if (!job || !job.mp4_ready) return;
+    const url = `/timelapses/${encodeURIComponent(job.printer)}/${encodeURIComponent(job.job_id)}/timelapse.mp4`;
+    $tlVideo.src = url;
+    $tlVideo.hidden = false;
+    $tlVideo.play().catch(() => {});
+  }
+
 })();

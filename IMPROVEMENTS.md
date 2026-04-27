@@ -1331,12 +1331,55 @@ The Stop hook drives execution; commit + push between every checkbox.
     Pre-existing #46/#47/#48/#50/#53 tests still PASS — no
     regressions.
 
-- [ ] **56. Snapshot / timelapse browser** sub-tab.
+- [x] **56. Snapshot / timelapse browser** sub-tab.
   - **Sub-tasks**:
-    - [ ] Bridge auto-records a frame every 30s during prints.
-    - [ ] GUI sub-tab shows thumbnails per print job.
-    - [ ] One-click stitch into MP4 timelapse via ffmpeg.
+    - [x] Bridge auto-records a frame every 30s during prints.
+      `runtime/timelapse/recorder.py` `TimelapseRecorder.on_state`
+      hooks the daemon's per-printer state callback. When
+      `gcode_state in {RUNNING, PREPARE, SLICING, PAUSE}` OR
+      `0 < mc_percent < 100`, a per-printer capture thread starts
+      and pulls `/snapshot.jpg` every `--timelapse-interval`
+      seconds (default 30) into
+      `~/.x2d/timelapses/<printer>/<job_id>/00001.jpg, 00002.jpg, …`.
+      `subtask_name` becomes the (sanitised) job_id; collisions
+      get a `_2`, `_3`, … suffix. `meta.json` is rewritten on
+      every frame so the web UI sees live frame counts mid-print.
+      On transition back to idle (FINISH/IDLE/READY), the capture
+      thread stops and `meta.ended` is recorded.
+    - [x] GUI sub-tab shows thumbnails per print job. New
+      "Timelapses" card in the web UI: a job picker dropdown,
+      a duration/frame-count meta line, and a CSS-grid of up to
+      24 thumbnails sampled evenly across the captured frames.
+      Tap a thumbnail to open the full-resolution JPEG in a new
+      tab. Same UX as the BambuStudio Device-tab "Timelapse"
+      sub-tab callout in the original ledger entry, but reachable
+      from any browser including mobile (rationale documented in
+      #55: keep parity across all five Phase 2 surfaces).
+    - [x] One-click stitch into MP4 timelapse via ffmpeg.
+      `recorder.stitch(printer, job_id, fps=30)` shells out to
+      `ffmpeg -y -framerate 30 -i %05d.jpg -c:v libx264
+      -pix_fmt yuv420p -vf pad=ceil(iw/2)*2:ceil(ih/2)*2
+      -movflags +faststart timelapse.mp4`. The pad filter handles
+      odd-pixel JPEG dimensions H.264 would reject; faststart
+      lets HTML5 `<video>` start playing before the file fully
+      loads. POST `/timelapses/<p>/<j>/stitch` exposes it; GET
+      `/timelapses/<p>/<j>/timelapse.mp4` serves the result.
+      The web UI's "stitch MP4" button POSTs and re-renders;
+      the "play" button binds the URL to an inline `<video>`.
   - **Done when**: completed print's timelapse playable from the GUI.
+    **Done.** Two test harnesses (39/39 PASS total):
+    1. `runtime/timelapse/test_recorder.py` (24 checks): drives
+       the recorder through RUNNING→FINISH against a synthetic
+       JPEG-serving camera, asserts ≥3 frames captured, meta.json
+       updated, frame-path traversal rejected, real ffmpeg
+       produces a valid MP4 with `ftyp` box.
+    2. `runtime/timelapse/test_http.py` (15 checks): drives the
+       five daemon HTTP routes — list jobs, list frames, fetch
+       frame, POST stitch (real ffmpeg), GET timelapse.mp4 —
+       and confirms the served MP4 starts with `ftyp` and
+       Content-Type=video/mp4.
+    Pre-existing #46/#47/#48/#50/#53/#55 tests still PASS — no
+    regressions.
 
 - [ ] **57. AI assistant panel** in the GUI talking to the local MCP
   server.

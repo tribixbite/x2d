@@ -660,7 +660,8 @@ def _serve_http(bind: str,
                 printer_names: list[str] | None = None,
                 clients: dict | None = None,
                 web_dir: Path | None = None,
-                queue_mgr=None) -> None:
+                queue_mgr=None,
+                timelapse_rec=None) -> None:
     """Multi-printer HTTP server (item #36).
 
     `get_state` and `get_last_ts` now take a printer name (empty string
@@ -693,6 +694,7 @@ def _serve_http(bind: str,
     import urllib.parse
     import urllib.request
     import urllib.error
+    import re
 
     host_part, _, port_part = bind.rpartition(":")
     host = host_part or "127.0.0.1"
@@ -907,6 +909,51 @@ def _serve_http(bind: str,
                 jobs = [j.to_dict() for j in queue_mgr.list()]
                 self._send_json({"jobs": jobs})
                 return
+            # Item #56: timelapse browser — listing + per-frame +
+            # stitched MP4 fetch.
+            if path == "/timelapses":
+                if timelapse_rec is None:
+                    self._send_json({"jobs": []}); return
+                self._send_json({"jobs": timelapse_rec.list_jobs()})
+                return
+            tl_match = re.match(
+                r"^/timelapses/([^/]+)/([^/]+)(?:/(.+))?$", path)
+            if tl_match and timelapse_rec is not None:
+                printer = urllib.parse.unquote(tl_match.group(1))
+                job_id  = urllib.parse.unquote(tl_match.group(2))
+                tail    = tl_match.group(3) or ""
+                if tail == "":
+                    self._send_json({
+                        "printer": printer, "job_id": job_id,
+                        "frames": timelapse_rec.list_frames(printer, job_id),
+                        "mp4_ready":
+                            timelapse_rec.mp4_path(printer, job_id) is not None,
+                    })
+                    return
+                if tail == "timelapse.mp4":
+                    p = timelapse_rec.mp4_path(printer, job_id)
+                    if not p:
+                        self.send_response(404); self.end_headers(); return
+                    body = p.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                # Frame: NNNN.jpg
+                fp = timelapse_rec.frame_path(printer, job_id, tail)
+                if fp is None:
+                    self.send_response(404); self.end_headers(); return
+                body = fp.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "max-age=3600")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/printers":
                 body = json.dumps({"printers": names}, indent=2).encode()
                 self.send_response(200)
@@ -1013,6 +1060,18 @@ def _serve_http(bind: str,
                 return
             url = urllib.parse.urlparse(self.path)
             path = url.path
+            # Item #56: stitch a timelapse → MP4 (POST is the right
+            # verb because it's a long-running, side-effecting op).
+            tl_match = re.match(
+                r"^/timelapses/([^/]+)/([^/]+)/stitch$", path)
+            if tl_match and timelapse_rec is not None:
+                printer = urllib.parse.unquote(tl_match.group(1))
+                job_id  = urllib.parse.unquote(tl_match.group(2))
+                body = self._read_body_json() or {}
+                fps = int(body.get("fps", 30))
+                result = timelapse_rec.stitch(printer, job_id, fps=fps)
+                self._send_json(result, status=200 if result["ok"] else 500)
+                return
             if not (path.startswith("/control/")
                      or path.startswith("/queue/")):
                 self.send_response(404); self.end_headers(); return
@@ -2645,6 +2704,23 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     # Item #55: optional queue manager. Hooks into per-printer state
     # callbacks so it can dispatch the next pending job when a printer
     # goes idle.
+    # Item #56: optional timelapse recorder. Hooks per-printer state;
+    # captures /snapshot.jpg every --timelapse-interval seconds during
+    # active prints; saves under ~/.x2d/timelapses/<printer>/<job>/.
+    timelapse_rec = None
+    if getattr(args, "timelapse", False):
+        from runtime.timelapse.recorder import TimelapseRecorder
+        # Build a self-referential URL so the recorder pulls from
+        # OUR /snapshot.jpg (which itself proxies the camera daemon).
+        host_part, _, port_part = (args.http or "127.0.0.1:8765").rpartition(":")
+        snap_host = host_part if host_part not in ("", "0.0.0.0") else "127.0.0.1"
+        timelapse_rec = TimelapseRecorder(
+            snapshot_url=f"http://{snap_host}:{port_part}/snapshot.jpg",
+            interval_s=float(args.timelapse_interval))
+        print(f"[x2d-bridge] timelapse recorder enabled "
+              f"(every {args.timelapse_interval}s during prints)",
+              file=sys.stderr)
+
     queue_mgr = None
     if getattr(args, "queue", False):
         from runtime.queue.manager import QueueManager
@@ -2686,6 +2762,12 @@ def cmd_daemon(args: argparse.Namespace) -> int:
                     queue_mgr.on_state(name, state)
                 except Exception as e:
                     print(f"[x2d-bridge] queue.on_state({name}) failed: {e}",
+                          file=sys.stderr)
+            if timelapse_rec is not None:
+                try:
+                    timelapse_rec.on_state(name, state)
+                except Exception as e:
+                    print(f"[x2d-bridge] timelapse.on_state({name}) failed: {e}",
                           file=sys.stderr)
             if not args.quiet:
                 print(json.dumps({"ts": time.time(),
@@ -2742,7 +2824,8 @@ def cmd_daemon(args: argparse.Namespace) -> int:
                        "printer_names": list(clients.keys()),
                        "clients": clients,
                        "web_dir": _WEB_DIR_DEFAULT,
-                       "queue_mgr": queue_mgr},
+                       "queue_mgr": queue_mgr,
+                       "timelapse_rec": timelapse_rec},
                daemon=True).start()
 
     period = max(1, int(args.interval))
@@ -3027,6 +3110,15 @@ def main() -> int:
                         "as soon as it goes idle. State persists at "
                         "~/.x2d/queue.json. Manage via /queue + "
                         "POST /queue/{add,cancel,remove,move}.")
+    d.add_argument("--timelapse", action="store_true",
+                   help="Enable the auto-timelapse recorder (item #56). "
+                        "Captures /snapshot.jpg every "
+                        "--timelapse-interval seconds during active "
+                        "prints; saves under ~/.x2d/timelapses/. Browse "
+                        "via /timelapses + POST /timelapses/<p>/<j>/stitch "
+                        "to ffmpeg into MP4.")
+    d.add_argument("--timelapse-interval", type=float, default=30.0,
+                   help="Seconds between timelapse frames (default 30).")
     d.set_defaults(fn=cmd_daemon)
 
     # ----- print-control verbs -----------------------------------------

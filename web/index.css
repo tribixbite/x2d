@@ -275,3 +275,37 @@ button.danger  { background: var(--bad); color: #1a0a0a;
   min-height: 44px;
 }
 .queue-add input[type=number] { width: 4.5rem; }
+
+/* Timelapse card (#56) */
+#tl-select {
+  width: 100%;
+  background: var(--bg-soft); color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 0.5rem 0.6rem; min-height: 44px;
+  margin-bottom: 0.5rem;
+}
+.tl-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 0.3rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+}
+.tl-thumbs img {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
+  border-radius: 4px; background: #000; cursor: pointer;
+}
+.tl-thumbs .empty {
+  grid-column: 1 / -1;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 1rem 0;
+}
+#tl-video {
+  width: 100%;
+  border-radius: var(--r);
+  background: #000;
+  margin-top: 0.5rem;
+}
