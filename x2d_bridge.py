@@ -204,6 +204,38 @@ def sign_payload(payload: dict[str, Any]) -> dict[str, Any]:
 # MQTT client — thin wrapper that handles TLS + auth + signing.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Per-printer metrics counters (item #38). Module-level so multiple
+# X2DClients in the same process share state. Key is the printer serial.
+# Reset to 0 on process start; not persisted across restarts.
+# ---------------------------------------------------------------------------
+import collections as _collections
+import threading as _threading
+
+_metrics_counters: dict[str, dict[str, int]] = _collections.defaultdict(
+    lambda: {"messages_total": 0, "mqtt_disconnects_total": 0,
+             "mqtt_connects_total": 0})
+_metrics_global: dict[str, int] = {"ssdp_notifies_total": 0}
+_metrics_lock = _threading.Lock()
+
+
+def _metric_inc(serial: str, name: str, delta: int = 1) -> None:
+    with _metrics_lock:
+        _metrics_counters[serial][name] = (
+            _metrics_counters[serial].get(name, 0) + delta)
+
+
+def _metric_global_inc(name: str, delta: int = 1) -> None:
+    with _metrics_lock:
+        _metrics_global[name] = _metrics_global.get(name, 0) + delta
+
+
+def _metrics_snapshot() -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    with _metrics_lock:
+        return ({k: dict(v) for k, v in _metrics_counters.items()},
+                dict(_metrics_global))
+
+
 class X2DClient:
     PORT = 8883
     # Persistent last-message timestamp (items #19, #37). Lets /healthz
@@ -274,8 +306,10 @@ class X2DClient:
         if rc == 0:
             client.subscribe(f"device/{self.creds.serial}/report")
             self._connected.set()
+            _metric_inc(self.creds.serial, "mqtt_connects_total")
         else:
             print(f"[x2d-bridge] MQTT connect failed: rc={rc}", file=sys.stderr)
+            _metric_inc(self.creds.serial, "mqtt_disconnects_total")
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -285,6 +319,7 @@ class X2DClient:
         self._latest_state = payload
         now = time.time()
         self._last_message_ts = now
+        _metric_inc(self.creds.serial, "messages_total")
         # Persist atomically (items #19 + #37 per-printer). Cheap — even
         # at 10 Hz this is a few hundred bytes/s of writeback. Keep the
         # parent dir mode exclusive (creds live there too).
@@ -438,6 +473,85 @@ def _is_loopback(host: str) -> bool:
     return host in {"127.0.0.1", "::1", "localhost", ""}
 
 
+def _format_prometheus_metrics(states: dict[str, dict | None],
+                               last_ts_by_name: dict[str, float]) -> bytes:
+    """Render counters + per-printer gauges in Prometheus text exposition
+    format (item #38). Stateless render — pulls counters from
+    _metrics_snapshot and gauges from the live state cache."""
+    counters, glob = _metrics_snapshot()
+    lines: list[str] = []
+
+    # Global counters (no printer label)
+    lines.append("# HELP x2d_ssdp_notifies_total Total SSDP NOTIFY broadcasts received")
+    lines.append("# TYPE x2d_ssdp_notifies_total counter")
+    lines.append(f"x2d_ssdp_notifies_total {glob.get('ssdp_notifies_total', 0)}")
+
+    # Per-printer counters
+    counter_help = {
+        "messages_total":         ("counter", "MQTT state push messages received"),
+        "mqtt_connects_total":    ("counter", "MQTT connect successes"),
+        "mqtt_disconnects_total": ("counter", "MQTT connect failures (rc!=0)"),
+    }
+    for cname, (ctype, chelp) in counter_help.items():
+        lines.append(f"# HELP x2d_{cname} {chelp}")
+        lines.append(f"# TYPE x2d_{cname} {ctype}")
+        for serial, kvs in counters.items():
+            v = kvs.get(cname, 0)
+            lines.append(f'x2d_{cname}{{serial="{serial}"}} {v}')
+
+    # Per-printer last_message_ts as a gauge
+    lines.append("# HELP x2d_last_message_ts Unix-epoch seconds of last printer push")
+    lines.append("# TYPE x2d_last_message_ts gauge")
+    for name, ts in last_ts_by_name.items():
+        lines.append(f'x2d_last_message_ts{{printer="{name}"}} {ts}')
+
+    # Per-printer gauges from latest state
+    gauge_paths = [
+        ("bed_temp",          ("print", "bed_temper")),
+        ("bed_temp_target",   ("print", "bed_target_temper")),
+        ("nozzle_temp",       ("print", "nozzle_temper")),
+        ("nozzle_temp_target",("print", "nozzle_target_temper")),
+        ("mc_percent",        ("print", "mc_percent")),
+        ("mc_remaining_min",  ("print", "mc_remaining_time")),
+        ("layer_num",         ("print", "layer_num")),
+        ("total_layer_num",   ("print", "total_layer_num")),
+    ]
+    for gname, path in gauge_paths:
+        lines.append(f"# HELP x2d_{gname} Printer state field")
+        lines.append(f"# TYPE x2d_{gname} gauge")
+        for printer, state in states.items():
+            if not state:
+                continue
+            v = state
+            for key in path:
+                if not isinstance(v, dict) or key not in v:
+                    v = None
+                    break
+                v = v[key]
+            if v is None or not isinstance(v, (int, float)):
+                continue
+            lines.append(f'x2d_{gname}{{printer="{printer}"}} {v}')
+
+    # AMS slot humidity (per slot) — common scrape target
+    lines.append("# HELP x2d_ams_humidity AMS slot humidity rating (0=dry, 5=wet)")
+    lines.append("# TYPE x2d_ams_humidity gauge")
+    for printer, state in states.items():
+        if not state:
+            continue
+        ams_list = (state.get("print", {}).get("ams", {}).get("ams") or [])
+        for ams in ams_list:
+            try:
+                ams_id = ams.get("id", "?")
+                hum = float(ams.get("humidity", 0))
+                lines.append(
+                    f'x2d_ams_humidity{{printer="{printer}",ams_id="{ams_id}"}} {hum}')
+            except (ValueError, TypeError, AttributeError):
+                continue
+
+    body = "\n".join(lines) + "\n"
+    return body.encode("utf-8")
+
+
 def _check_bearer(handler, expected: str | None, host: str) -> bool:
     """Return True if the request is authorized. Loopback binds with
     no token configured stay open (single-user local case). Any
@@ -515,6 +629,19 @@ def _serve_http(bind: str,
                 body = json.dumps({"printers": names}, indent=2).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path == "/metrics":
+                # Item #38: Prometheus text exposition format.
+                states_snap = {n: get_state(n) for n in names}
+                last_ts_snap = {n: (get_last_ts(n) if get_last_ts else 0.0)
+                                for n in names}
+                body = _format_prometheus_metrics(states_snap, last_ts_snap)
+                self.send_response(200)
+                self.send_header("Content-Type",
+                                 "text/plain; version=0.0.4; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -860,6 +987,8 @@ class ServeServer:
                 continue
             with self._ssdp_lock:
                 self._ssdp_cache[parsed["dev_id"]] = parsed
+            _metric_global_inc("ssdp_notifies_total")
+            with self._ssdp_lock:
                 listeners = list(self._ssdp_listeners)
             # Fire-and-forget: ensure the AppConfig has a Bambu preset
             # so the GUI's Device tab works on first launch (#17).

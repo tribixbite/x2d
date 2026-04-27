@@ -664,12 +664,12 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: kill+restart daemon → each printer's
     /healthz?printer reports its own real age.
 
-- [ ] **38. Prometheus `/metrics` endpoint.**
+- [x] **38. Prometheus `/metrics` endpoint.**
   - **Sub-tasks**:
-    - [ ] Per-printer gauges: bed_temp, nozzle_temp, mc_percent,
+    - [x] Per-printer gauges: bed_temp, nozzle_temp, mc_percent,
       ams_humidity, etc.
-    - [ ] Counters: total_messages, mqtt_disconnects, ssdp_notifies.
-    - [ ] Compatible with Prometheus scrape format (text exposition).
+    - [x] Counters: total_messages, mqtt_disconnects, ssdp_notifies.
+    - [x] Compatible with Prometheus scrape format (text exposition).
   - **Done when**: Prometheus `up{job=x2d}` is 1, all printer state
     fields scraped as gauges.
 
