@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/Widgets/Label.cpp b/src/slic3r/GUI/Widgets/Label.cpp
+index be48956..34025e6 100644
+--- a/src/slic3r/GUI/Widgets/Label.cpp
++++ b/src/slic3r/GUI/Widgets/Label.cpp
+@@ -62,7 +62,7 @@ wxFont Label::Body_8;
+ 
+ void Label::initSysFont(std::string lang_code, bool load_font_resource)
+ {
+-#ifdef __linux__
++#if defined(__linux__) && wxUSE_PRIVATE_FONTS
+     if (load_font_resource) {
+         const std::string& resource_path = Slic3r::resources_dir();
+         wxString font_path = wxString::FromUTF8(resource_path+"/fonts/HarmonyOS_Sans_SC_Bold.ttf");

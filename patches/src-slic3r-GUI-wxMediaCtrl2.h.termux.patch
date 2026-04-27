@@ -1,0 +1,53 @@
+diff --git a/src/slic3r/GUI/wxMediaCtrl2.h b/src/slic3r/GUI/wxMediaCtrl2.h
+index 4e81b1a..7ec7022 100644
+--- a/src/slic3r/GUI/wxMediaCtrl2.h
++++ b/src/slic3r/GUI/wxMediaCtrl2.h
+@@ -9,7 +9,48 @@
+ #define wxMediaCtrl2_h
+ 
+ #include "wx/uri.h"
++#if wxUSE_MEDIACTRL
+ #include "wx/mediactrl.h"
++#else
++// Termux wx built without mediactrl — provide stub so slicing path compiles
++enum wxMediaState : int { wxMEDIASTATE_STOPPED = 0, wxMEDIASTATE_PAUSED = 1, wxMEDIASTATE_PLAYING = 2 };
++class wxMediaEvent : public wxCommandEvent {
++public:
++    wxMediaEvent(wxEventType = wxEVT_NULL, int = 0) {}
++    wxEvent* Clone() const wxOVERRIDE { return new wxMediaEvent(*this); }
++};
++class wxMediaCtrl : public wxWindow {
++public:
++    wxMediaCtrl() {}
++    bool Create(wxWindow*, wxWindowID = -1, const wxString& = wxEmptyString, const wxPoint& = wxDefaultPosition, const wxSize& = wxDefaultSize, long = 0, const wxString& = wxEmptyString, const wxValidator& = wxDefaultValidator, const wxString& = wxEmptyString) { return true; }
++    bool Load(const wxString&) { return false; }
++    bool Load(const wxURI&) { return false; }
++    bool Play() { return false; }
++    bool Pause() { return false; }
++    bool Stop() { return false; }
++    wxMediaState GetState() { return wxMEDIASTATE_STOPPED; }
++    wxFileOffset Seek(wxFileOffset, wxSeekMode = wxFromStart) { return 0; }
++    wxFileOffset Tell() { return 0; }
++    wxFileOffset Length() { return 0; }
++    double GetPlaybackRate() { return 1.0; }
++    bool SetPlaybackRate(double) { return false; }
++    double GetVolume() { return 0.0; }
++    bool SetVolume(double) { return false; }
++    wxSize GetBestSize() const { return wxDefaultSize; }
++};
++#define EVT_MEDIA_LOADED(id, func)
++#define EVT_MEDIA_STOP(id, func)
++#define EVT_MEDIA_FINISHED(id, func)
++#define EVT_MEDIA_STATECHANGED(id, func)
++#define EVT_MEDIA_PLAY(id, func)
++#define EVT_MEDIA_PAUSE(id, func)
++wxDECLARE_EVENT(wxEVT_MEDIA_STATECHANGED, wxMediaEvent);
++wxDECLARE_EVENT(wxEVT_MEDIA_LOADED, wxMediaEvent);
++wxDECLARE_EVENT(wxEVT_MEDIA_STOP, wxMediaEvent);
++wxDECLARE_EVENT(wxEVT_MEDIA_FINISHED, wxMediaEvent);
++wxDECLARE_EVENT(wxEVT_MEDIA_PLAY, wxMediaEvent);
++wxDECLARE_EVENT(wxEVT_MEDIA_PAUSE, wxMediaEvent);
++#endif
+ 
+ wxDECLARE_EVENT(EVT_MEDIA_CTRL_STAT, wxCommandEvent);
+ 

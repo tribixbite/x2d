@@ -1,0 +1,93 @@
+diff --git a/deps/CMakeLists.txt b/deps/CMakeLists.txt
+index ec7bdff..ffd0e58 100644
+--- a/deps/CMakeLists.txt
++++ b/deps/CMakeLists.txt
+@@ -43,6 +43,10 @@ option(DEP_BUILD_GLFW "Compile GLFW" ON)
+ option(DEP_BUILD_FREETYPE "Compile freetype" ON)
+ option(DEP_BUILD_WXWIDGETS "Compile wxWidgets" ON)
+ option(DEP_BUILD_FFMPEG "Compile ffmpeg" ON)
++option(DEP_BUILD_GLEW "Compile GLEW" ON)
++option(DEP_BUILD_OPENCSG "Compile OpenCSG" ON)
++option(DEP_BUILD_OPENCV "Compile OpenCV" ON)
++option(DEP_BUILD_OCCT "Compile OCCT" ON)
+ 
+ set(DESTDIR "${CMAKE_CURRENT_BINARY_DIR}/destdir" CACHE PATH "Destination directory")
+ set(DEP_DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR} CACHE PATH "Path for downloaded source packages.")
+@@ -142,7 +146,12 @@ function(bambustudio_add_cmake_project projectname)
+             -DCMAKE_DEBUG_POSTFIX:STRING=d
+             -DCMAKE_C_COMPILER:STRING=${CMAKE_C_COMPILER}
+             -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
++            -DCMAKE_C_FLAGS:STRING=$ENV{CFLAGS}
++            -DCMAKE_CXX_FLAGS:STRING=$ENV{CXXFLAGS}
+             -DCMAKE_TOOLCHAIN_FILE:STRING=${CMAKE_TOOLCHAIN_FILE}
++            -DCMAKE_SYSTEM_NAME:STRING=Linux
++            -DCMAKE_SYSTEM_PROCESSOR:STRING=aarch64
++            -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
+             -DBUILD_SHARED_LIBS:BOOL=OFF
+             ${_cmake_osx_arch}
+             "${_configs_line}"
+@@ -231,13 +240,21 @@ endif ()
+ # The order of includes respects the dependencies between libraries
+ include(Cereal/Cereal.cmake)
+ include(Qhull/Qhull.cmake)
+-include(GLEW/GLEW.cmake)
++set(GLEW_PKG "")
++if (DEP_BUILD_GLEW)
++    include(GLEW/GLEW.cmake)
++    set(GLEW_PKG dep_GLEW)
++endif ()
+ set(GLFW_PKG "")
+ if (DEP_BUILD_GLFW)
+     include(GLFW/GLFW.cmake)
+     set(GLFW_PKG dep_GLFW)
+ endif ()
+-include(OpenCSG/OpenCSG.cmake)
++set(OPENCSG_PKG "")
++if (DEP_BUILD_OPENCSG)
++    include(OpenCSG/OpenCSG.cmake)
++    set(OPENCSG_PKG dep_OpenCSG)
++endif ()
+ 
+ include(TBB/TBB.cmake)
+ 
+@@ -273,8 +290,16 @@ if (DEP_BUILD_FREETYPE)
+     include(FREETYPE/FREETYPE.cmake)
+     set(FREETYPE_PKG dep_FREETYPE)
+ endif ()
+-include(OCCT/OCCT.cmake)
+-include(OpenCV/OpenCV.cmake)
++set(OCCT_PKG "")
++if (DEP_BUILD_OCCT)
++    include(OCCT/OCCT.cmake)
++    set(OCCT_PKG dep_OCCT)
++endif ()
++set(OPENCV_PKG "")
++if (DEP_BUILD_OPENCV)
++    include(OpenCV/OpenCV.cmake)
++    set(OPENCV_PKG dep_OpenCV)
++endif ()
+ set(FFMPEG_PKG "")
+ if (DEP_BUILD_FFMPEG)
+     include(FFMPEG/FFMPEG.cmake)
+@@ -290,8 +315,8 @@ set(_dep_list
+     dep_NLopt
+     dep_libnoise
+     dep_OpenVDB
+-    dep_OpenCSG
+-    dep_OpenCV
++    ${OPENCSG_PKG}
++    ${OPENCV_PKG}
+     dep_CGAL
+     ${OPENSSL_PKG}
+     ${GLFW_PKG}
+@@ -311,7 +336,9 @@ else()
+     #list(APPEND _dep_list "dep_libigl")
+ endif()
+ 
+-list(APPEND _dep_list "dep_OCCT")
++if (DEP_BUILD_OCCT)
++    list(APPEND _dep_list "dep_OCCT")
++endif ()
+ # if (DEP_BUILD_FREETYPE)
+ #     list(APPEND _dep_list "dep_FREETYPE")
+ # endif ()

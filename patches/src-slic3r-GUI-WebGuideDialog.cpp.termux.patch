@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/WebGuideDialog.cpp b/src/slic3r/GUI/WebGuideDialog.cpp
+index 4b35c6d..8ba62ef 100644
+--- a/src/slic3r/GUI/WebGuideDialog.cpp
++++ b/src/slic3r/GUI/WebGuideDialog.cpp
+@@ -376,7 +376,7 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
+     try {
+         wxString strInput = evt.GetString();
+         BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;OnRecv:" << strInput.c_str();
+-        json     j        = json::parse(strInput);
++        json     j        = json::parse(strInput.ToStdString());
+ 
+         wxString strCmd = j["command"];
+         BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;Command:" << strCmd;

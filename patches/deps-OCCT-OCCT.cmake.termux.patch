@@ -1,0 +1,16 @@
+diff --git a/deps/OCCT/OCCT.cmake b/deps/OCCT/OCCT.cmake
+index 7afaa8b..4a2b738 100644
+--- a/deps/OCCT/OCCT.cmake
++++ b/deps/OCCT/OCCT.cmake
+@@ -21,6 +21,11 @@ bambustudio_add_cmake_project(OCCT
+ 	#-DUSE_FREETYPE=OFF
+         -DUSE_FFMPEG=OFF
+         -DUSE_VTK=OFF
++        -DUSE_FONTCONFIG=OFF
++        -DCAN_USE_FONTCONFIG=OFF
++        -DUSE_XLIB=OFF
++        -DUSE_OPENGL=OFF
++        -DUSE_GLES2=OFF
+         -DBUILD_DOC_Overview=OFF
+         -DBUILD_MODULE_ApplicationFramework=OFF
+         #-DBUILD_MODULE_DataExchange=OFF

@@ -1,0 +1,14 @@
+diff --git a/src/slic3r/GUI/NetworkTestDialog.hpp b/src/slic3r/GUI/NetworkTestDialog.hpp
+index bf56b3d..1f0d413 100644
+--- a/src/slic3r/GUI/NetworkTestDialog.hpp
++++ b/src/slic3r/GUI/NetworkTestDialog.hpp
+@@ -25,7 +25,9 @@
+ #include <wx/srchctrl.h>
+ #include <wx/stattext.h>
+ #include <iomanip>
++#ifndef __ANDROID__
+ #include <sys/timeb.h>
++#endif
+ #include <time.h>
+ #include <vector>
+ #include <algorithm>

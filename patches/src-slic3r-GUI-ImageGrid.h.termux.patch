@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/ImageGrid.h b/src/slic3r/GUI/ImageGrid.h
+index 11cf296..af6f87c 100644
+--- a/src/slic3r/GUI/ImageGrid.h
++++ b/src/slic3r/GUI/ImageGrid.h
+@@ -89,7 +89,7 @@ protected:
+ 
+     void renderContent2(wxDC &dc, wxPoint const &pt, int index, bool hit);
+ 
+-    void renderButtons(wxDC &dc, wxStringList const &texts, wxRect const &rect, size_t hit, int states);
++    void renderButtons(wxDC &dc, std::vector<wxString> const &texts, wxRect const &rect, size_t hit, int states);
+ 
+     void renderText(wxDC &dc, wxString const &text, wxRect const &rect, int states);
+ 

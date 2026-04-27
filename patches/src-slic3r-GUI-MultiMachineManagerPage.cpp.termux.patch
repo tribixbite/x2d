@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/MultiMachineManagerPage.cpp b/src/slic3r/GUI/MultiMachineManagerPage.cpp
+index 678644d..247d01f 100644
+--- a/src/slic3r/GUI/MultiMachineManagerPage.cpp
++++ b/src/slic3r/GUI/MultiMachineManagerPage.cpp
+@@ -678,7 +678,7 @@ void MultiMachineManagerPage::start_timer()
+ 
+     m_flipping_timer->SetOwner(this);
+     m_flipping_timer->Start(1000);
+-    wxPostEvent(this, wxTimerEvent());
++    wxPostEvent(this, wxTimerEvent(*m_flipping_timer));
+ }
+ 
+ void MultiMachineManagerPage::update_page_number()

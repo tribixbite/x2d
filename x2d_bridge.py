@@ -54,6 +54,7 @@ import ssl
 import sys
 import time
 from dataclasses import dataclass
+import ftplib
 from ftplib import FTP_TLS
 from pathlib import Path
 from threading import Event, Thread
@@ -379,7 +380,15 @@ class X2DClient:
 # ---------------------------------------------------------------------------
 
 class _ImplicitFTPTLS(FTP_TLS):
-    """FTPS implicit TLS over port 990 — Bambu's protocol of choice."""
+    """FTPS implicit TLS over port 990 — Bambu's protocol of choice.
+
+    Mirrors lan_upload.py's full FTP_TLS subclass: implicit TLS on the
+    control channel, plus a `ntransfercmd` override that re-uses the
+    control session on the PASV data channel (Bambu's recent firmware
+    rejects fresh sessions with `522 SSL connection failed: session
+    reuse required`), plus a storbinary that unwraps before close to
+    avoid the post-STOR hang seen on the X2D / H2D.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -395,13 +404,52 @@ class _ImplicitFTPTLS(FTP_TLS):
             value = self.context.wrap_socket(value, server_hostname=self.host)
         self._sock = value
 
+    def ntransfercmd(self, cmd, rest=None):  # type: ignore[override]
+        # PASV data channel inherits the control channel's TLS session
+        # so the X2D's "session reuse required" check passes.
+        conn, size = FTP_TLS.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(
+                conn,
+                server_hostname=self.host,
+                session=self.sock.session,  # type: ignore[union-attr]
+            )
+        return conn, size
+
+    def storbinary(self, cmd, fp, blocksize=32768, callback=None, rest=None):  # type: ignore[override]
+        # Mirror stdlib but unwrap the SSL layer before close — Bambu's
+        # FTP server hangs forever on close-with-shutdown otherwise.
+        self.voidcmd("TYPE I")
+        conn = self.transfercmd(cmd, rest)
+        try:
+            while True:
+                buf = fp.read(blocksize)
+                if not buf:
+                    break
+                conn.sendall(buf)
+                if callback:
+                    callback(buf)
+            if isinstance(conn, ssl.SSLSocket):
+                try:
+                    conn.unwrap()
+                except (OSError, ssl.SSLError):
+                    pass
+        finally:
+            conn.close()
+        return self.voidresp()
+
 
 def upload_file(creds: Creds, local_path: Path, remote_name: str | None = None) -> None:
     if not local_path.is_file():
         sys.exit(f"file not found: {local_path}")
     if remote_name is None:
         remote_name = local_path.name
-    ssl_ctx = ssl.create_default_context()
+    # Use SSLContext(PROTOCOL_TLS_CLIENT) — NOT create_default_context() —
+    # because the latter sets min_version=TLSv1_3 on this Python build and
+    # the X2D's FTP server's session-reuse handshake hits "INVALID_ALERT"
+    # under TLS 1.3 ticket reuse. The bare PROTOCOL_TLS_CLIENT negotiates
+    # TLSv1.2 which session-resumes cleanly. Same shape as lan_upload.py.
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE
     ftp = _ImplicitFTPTLS(context=ssl_ctx)
@@ -410,7 +458,13 @@ def upload_file(creds: Creds, local_path: Path, remote_name: str | None = None) 
     ftp.prot_p()  # TLS-encrypt the data channel as well
     with local_path.open("rb") as f:
         ftp.storbinary(f"STOR {remote_name}", f)
-    ftp.quit()
+    try:
+        ftp.quit()
+    except (OSError, ssl.SSLError, ftplib.error_perm):
+        # Some Bambu firmwares hang or send bad data on QUIT — fall through
+        # cleanly. The file is already on the SD card at this point.
+        try: ftp.close()
+        except Exception: pass
 
 
 # ---------------------------------------------------------------------------
@@ -437,26 +491,32 @@ def start_print(client: X2DClient, gcode_filename: str, *,
     default fine, but we set it for forward-safety. Common values:
     `textured_plate`, `cool_plate`, `engineering_plate`, `high_temp_plate`.
     """
+    # Payload shape mirrors bambulabs_api 2.6.6 PrinterMQTTClient.start_print_3mf
+    # — same fields the X2D firmware accepts in LAN mode. The original
+    # shape (with file:///mnt/sdcard/, task_id/project_id/subtask_id and
+    # subtask_name) was silently ignored by recent X2D firmware. Specifically:
+    #   * `url` MUST be `ftp:///<filename>` so the firmware knows to look
+    #     for a LAN-uploaded file (not a cloud-pulled one).
+    #   * `file` field carries the basename; firmware uses it for the
+    #     Files-screen label.
+    #   * No `task_id`/`project_id`/`subtask_id`/`subtask_name` — firmware
+    #     fills those itself for LAN prints.
     payload = {
         "print": {
-            "sequence_id": _next_seq(),
-            "command": "project_file",
-            "param": "Metadata/plate_1.gcode",
-            "subtask_name": gcode_filename,
-            "url": f"file:///mnt/sdcard/{gcode_filename}",
-            "md5": "",  # firmware re-derives if blank
-            "bed_type": bed_type,
-            "timelapse": timelapse,
-            "bed_leveling": bed_levelling,
-            "flow_cali": flow_cali,
-            "vibration_cali": vibration_cali,
-            "layer_inspect": False,
-            "use_ams": use_ams,
-            "ams_mapping": [ams_slot] if use_ams else [],
-            "profile_id": "0",
-            "project_id": "0",
-            "subtask_id": "0",
-            "task_id": "0",
+            "command":        "project_file",
+            "param":          "Metadata/plate_1.gcode",
+            "file":           gcode_filename,
+            "url":            f"ftp:///{gcode_filename}",
+            "bed_type":       bed_type,
+            "bed_leveling":   bed_levelling,
+            "flow_cali":      bool(flow_cali),
+            "vibration_cali": bool(vibration_cali),
+            "timelapse":      timelapse,
+            "layer_inspect":  False,
+            "use_ams":        bool(use_ams),
+            "ams_mapping":    [ams_slot] if use_ams else [],
+            "skip_objects":   None,
+            "sequence_id":    "10000000",
         }
     }
     client.publish(payload)

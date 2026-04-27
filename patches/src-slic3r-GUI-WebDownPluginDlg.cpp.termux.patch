@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/WebDownPluginDlg.cpp b/src/slic3r/GUI/WebDownPluginDlg.cpp
+index b915d6c..42886fc 100644
+--- a/src/slic3r/GUI/WebDownPluginDlg.cpp
++++ b/src/slic3r/GUI/WebDownPluginDlg.cpp
+@@ -199,7 +199,7 @@ void DownPluginFrame::OnScriptMessage(wxWebViewEvent &evt)
+ {
+     try {
+         wxString strInput = evt.GetString();
+-        json     j        = json::parse(strInput);
++        json     j        = json::parse(strInput.ToStdString());
+ 
+         wxString strCmd = j["command"];
+ 

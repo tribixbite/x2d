@@ -1,0 +1,85 @@
+diff --git a/src/slic3r/GUI/wxMediaCtrl2.cpp b/src/slic3r/GUI/wxMediaCtrl2.cpp
+index 1969ce8..2df58be 100644
+--- a/src/slic3r/GUI/wxMediaCtrl2.cpp
++++ b/src/slic3r/GUI/wxMediaCtrl2.cpp
+@@ -9,7 +9,7 @@
+ #include <shellapi.h>
+ #endif
+ 
+-#ifdef __LINUX__
++#if defined(__LINUX__) && wxUSE_MEDIACTRL
+ #include "Printer/gstbambusrc.h"
+ #include <gst/gst.h> // main gstreamer header
+ class WXDLLIMPEXP_MEDIA
+@@ -21,6 +21,14 @@ public:
+ #endif
+ 
+ wxDEFINE_EVENT(EVT_MEDIA_CTRL_STAT, wxCommandEvent);
++#if !wxUSE_MEDIACTRL
++wxDEFINE_EVENT(wxEVT_MEDIA_STATECHANGED, wxMediaEvent);
++wxDEFINE_EVENT(wxEVT_MEDIA_LOADED, wxMediaEvent);
++wxDEFINE_EVENT(wxEVT_MEDIA_STOP, wxMediaEvent);
++wxDEFINE_EVENT(wxEVT_MEDIA_FINISHED, wxMediaEvent);
++wxDEFINE_EVENT(wxEVT_MEDIA_PLAY, wxMediaEvent);
++wxDEFINE_EVENT(wxEVT_MEDIA_PAUSE, wxMediaEvent);
++#endif
+ 
+ wxMediaCtrl2::wxMediaCtrl2(wxWindow *parent)
+ {
+@@ -38,8 +46,12 @@ wxMediaCtrl2::wxMediaCtrl2(wxWindow *parent)
+         *AmdPowerXpressRequestHighPerformance = 0;
+     }
+ #endif
++#if wxUSE_MEDIACTRL
+     wxMediaCtrl::Create(parent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxMEDIACTRLPLAYERCONTROLS_NONE);
+-#ifdef __LINUX__
++#else
++    wxMediaCtrl::Create(parent);
++#endif
++#if defined(__LINUX__) && wxUSE_MEDIACTRL
+     /* Register only after we have created the wxMediaCtrl, since only then are we guaranteed to have fired up Gstreamer's plugin registry. */
+     auto playbin = reinterpret_cast<wxGStreamerMediaBackend *>(m_imp)->m_playbin;
+     g_object_set (G_OBJECT (playbin),
+@@ -143,7 +155,7 @@ void wxMediaCtrl2::Load(wxURI url)
+     url = wxURI(url.BuildURI().append("&hwnd=").append(boost::lexical_cast<std::string>(GetHandle())).append("&tid=").append(
+         boost::lexical_cast<std::string>(GetCurrentThreadId())));
+ #endif
+-#ifdef __WXGTK3__
++#if defined(__WXGTK3__) && wxUSE_MEDIACTRL
+     GstElementFactory *factory;
+     int hasplugins = 1;
+ 
+@@ -184,7 +196,7 @@ void wxMediaCtrl2::Load(wxURI url)
+     m_loaded = false;
+     wxMediaCtrl::Load(url);
+ 
+-#ifdef __WXGTK3__
++#if defined(__WXGTK3__) && wxUSE_MEDIACTRL
+         wxMediaEvent event(wxEVT_MEDIA_STATECHANGED);
+         event.SetId(GetId());
+         event.SetEventObject(this);
+@@ -202,13 +214,13 @@ void wxMediaCtrl2::SetIdleImage(wxString const &image, wxString const &watermark
+ 
+ void wxMediaCtrl2::SetIdleImage(const wxImage &image, wxString const &watermark_text) {}
+ 
+-#ifdef __LINUX__
++#ifdef __linux__
+ extern "C" int gst_bambu_last_error;
+ #endif
+ 
+ int wxMediaCtrl2::GetLastError() const
+ {
+-#ifdef __LINUX__
++#ifdef __linux__
+     return gst_bambu_last_error;
+ #else
+     return m_error;
+@@ -217,7 +229,7 @@ int wxMediaCtrl2::GetLastError() const
+ 
+ wxSize wxMediaCtrl2::GetVideoSize() const
+ {
+-#ifdef __LINUX__
++#ifdef __linux__
+     // Gstreamer doesn't give us a VideoSize until we're playing, which
+     // confuses the MediaPlayCtrl into claiming that it is stuck
+     // "Loading...".  Fake it out for now.

@@ -1,0 +1,79 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b3d9689..3547597 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -253,6 +253,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+     include_directories(${DBUS_INCLUDE_DIRS})
+ endif()
+ 
++# Termux OpenCVConfig.cmake has a bug (__d instead of d) — manually add include dir
++if(EXISTS /data/data/com.termux/files/usr/include/opencv4)
++    include_directories(/data/data/com.termux/files/usr/include/opencv4)
++endif()
++
+ if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUXX)
+     # Adding -fext-numeric-literals to enable GCC extensions on definitions of quad float literals, which are required by Boost.
+     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fext-numeric-literals" )
+@@ -283,7 +288,7 @@ if (NOT MSVC AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMP
+     endif()
+ 
+     if((${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "AppleClang") AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 15)
+-        add_compile_options(-Wno-error=enum-constexpr-conversion)
++        add_compile_options(-Wno-unknown-warning-option -Wno-error=enum-constexpr-conversion)
+     endif()
+ 
+     #GCC generates loads of -Wunknown-pragmas when compiling igl. The fix is not easy due to a bug in gcc, see
+@@ -721,51 +726,8 @@ function(bambustudio_copy_dlls target config postfix output_dlls)
+ endfunction()
+ 
+ function(bambustudio_copy_sos target config postfix output_sos)
+-
+-    set(_out_dir "${CMAKE_CURRENT_BINARY_DIR}")
+-    message ("set out_dir to CMAKE_CURRENT_BINARY_DIR: ${_out_dir}")
+-
+-    if (EXISTS "/usr/lib/aarch64-linux-gnu/libavcodec.so")
+-        file(COPY /usr/lib/aarch64-linux-gnu/libavcodec.so
+-                  /usr/lib/aarch64-linux-gnu/libavcodec.so.61
+-                  /usr/lib/aarch64-linux-gnu/libavutil.so
+-                  /usr/lib/aarch64-linux-gnu/libavutil.so.59
+-                  /usr/lib/aarch64-linux-gnu/libswscale.so
+-                  /usr/lib/aarch64-linux-gnu/libswscale.so.8
+-                  /usr/lib/aarch64-linux-gnu/libswresample.so
+-                  /usr/lib/aarch64-linux-gnu/libswresample.so.5
+-             DESTINATION ${_out_dir})
+-    else()
+-        file(COPY ${CMAKE_PREFIX_PATH}/lib/libavcodec.so
+-                  ${CMAKE_PREFIX_PATH}/lib/libavcodec.so.61
+-                  ${CMAKE_PREFIX_PATH}/lib/libavcodec.so.61.3.100
+-                  ${CMAKE_PREFIX_PATH}/lib/libavutil.so
+-                  ${CMAKE_PREFIX_PATH}/lib/libavutil.so.59
+-                  ${CMAKE_PREFIX_PATH}/lib/libavutil.so.59.8.100
+-                  ${CMAKE_PREFIX_PATH}/lib/libswscale.so
+-                  ${CMAKE_PREFIX_PATH}/lib/libswscale.so.8
+-                  ${CMAKE_PREFIX_PATH}/lib/libswscale.so.8.1.100
+-                  ${CMAKE_PREFIX_PATH}/lib/libswresample.so
+-                  ${CMAKE_PREFIX_PATH}/lib/libswresample.so.5
+-                  ${CMAKE_PREFIX_PATH}/lib/libswresample.so.5.1.100
+-             DESTINATION ${_out_dir})
+-    endif()
+-
+-    set(${output_dlls}
+-        ${_out_dir}/libavcodec.so
+-        ${_out_dir}/libavcodec.so.61
+-        ${_out_dir}/libavcodec.so.61.3.100
+-        ${_out_dir}/libavutil.so
+-        ${_out_dir}/libavutil.so.59
+-        ${_out_dir}/libavutil.so.59.8.100
+-        ${_out_dir}/libswscale.so
+-        ${_out_dir}/libswscale.so.8
+-        ${_out_dir}/libswscale.so.8.1.100
+-        ${_out_dir}/libswresample.so
+-        ${_out_dir}/libswresample.so.5
+-        ${_out_dir}/libswresample.so.5.1.100
+-        PARENT_SCOPE
+-    )
++    # Termux: rely on system ffmpeg at runtime, no sidecar copy needed
++    set(${output_sos} "" PARENT_SCOPE)
+ endfunction()
+ 
+ # libslic3r, BambuStudio GUI and the BambuStudio executable.

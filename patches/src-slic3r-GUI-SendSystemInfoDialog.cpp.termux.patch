@@ -1,0 +1,16 @@
+diff --git a/src/slic3r/GUI/SendSystemInfoDialog.cpp b/src/slic3r/GUI/SendSystemInfoDialog.cpp
+index ddd4f5f..291528a 100644
+--- a/src/slic3r/GUI/SendSystemInfoDialog.cpp
++++ b/src/slic3r/GUI/SendSystemInfoDialog.cpp
+@@ -409,8 +409,9 @@ static std::string generate_system_info_json()
+     data_node.put("PlatformFlavor", platform_flavor_to_string(platform_flavor()));
+     data_node.put("OSDescription", wxPlatformInfo::Get().GetOperatingSystemDescription().ToUTF8().data());
+ #ifdef __linux__
+-    std::string distro_id = wxGetLinuxDistributionInfo().Id.ToUTF8().data(); // uses lsb-release
+-    std::string distro_ver = wxGetLinuxDistributionInfo().Release.ToUTF8().data();
++    // wxGetLinuxDistributionInfo removed in wx 3.3; fall through to lscpu parsing below
++    std::string distro_id;
++    std::string distro_ver;
+     if (distro_id.empty()) { // lsb-release probably not available
+         std::map<std::string, std::string> dist_info = parse_lscpu_etc("cat /etc/*release", '=');
+         distro_id = dist_info["ID"];

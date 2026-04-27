@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/wxMediaCtrl3.h b/src/slic3r/GUI/wxMediaCtrl3.h
+index ff78c63..4c98039 100644
+--- a/src/slic3r/GUI/wxMediaCtrl3.h
++++ b/src/slic3r/GUI/wxMediaCtrl3.h
+@@ -9,7 +9,7 @@
+ #define wxMediaCtrl3_h
+ 
+ #include "wx/uri.h"
+-#include "wx/mediactrl.h"
++#include "wxMediaCtrl2.h" // brings in wxMediaCtrl / stub
+ #include "wx/timer.h"
+ #include "../Utils/FrameBuffer.hpp"
+ #include <atomic>

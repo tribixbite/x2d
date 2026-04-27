@@ -1,0 +1,23 @@
+diff --git a/deps/OpenCSG/OpenCSG.cmake b/deps/OpenCSG/OpenCSG.cmake
+index 477d50f..27d6215 100644
+--- a/deps/OpenCSG/OpenCSG.cmake
++++ b/deps/OpenCSG/OpenCSG.cmake
+@@ -1,11 +1,17 @@
+ 
++if (DEP_BUILD_GLEW)
++    set(_opencsg_glew_dep DEPENDS dep_GLEW)
++else ()
++    set(_opencsg_glew_dep "")
++endif ()
++
+ bambustudio_add_cmake_project(OpenCSG
+     # GIT_REPOSITORY https://github.com/floriankirsch/OpenCSG.git
+     # GIT_TAG 83e274457b46c9ad11a4ee599203250b1618f3b9 #v1.4.2
+     URL https://github.com/floriankirsch/OpenCSG/archive/refs/tags/opencsg-1-4-2-release.zip
+     URL_HASH SHA256=51afe0db79af8386e2027d56d685177135581e0ee82ade9d7f2caff8deab5ec5
+     PATCH_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_LIST_DIR}/CMakeLists.txt.in ./CMakeLists.txt
+-    DEPENDS dep_GLEW
++    ${_opencsg_glew_dep}
+ )
+ 
+ if (TARGET ${ZLIB_PKG})

@@ -1,0 +1,21 @@
+diff --git a/deps/OpenSSL/OpenSSL.cmake b/deps/OpenSSL/OpenSSL.cmake
+index 6e443dc..c3d59e6 100644
+--- a/deps/OpenSSL/OpenSSL.cmake
++++ b/deps/OpenSSL/OpenSSL.cmake
+@@ -21,7 +21,15 @@ else()
+     if(APPLE)
+         set(_conf_cmd export MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} && ./Configure -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} )
+     else()
+-        set(_conf_cmd "./config")
++        # `./config` execs `./Configure`, whose shebang is `#!/usr/bin/env perl`.
++        # Termux has no `/usr/bin/env`, so the shebang fails. Invoke perl directly
++        # on Configure and pass the target explicitly.
++        set(_conf_cmd perl ./Configure)
++        if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm64")
++            set(_cross_arch "linux-aarch64")
++        elseif (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
++            set(_cross_arch "linux-x86_64")
++        endif ()
+     endif()
+     set(_cross_comp_prefix_line "")
+     set(_make_cmd make -j${NPROC})

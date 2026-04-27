@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/MultiTaskManagerPage.cpp b/src/slic3r/GUI/MultiTaskManagerPage.cpp
+index be146c7..257361f 100644
+--- a/src/slic3r/GUI/MultiTaskManagerPage.cpp
++++ b/src/slic3r/GUI/MultiTaskManagerPage.cpp
+@@ -1403,7 +1403,7 @@ void CloudTaskManagerPage::start_timer()
+ 
+     m_flipping_timer->SetOwner(this);
+     m_flipping_timer->Start(1000);
+-    wxPostEvent(this, wxTimerEvent());
++    wxPostEvent(this, wxTimerEvent(*m_flipping_timer));
+ }
+ 
+ void CloudTaskManagerPage::on_timer(wxTimerEvent& event)

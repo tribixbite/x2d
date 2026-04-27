@@ -113,15 +113,26 @@ locale_t newlocale(int category_mask, const char *locale, locale_t base) {
 }
 
 /*
- * wxLocale::IsAvailable / wxUILocale::IsAvailable overrides have been
- * REMOVED (item #28 + #34): the equivalent fix is now a source patch at
- * patches/GUI_App.cpp.termux.patch which makes load_language() ignore
- * the IsAvailable check entirely. Keeping the shim symbols would have
- * been redundant; the source patch is the cleaner, build-time equivalent.
+ * wxLocale::IsAvailable / wxUILocale::IsAvailable overrides — RESTORED
+ * (originally added for #28, removed in #34, re-added because the
+ * source patch at patches/GUI_App.cpp.termux.patch dropped the fallback
+ * branch — letting load_language() continue past IsAvailable=false with
+ * a not-actually-set-up locale, which segfaults wxLocale::Init later).
  *
- * If you build a vanilla BambuStudio without the source patch and need
- * the runtime override back, revive these symbols from git history.
+ * Returning true unconditionally lets wxLocale::Init proceed normally;
+ * combined with the bionic newlocale .UTF-8 retry above, it consistently
+ * sets up an English locale on first launch.
  */
+__attribute__((visibility("default")))
+int _ZN8wxLocale11IsAvailableEi(int lang) { (void)lang; return 1; }
+__attribute__((visibility("default")))
+int _ZNK10wxUILocale11IsSupportedEv(void *self) { (void)self; return 1; }
+__attribute__((visibility("default")))
+int _ZN10wxUILocale11IsAvailableERK10wxLocaleId(void *self, void *id) {
+    (void)self; (void)id; return 1;
+}
+__attribute__((visibility("default")))
+int _ZN10wxUILocale11IsAvailableEv(void *self) { (void)self; return 1; }
 
 /*
  * wxOnAssert override — turn every wx assertion failure into a no-op.

@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/ModelMall.cpp b/src/slic3r/GUI/ModelMall.cpp
+index 6cc7555..c0c36cf 100644
+--- a/src/slic3r/GUI/ModelMall.cpp
++++ b/src/slic3r/GUI/ModelMall.cpp
+@@ -124,7 +124,7 @@ namespace GUI {
+     {
+         try {
+             wxString strInput = evt.GetString();
+-            json     j = json::parse(strInput);
++            json     j = json::parse(strInput.ToStdString());
+ 
+             wxString strCmd = j["command"];
+ 

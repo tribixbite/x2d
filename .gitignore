@@ -82,3 +82,6 @@ runtime/network_shim/src/*.o
 runtime/network_shim/*.so
 !docs/*.png
 _mobile_daemon.py
+
+# Local dev convenience symlink to dist tree
+bin

@@ -1,0 +1,31 @@
+diff --git a/src/slic3r/GUI/Auxiliary.cpp b/src/slic3r/GUI/Auxiliary.cpp
+index 8a39764..51c7a72 100644
+--- a/src/slic3r/GUI/Auxiliary.cpp
++++ b/src/slic3r/GUI/Auxiliary.cpp
+@@ -350,7 +350,7 @@ void AuFile::on_input_enter(wxCommandEvent &evt)
+     auto     new_fullname = new_file_name + m_file_path.extension().string();
+ 
+     
+-    wxString new_fullname_path = dir.wstring() + "/" + new_fullname;
++    wxString new_fullname_path = dir.wstring() + L"/" + std::wstring(new_fullname.begin(), new_fullname.end());
+     fs::path new_dir_path(new_fullname_path.c_str());
+     
+ 
+@@ -934,7 +934,7 @@ void AuxiliaryPanel::on_import_file(wxCommandEvent &event)
+             }
+             
+             if (!is_exist) {
+-                dir_path += "/" + src_bfs_path.filename().generic_wstring();
++                dir_path += wxString("/") + src_bfs_path.filename().generic_wstring();
+             } else {
+                 time_t t1 = time(0);
+                 char   ch1[64];
+@@ -944,7 +944,7 @@ void AuxiliaryPanel::on_import_file(wxCommandEvent &event)
+                 wxString name = src_bfs_path.filename().generic_wstring();
+                 auto before_name = replaceSpace(name.ToStdString(), src_bfs_path.extension().string(), "");
+                 time_text = replaceSpace(time_text, ":", "_");
+-                dir_path += "/" + before_name + "_" + time_text + src_bfs_path.extension().wstring();
++                dir_path += wxString("/") + wxString(before_name) + "_" + wxString(time_text) + src_bfs_path.extension().wstring();
+             }
+            
+ 

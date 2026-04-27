@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/Search.cpp b/src/slic3r/GUI/Search.cpp
+index cc5ef21..0804292 100644
+--- a/src/slic3r/GUI/Search.cpp
++++ b/src/slic3r/GUI/Search.cpp
+@@ -216,7 +216,7 @@ bool OptionsSearcher::search(const std::string &search, bool force /* = false*/,
+     };
+ 
+     auto get_tooltip = [this, &sep](const Option &opt) {
+-        return marker_by_type(opt.type, printer_technology) + opt.category_local + sep + opt.group_local + sep + opt.label_local;
++        return std::wstring(1, marker_by_type(opt.type, printer_technology)) + opt.category_local + sep + opt.group_local + sep + opt.label_local;
+     };
+ 
+     std::vector<uint16_t> matches, matches2;

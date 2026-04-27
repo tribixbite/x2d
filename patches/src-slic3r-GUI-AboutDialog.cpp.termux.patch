@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/AboutDialog.cpp b/src/slic3r/GUI/AboutDialog.cpp
+index f227085..527f978 100644
+--- a/src/slic3r/GUI/AboutDialog.cpp
++++ b/src/slic3r/GUI/AboutDialog.cpp
+@@ -304,7 +304,7 @@ AboutDialog::AboutDialog()
+                     find_txt += text_list[i][o];
+                     count_txt += text_list[i][o];
+                 } else {
+-                    find_txt += std::string("\n") + text_list[i][o];
++                    find_txt += wxString("\n") + text_list[i][o];
+                     count_txt = text_list[i][o];
+                 }
+             }

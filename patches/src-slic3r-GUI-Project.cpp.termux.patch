@@ -1,0 +1,13 @@
+diff --git a/src/slic3r/GUI/Project.cpp b/src/slic3r/GUI/Project.cpp
+index c743c94..cb4c438 100644
+--- a/src/slic3r/GUI/Project.cpp
++++ b/src/slic3r/GUI/Project.cpp
+@@ -294,7 +294,7 @@ void ProjectPanel::OnScriptMessage(wxWebViewEvent& evt)
+ {
+     try {
+         wxString strInput = evt.GetString();
+-        json     j = json::parse(strInput);
++        json     j = json::parse(strInput.ToStdString());
+ 
+         wxString strCmd = j["command"];
+ 

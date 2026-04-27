@@ -1,0 +1,36 @@
+diff --git a/src/libslic3r/PrintConfig.cpp b/src/libslic3r/PrintConfig.cpp
+index a66c1ff..cf05e52 100644
+--- a/src/libslic3r/PrintConfig.cpp
++++ b/src/libslic3r/PrintConfig.cpp
+@@ -8444,16 +8444,29 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
+ 
+     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: extruder_count %2%, extruder_nozzle_volume_count %3%")%__LINE__ %extruder_count %extruder_nozzle_volume_count;
+ 
+-    //if (extruder_nozzle_volume_count > 1)
++    // Termux bionic: skip per-filament extruder remap entirely — relies on printer-config internals
++    // that crash on several BBL profiles (X2D multi-extruder, X1 single-filament). Result: slicing
++    // completes with default extruder assignments, which is fine for the CLI headless path.
++    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: Termux: skipping per-filament extruder remap")%__LINE__;
++    return;
+     {
+         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: different nozzle volume processing")%__LINE__;
+-        std::vector<int> filament_maps =  printer_config.option<ConfigOptionInts>("filament_map")->values;
++        auto opt_filament_map = printer_config.option<ConfigOptionInts>("filament_map");
++        if (!opt_filament_map) {
++            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: filament_map option missing; skipping per-filament extruder remap")%__LINE__;
++            return;
++        }
++        std::vector<int> filament_maps = opt_filament_map->values;
+         size_t filament_count = filament_maps.size();
+         //apply process settings
+         //auto opt_nozzle_diameters = this->option<ConfigOptionFloats>("nozzle_diameter");
+         //int extruder_count = opt_nozzle_diameters->size();
+         auto opt_extruder_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(printer_config.option("extruder_type"));
+         auto opt_nozzle_volume_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(printer_config.option("nozzle_volume_type"));
++        if (!opt_extruder_type || !opt_nozzle_volume_type) {
++            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: extruder_type/nozzle_volume_type missing; skipping per-filament extruder remap")%__LINE__;
++            return;
++        }
+ 
+         auto opt_filament_volume_maps = dynamic_cast<const ConfigOptionInts*>(printer_config.option("filament_volume_map"));
+         std::vector<int> filament_volume_maps;

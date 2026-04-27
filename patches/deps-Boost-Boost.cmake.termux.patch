@@ -1,0 +1,12 @@
+diff --git a/deps/Boost/Boost.cmake b/deps/Boost/Boost.cmake
+index bc66a6b..1aab31b 100644
+--- a/deps/Boost/Boost.cmake
++++ b/deps/Boost/Boost.cmake
+@@ -40,6 +40,7 @@ bambustudio_add_cmake_project(Boost
+     CMAKE_ARGS
+         -DBOOST_EXCLUDE_LIBRARIES:STRING=contract|fiber|numpy|wave|test
+         -DBOOST_LOCALE_ENABLE_ICU:BOOL=OFF # do not link to libicu, breaks compatibility between distros
++        -DBOOST_LOCALE_ENABLE_POSIX:BOOL=OFF # bionic libc has no <monetary.h>/strfmon
+         -DBUILD_TESTING:BOOL=OFF
+         "${_context_abi_line}"
+         "${_context_arch_line}"

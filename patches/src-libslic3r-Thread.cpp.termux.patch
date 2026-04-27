@@ -1,0 +1,17 @@
+diff --git a/src/libslic3r/Thread.cpp b/src/libslic3r/Thread.cpp
+index 3030b6d..48bcc31 100644
+--- a/src/libslic3r/Thread.cpp
++++ b/src/libslic3r/Thread.cpp
+@@ -179,8 +179,12 @@ bool set_current_thread_name(const char *thread_name)
+ 
+ std::optional<std::string> get_current_thread_name()
+ {
++#if defined(__ANDROID__) && __ANDROID_API__ < 26
++	return std::string("");
++#else
+ 	char buf[16];
+ 	return std::string(pthread_getname_np(pthread_self(), buf, 16) == 0 ? buf : "");
++#endif
+ }
+ 
+ #endif
