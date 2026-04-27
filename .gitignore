@@ -34,6 +34,7 @@ logs/
 *.strace
 _egl_probe.*
 _*.py
+!__init__.py
 
 # Local scripts that bake printer-specific values
 *.local

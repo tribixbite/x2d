@@ -2333,6 +2333,31 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_printers(_args: argparse.Namespace) -> int:
+    """List every [printer] / [printer:NAME] section in ~/.x2d/credentials.
+    Output is JSON: `{"printers": [{"name": "", "ip": "...", "serial": "..."}, …]}`
+    so MCP / scripts can consume it without re-parsing INI."""
+    ini_path = Path.home() / ".x2d" / "credentials"
+    out: list[dict] = []
+    if ini_path.exists():
+        cp = configparser.ConfigParser()
+        cp.read(ini_path)
+        for section in cp.sections():
+            if section == "printer":
+                name = ""
+            elif section.startswith("printer:"):
+                name = section.split(":", 1)[1]
+            else:
+                continue
+            out.append({
+                "name":   name,
+                "ip":     cp.get(section, "ip", fallback=""),
+                "serial": cp.get(section, "serial", fallback=""),
+            })
+    print(json.dumps({"printers": out}, indent=2))
+    return 0
+
+
 def cmd_cloud_login(args: argparse.Namespace) -> int:
     import cloud_client
     if args.dry_run:
@@ -2553,6 +2578,14 @@ def main() -> int:
         help="Wipe ~/.x2d/cloud_session.json.",
     )
     cli_logout.set_defaults(fn=cmd_cloud_logout)
+
+    pl = sub.add_parser(
+        "printers",
+        help="List every [printer] / [printer:NAME] section in "
+             "~/.x2d/credentials. The default section is reported as "
+             "the empty string.",
+    )
+    pl.set_defaults(fn=cmd_printers)
 
     sv = sub.add_parser(
         "serve",

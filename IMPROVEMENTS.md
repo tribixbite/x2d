@@ -737,15 +737,39 @@ The Stop hook drives execution; commit + push between every checkbox.
 
 ### Phase 2 — MCP + WebRTC + thin web UI (items 42-49)
 
-- [ ] **42. MCP server stdio module** at `runtime/mcp/server.py`.
+- [x] **42. MCP server stdio module** at `runtime/mcp/server.py`.
   - **Sub-tasks**:
-    - [ ] Wraps every bridge op as an MCP tool: status, pause, resume,
-      stop, gcode, set_temp, chamber_light, ams_load/unload, jog,
-      camera_snapshot, list_printers, etc.
-    - [ ] Conforms to MCP spec (modelcontextprotocol.io).
-    - [ ] Includes resources: latest state JSON, latest camera frame.
+    - [x] Wraps every bridge op as an MCP tool: status, pause, resume,
+      stop, gcode, home, level, set_temp, chamber_light, ams_load,
+      ams_unload, jog, upload, print, camera_snapshot, list_printers,
+      healthz, metrics — 18 tools total. Each tool's `argv()` builder
+      maps MCP arguments to the matching `x2d_bridge.py` CLI verb;
+      camera_snapshot/healthz/metrics are special-cased to hit the
+      daemon HTTP endpoint directly. New `cmd_printers` subcommand
+      added to the bridge so `list_printers` has a CLI to call.
+    - [x] Conforms to MCP spec (modelcontextprotocol.io). JSON-RPC 2.0
+      over newline-delimited stdio. Implements `initialize`,
+      `notifications/initialized`, `tools/list`, `tools/call`,
+      `resources/list`, `resources/read`, `ping`. Server advertises
+      protocolVersion `2025-06-18` and serverInfo
+      `{"name":"x2d-bridge","version":"0.1.0"}`. Errors use the
+      standard `-32601` (method not found), `-32602` (invalid params),
+      `-32603` (internal), `-32700` (parse error) codes.
+    - [x] Includes resources: latest state JSON, latest camera frame.
+      `x2d://state` (mimeType=application/json) reads the daemon's
+      `/state` HTTP first then falls back to a fresh MQTT pull;
+      `x2d://camera/snapshot` (mimeType=image/jpeg) returns the
+      base64-blobbed JPEG from the camera daemon's `/cam.jpg`.
   - **Done when**: `python -m mcp_x2d` over stdio responds to MCP
-    `tools/list` with the full toolset.
+    `tools/list` with the full toolset. **Done.**
+    Test harness `python3.12 runtime/mcp/test_mcp.py` runs the full
+    initialize → tools/list → resources/list → tools/call → ping
+    handshake against a subprocess of the real server: 47/47 checks
+    pass. Live MCP call against the actual X2D
+    (`tools/call status`) returned `nozzle_temper=27.0`,
+    `bed_temper=25.0`, `wifi_signal=-58dBm` — confirming the full
+    stdin → JSON-RPC dispatch → bridge subprocess → MQTT signed
+    publish → printer reply pipeline works end-to-end.
 
 - [ ] **43. Claude Desktop config docs** for adding the MCP server.
   - **Sub-tasks**:
