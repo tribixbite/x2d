@@ -1,0 +1,77 @@
+diff --git a/src/slic3r/GUI/GUI_App.cpp b/src/slic3r/GUI/GUI_App.cpp
+index 94ad197..248ab7e 100644
+--- a/src/slic3r/GUI/GUI_App.cpp
++++ b/src/slic3r/GUI/GUI_App.cpp
+@@ -4944,7 +4944,7 @@ void GUI_App::on_http_error(wxCommandEvent &evt)
+                 }
+             }
+             if (found_json) {
+-                json j = json::parse(body_str);
++                json j = json::parse(body_str.ToStdString());
+                 if (j.contains("code")) {
+                     if (!j["code"].is_null())
+                         code = j["code"].get<int>();
+@@ -6388,24 +6388,18 @@ bool GUI_App::load_language(wxString language, bool initial)
+         //}
+     }
+ 
++    // Termux source patch (item #28): on bionic + Termux, libicu's
++    // locale registry doesn't include en_US/en_GB so wxLocale::IsAvailable
++    // returns false even for English. Upstream behaviour pops a modal
++    // "Switching language failed" then std::exit on first run, which made
++    // the GUI unusable. Instead of erroring, accept whatever language
++    // the user requested and let wxLocale::Init pick a fallback. This
++    // replaces the LD_PRELOAD shim symbols `wxLocale::IsAvailable` and
++    // `wxUILocale::IsAvailable` in runtime/preload_gtkinit.c.
+     if (! wxLocale::IsAvailable(language_info->Language)) {
+-    	// Loading the language dictionary failed.
+-    	wxString message = "Switching Bambu Studio to language " + language_info->CanonicalName + " failed.";
+-#if !defined(_WIN32) && !defined(__APPLE__)
+-        // likely some linux system
+-        message += "\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n";
+-#endif
+-        if (initial)
+-        	message + "\n\nApplication will close.";
+-        wxMessageBox(message, "Bambu Studio - Switching language failed", wxOK | wxICON_ERROR);
+-        if (initial)
+-			std::exit(EXIT_FAILURE);
+-        else {
+-            language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK);
+-            language_dict = wxLanguage(language_info->Language);
+-            app_config->set("language", language_info->CanonicalName.ToUTF8().data());
+-            return false;
+-        }
++        BOOST_LOG_TRIVIAL(info) << "wxLocale::IsAvailable("
++                                << language_info->CanonicalName.ToStdString()
++                                << ") = false on bionic — proceeding anyway";
+     }
+ 
+     // Release the old locales, create new locales.
+@@ -7747,21 +7741,12 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
+ 
+ bool GUI_App::config_wizard_startup()
+ {
+-    if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
+-        BOOST_LOG_TRIVIAL(info) << "run wizard...";
+-        run_wizard(ConfigWizard::RR_DATA_EMPTY);
+-        BOOST_LOG_TRIVIAL(info) << "finished run wizard";
+-        return true;
+-    } /*else if (get_app_config()->legacy_datadir()) {
+-        // Looks like user has legacy pre-vendorbundle data directory,
+-        // explain what this is and run the wizard
+-
+-        MsgDataLegacy dlg;
+-        dlg.ShowModal();
+-
+-        run_wizard(ConfigWizard::RR_DATA_LEGACY);
+-        return true;
+-    }*/
++    // Termux source patch (item #21): the upstream Setup Wizard
++    // (WebGuideDialog) asserts mid-network or hangs on Bambu cloud
++    // calls when run on aarch64 Termux + termux-x11 with restricted
++    // network. install.sh + the bridge's SSDP auto-pop pre-seed the
++    // BBL vendor preset already, so the wizard is unnecessary.
++    // Replaces the prior runtime binary patch (patch_bambu_skip_wizard.py).
+     return false;
+ }
+ 

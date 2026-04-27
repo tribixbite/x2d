@@ -485,30 +485,30 @@ The Stop hook drives execution; commit + push between every checkbox.
 
 ### Phase 0 — source-patch every GUI bug we've been hacking around (items 21-35)
 
-- [ ] **21. Source-patch `GUI_App::config_wizard_startup` to return false.**
+- [x] **21. Source-patch `GUI_App::config_wizard_startup` to return false.**
   - **Sub-tasks**:
-    - [ ] Edit `bs-bionic/src/slic3r/GUI/GUI_App.cpp:7748` so the function
+    - [x] Edit `bs-bionic/src/slic3r/GUI/GUI_App.cpp:7748` so the function
       body is `return false;` and nothing else.
-    - [ ] Generate `patches/GUI_App.cpp.termux.patch` from the diff.
-    - [ ] Rebuild bambu-studio (incremental ninja).
-    - [ ] Verify wizard doesn't pop on fresh launch via ADB.
-    - [ ] Delete `patch_bambu_skip_wizard.py` + its install.sh hook +
+    - [x] Generate `patches/GUI_App.cpp.termux.patch` from the diff.
+    - [x] Rebuild bambu-studio (incremental ninja).
+    - [x] Verify wizard doesn't pop on fresh launch via ADB.
+    - [x] Delete `patch_bambu_skip_wizard.py` + its install.sh hook +
       its preload_gtkinit.c stub — all replaced by the source patch.
   - **Done when**: launching bambu-studio with no AppConfig never opens
     the WebGuideDialog AND no runtime patcher / LD_PRELOAD shim symbol
     is involved.
 
-- [ ] **22. Source-patch BBLTopbar so Print plate button stacks vertically
+- [x] **22. Source-patch BBLTopbar so Print plate button stacks vertically
   on narrow displays.**
   - **Sub-tasks**:
-    - [ ] Read `bs-bionic/src/slic3r/GUI/MainFrame.cpp:1820-1845` to
+    - [x] Read `bs-bionic/src/slic3r/GUI/MainFrame.cpp:1820-1845` to
       understand the slice/print panel layout.
-    - [ ] Replace `wxBoxSizer(wxHORIZONTAL)` with vertical-stack-on-narrow
+    - [x] Replace `wxBoxSizer(wxHORIZONTAL)` with vertical-stack-on-narrow
       logic (wrap into a wxGridSizer or check `display_w < 1200` and
       orient vertical).
-    - [ ] Generate `patches/MainFrame.cpp.termux.patch` (extending the
+    - [x] Generate `patches/MainFrame.cpp.termux.patch` (extending the
       existing one).
-    - [ ] Rebuild + ADB verify both Slice plate AND Print plate visible
+    - [x] Rebuild + ADB verify both Slice plate AND Print plate visible
       and clickable on 1080-wide display.
   - **Done when**: ADB tap on Print plate fires `EVT_GLTOOLBAR_PRINT_PLATE`
     and opens the SelectMachine dialog.
@@ -556,24 +556,24 @@ The Stop hook drives execution; commit + push between every checkbox.
     - [ ] Verify no gvfs popup on Ctrl+O after fresh launch.
   - **Done when**: file chooser opens in `~` not `/`.
 
-- [ ] **27. Suppress gvfs `Could not read the contents of /` popup.**
+- [x] **27. Suppress gvfs `Could not read the contents of /` popup.**
   Even after #26 it can still trigger from other paths.
   - **Sub-tasks**:
-    - [ ] Set `G_USER_DATA_DIR` + `XDG_DATA_HOME` in `run_gui.sh` to
+    - [x] Set `G_USER_DATA_DIR` + `XDG_DATA_HOME` in `run_gui.sh` to
       `$HOME` so gvfs doesn't probe `/`.
-    - [ ] Or if needed, patch wx-gtk to not enumerate the root.
-    - [ ] Verify zero popups on first launch.
+    - [x] Or if needed, patch wx-gtk to not enumerate the root.
+    - [x] Verify zero popups on first launch.
   - **Done when**: cold start of bambu-studio shows no gvfs error
     modals at all.
 
-- [ ] **28. Source-patch wxLocale en_US fallback** to replace the
+- [x] **28. Source-patch wxLocale en_US fallback** to replace the
   `LD_PRELOAD` shim that overrides `wxLocale::IsAvailable`.
   - **Sub-tasks**:
-    - [ ] Edit `bs-bionic/src/slic3r/GUI/GUI_App.cpp` to skip the
+    - [x] Edit `bs-bionic/src/slic3r/GUI/GUI_App.cpp` to skip the
       problematic `wxLocale::IsAvailable` check on bionic.
-    - [ ] Remove the `_ZN8wxLocale11IsAvailableEi` symbol from
+    - [x] Remove the `_ZN8wxLocale11IsAvailableEi` symbol from
       `runtime/preload_gtkinit.c`.
-    - [ ] Verify GUI launches with no "Switching language" modal.
+    - [x] Verify GUI launches with no "Switching language" modal.
   - **Done when**: preload_gtkinit.c no longer needs wxLocale shims
     AND the GUI starts normally.
 

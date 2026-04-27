@@ -23,6 +23,16 @@ if [[ ! -f "${PRELOAD_SO}" ]]; then
 fi
 
 export DISPLAY="${DISPLAY:-:1}"
+
+# Termux source patch (item #27): gvfs probes "/" by default and pops a
+# "Could not read the contents of /" error every launch because Android
+# blocks app-process root reads. Pinning XDG + gvfs to $HOME stops the
+# probe before it starts.
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+export GIO_USE_VFS=local
+export GVFS_DISABLE_FUSE=1
 # Forces wxLocale through the C/UTF-8 path; the LD_PRELOAD shim handles
 # the bionic-specific gaps (en_US suffix retry + wxUILocale ICU bypass).
 export LC_ALL="${LC_ALL:-C}"

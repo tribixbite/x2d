@@ -1,5 +1,5 @@
 diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
-index f8dd9e2..2e3a61d 100644
+index f8dd9e2..4856fb2 100644
 --- a/src/slic3r/GUI/MainFrame.cpp
 +++ b/src/slic3r/GUI/MainFrame.cpp
 @@ -447,10 +447,30 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
@@ -35,4 +35,35 @@ index f8dd9e2..2e3a61d 100644
 +    SetSize(init_size);
  
      Layout();
+ 
+@@ -1817,11 +1837,27 @@ wxBoxSizer* MainFrame::create_side_tools()
+     sizer->Add(FromDIP(4), 0, 0, 0, 0);
+     sizer->Add(split_line_icon, 0, wxALIGN_CENTER, 0);
+     sizer->Add(FromDIP(10), 0, 0, 0, 0);
++    // Termux source patch (item #22): on portrait phone displays the
++    // Print plate panel was placed off the right edge of the topbar,
++    // making it unreachable. Compress horizontal padding when the
++    // primary display is narrower than 1200 px so both Slice plate
++    // and Print plate fit inside the visible toolbar.
++    int sb_padding = FromDIP(15);
++    int sb_right_padding = FromDIP(19);
++    int sb_first_padding = FromDIP(4);
++    if (auto disp_count = wxDisplay::GetCount(); disp_count > 0) {
++        int disp_w = wxDisplay(0u).GetClientArea().GetWidth();
++        if (disp_w < 1200) {
++            sb_padding = FromDIP(2);
++            sb_right_padding = FromDIP(2);
++            sb_first_padding = FromDIP(2);
++        }
++    }
+     sizer->Add(slice_panel);
+-    sizer->Add(FromDIP(15), 0, 0, 0, 0);
++    sizer->Add(sb_padding, 0, 0, 0, 0);
+     sizer->Add(print_panel);
+-    sizer->Add(FromDIP(4), 0, 0, 0, 0);
+-    sizer->Add(FromDIP(19), 0, 0, 0, 0);
++    sizer->Add(sb_first_padding, 0, 0, 0, 0);
++    sizer->Add(sb_right_padding, 0, 0, 0, 0);
+ 
+     sizer->Layout();
  
