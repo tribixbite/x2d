@@ -620,13 +620,13 @@ The Stop hook drives execution; commit + push between every checkbox.
     - [x] Verify ADB: click an item, project loads.
   - **Done when**: Recently Opened items reload on click.
 
-- [ ] **33. Build plate preview missing.** User-reported. Probably the
+- [x] **33. Build plate preview missing.** User-reported. Probably the
   same wxGLCanvas root cause as #25.
   - **Sub-tasks**:
-    - [ ] Verify whether #25 fixes this too OR it's a separate plate-
+    - [x] Verify whether #25 fixes this too OR it's a separate plate-
       preview rendering path.
-    - [ ] Fix whatever's separately broken.
-    - [ ] Verify: the build plate appears in Prepare tab's 3D viewport
+    - [x] Fix whatever's separately broken.
+    - [x] Verify: the build plate appears in Prepare tab's 3D viewport
       with grid lines + bounding box.
   - **Done when**: build plate visible underneath any loaded model.
 
