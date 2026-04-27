@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111416">
+  <title>X2D bridge — sign in</title>
+  <link rel="stylesheet" href="/index.css">
+  <style>
+    .login-card {
+      max-width: 360px;
+      margin: 4rem auto;
+      padding: 1.4rem 1.4rem 1.2rem;
+    }
+    .login-card h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 0 0 0.4rem;
+    }
+    .login-card p { margin: 0 0 1.2rem; color: var(--fg-muted); }
+    .login-card label {
+      display: block;
+      color: var(--fg-muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.4rem;
+    }
+    .login-card input[type=password] {
+      width: 100%;
+      background: var(--bg-soft);
+      color: var(--fg);
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      padding: 0.75rem 0.85rem;
+      font: inherit;
+      font-size: 0.95rem;
+      min-height: 44px;
+    }
+    .login-card input[type=password]:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+    }
+    .login-actions { margin-top: 1rem; display: flex; gap: 0.6rem; }
+    .login-msg { margin-top: 0.7rem; min-height: 1.2em; font-size: 0.85rem; }
+    .login-msg.bad { color: var(--bad); }
+    .login-msg.ok  { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card login-card">
+      <h1>X2D bridge</h1>
+      <p>Sign in with the bearer token configured by
+         <code>--auth-token</code> on the daemon.</p>
+      <form id="login-form" autocomplete="off">
+        <label for="token">Bearer token</label>
+        <input id="token" type="password" autocomplete="current-password"
+               required minlength="1" autofocus>
+        <div class="login-actions">
+          <button type="submit" class="primary" id="submit">Sign in</button>
+          <button type="button" id="clear">Clear stored token</button>
+        </div>
+        <div id="msg" class="login-msg"></div>
+      </form>
+    </section>
+  </main>
+  <script src="/login.js"></script>
+</body>
+</html>

@@ -585,12 +585,38 @@ def _write_access_log(record: dict) -> None:
             fh.write(line)
 
 
+_AUTH_COOKIE_NAME = "x2d_token"
+
+
+def _parse_cookie(header: str, name: str) -> str:
+    """Extract a single cookie value by name from a Cookie: header.
+    Returns "" if not present. Tolerant of quotes and surrounding spaces."""
+    if not header:
+        return ""
+    for part in header.split(";"):
+        kv = part.strip().split("=", 1)
+        if len(kv) == 2 and kv[0].strip() == name:
+            v = kv[1].strip()
+            if v.startswith('"') and v.endswith('"'):
+                v = v[1:-1]
+            return v
+    return ""
+
+
 def _check_bearer(handler, expected: str | None, host: str) -> bool:
     """Return True if the request is authorized. Loopback binds with
     no token configured stay open (single-user local case). Any
     non-loopback bind requires a token; missing/wrong token → 401
     with WWW-Authenticate. Sends the response on rejection so the
-    caller just returns."""
+    caller just returns.
+
+    Token may be presented in EITHER `Authorization: Bearer <token>` OR
+    a `x2d_token=<token>` cookie. The cookie path is what the in-browser
+    web UI (#48) uses so SSE/EventSource works (EventSource doesn't
+    allow custom headers from JS). Static asset routes that don't need
+    auth (login page bootstrap) bypass this check via the `bypass_auth`
+    handler attr — see `do_GET`.
+    """
     if not expected:
         if not _is_loopback(host):
             handler.send_response(401)
@@ -600,13 +626,18 @@ def _check_bearer(handler, expected: str | None, host: str) -> bool:
             handler.end_headers()
             return False
         return True
+    presented = ""
     auth = handler.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+    if auth.startswith("Bearer "):
+        presented = auth[len("Bearer "):].strip()
+    if not presented:
+        cookie_hdr = handler.headers.get("Cookie", "")
+        presented = _parse_cookie(cookie_hdr, _AUTH_COOKIE_NAME)
+    if not presented:
         handler.send_response(401)
         handler.send_header("WWW-Authenticate", 'Bearer realm="x2d"')
         handler.end_headers()
         return False
-    presented = auth[len("Bearer "):].strip()
     # Constant-time compare so we don't leak token length via timing.
     import hmac
     if not hmac.compare_digest(presented, expected):
@@ -711,7 +742,14 @@ def _serve_http(bind: str,
             "/index.html": "index.html",
             "/index.js":   "index.js",
             "/index.css":  "index.css",
+            "/login.html": "login.html",
+            "/login.js":   "login.js",
         }
+        # The login flow needs to render BEFORE the user has a token,
+        # so we serve these without the bearer/cookie check. Same for
+        # /auth/info which the JS uses to detect "auth disabled" mode
+        # (loopback + no token configured) and skip the login redirect.
+        _AUTH_BYPASS_PATHS = {"/login.html", "/login.js", "/auth/info"}
 
         def _serve_static(self, fname: str) -> None:
             path = (web_dir / fname).resolve()
@@ -768,14 +806,47 @@ def _serve_http(bind: str,
         def do_GET(self):
             self._x2d_start = time.time()
             self._x2d_printer = None
-            self._x2d_authed = (auth_token is not None) and bool(
-                self.headers.get("Authorization", "").startswith("Bearer "))
-            if not _check_bearer(self, auth_token, host):
-                return
+            cookie_token = _parse_cookie(self.headers.get("Cookie", ""),
+                                          _AUTH_COOKIE_NAME)
+            self._x2d_authed = (auth_token is not None) and (
+                self.headers.get("Authorization", "").startswith("Bearer ")
+                or bool(cookie_token))
             url = urllib.parse.urlparse(self.path)
             path = url.path
-            # Web UI static assets (#46) — open even on non-loopback
-            # because the bearer check above already gated us.
+            # Item #48: /auth/info is a public probe so the JS can tell
+            # whether the daemon is open (loopback + no token) or gated.
+            # /login.html + /login.js are served WITHOUT the gate so the
+            # user can reach the password prompt before having a token.
+            if path == "/auth/info":
+                payload = {
+                    "auth_required": auth_token is not None,
+                    "cookie_name":   _AUTH_COOKIE_NAME,
+                }
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path in self._AUTH_BYPASS_PATHS \
+                    and path in self._WEB_ALLOWED:
+                self._serve_static(self._WEB_ALLOWED[path])
+                return
+            if not _check_bearer(self, auth_token, host):
+                return
+            # /auth/check: token validated above; report success so the
+            # login page knows it can persist + redirect.
+            if path == "/auth/check":
+                body = json.dumps({"ok": True}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            # Web UI static assets (#46) — open once the bearer/cookie
+            # check above passes.
             if path in self._WEB_ALLOWED:
                 self._serve_static(self._WEB_ALLOWED[path])
                 return

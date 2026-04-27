@@ -983,14 +983,53 @@ The Stop hook drives execution; commit + push between every checkbox.
     `min-width: 720px` breakpoint). Bandwidth metrics in
     `docs/webui-mobile-metrics.json` for reference.
 
-- [ ] **48. Auth flow for the web UI** — bearer token gate, with a
+- [x] **48. Auth flow for the web UI** — bearer token gate, with a
   one-time login screen that stores the token in localStorage.
   - **Sub-tasks**:
-    - [ ] Login page that POSTs to a new `/auth/check` endpoint.
-    - [ ] Token persistence in localStorage.
-    - [ ] Auto-attach Authorization header to all subsequent requests.
+    - [x] Login page that POSTs to a new `/auth/check` endpoint.
+      `web/login.html` + `web/login.js` ship a minimal mobile-friendly
+      sign-in card. The JS sends the token as `Authorization: Bearer`
+      to `/auth/check` (the server route reuses the same
+      `_check_bearer` path every other endpoint uses, so there is one
+      auth code path — no parallel implementation). On 200, the page
+      persists and redirects to `?next=…` if present, else
+      `/index.html`. New `/auth/info` probe returns
+      `{"auth_required": bool, "cookie_name": "x2d_token"}` so the JS
+      can detect "auth disabled" mode (loopback + no `--auth-token`)
+      and skip the prompt entirely. Login + auth-info paths bypass
+      the bearer check via `_AUTH_BYPASS_PATHS`.
+    - [x] Token persistence in localStorage. Login page writes both
+      `localStorage["x2d_token"]` (for `fetch()` Authorization
+      headers) AND a `Set-Cookie: x2d_token=…; SameSite=Strict;
+      path=/; Max-Age=30d` cookie (for SSE `EventSource`, which
+      cannot send custom headers from JS). The "Clear stored token"
+      button on the login page wipes both. `_check_bearer` accepts
+      either source — `Authorization: Bearer …` first, then the
+      `x2d_token` cookie via the new `_parse_cookie` helper.
+    - [x] Auto-attach Authorization header to all subsequent requests.
+      `index.js` wraps `window.fetch` at module init so every
+      `fetch()` call (control verbs, /printers, /auth/check probe,
+      everything) carries `Authorization: Bearer ${_token}` without
+      per-call ceremony. EventSource picks up the same token via the
+      cookie. On boot the script also probes `/auth/check`; if a
+      stored token gets a 401, it's cleared from localStorage +
+      cookie and the user is bounced to `/login.html` so a rotated
+      token can't leave the UI broken-but-silent.
   - **Done when**: opening the web UI on a fresh browser prompts for
-    token, then never again until token rotates.
+    token, then never again until token rotates. **Done.**
+    `runtime/webui/test_auth.py` covers both modes:
+    1. `auth_token="test-token-123"`: `/index.html` 401 without auth,
+       200 with bearer, 200 with cookie; `/auth/check` returns the
+       canonical `WWW-Authenticate: Bearer …; error="invalid_token"`
+       on bad creds; `/state` accepts cookie auth (proves the SSE
+       path works); quoted cookie values are tolerated.
+    2. `auth_token=None`: `/auth/info` reports `auth_required=false`,
+       `/index.html` serves without prompting — single-user loopback
+       case.
+    Plus `_parse_cookie` unit checks for missing / multi / quoted /
+    space-padded headers. **28/28 PASS**. The pre-existing #46 and
+    #47 tests still pass with the new cookie-aware `_check_bearer` —
+    no regressions.
 
 - [ ] **49. Phase 2 end-to-end smoke test.** Drive a print from
   Claude Desktop via MCP while watching the WebRTC stream in a

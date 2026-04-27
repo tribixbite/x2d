@@ -1,13 +1,100 @@
-// X2D bridge thin-client (#46) — vanilla JS, no build step.
+// X2D bridge thin-client (#46 + #48) — vanilla JS, no build step.
 //
 // Subscribes to /state.events (SSE) for live state, hits POST
 // /control/<verb> for actions, and toggles between three camera
 // transports: snapshot (cam.jpg poll), HLS (<video> with hls.js
 // disabled by default — relies on native HLS in Safari), and WebRTC
 // (delegates to /cam.webrtc.html in an inline <video> via SDP exchange).
+//
+// Auth (#48): on boot, hit /auth/info. If `auth_required` is true and
+// no token is in localStorage, redirect to /login.html?next=<here>.
+// Otherwise wrap fetch() to add `Authorization: Bearer <token>` so
+// every API call carries auth. EventSource picks up the same token
+// via the `x2d_token` cookie set by the login page (EventSource has
+// no API for custom headers — cookies are the only path).
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
+
+  // Token is whatever the login page persisted; null when no auth
+  // is configured at the daemon side (single-user loopback).
+  let _token = null;
+  try { _token = localStorage.getItem("x2d_token"); } catch (e) {}
+
+  // Wrap window.fetch so every code path under here automatically
+  // attaches the Bearer header. We keep the original around so the
+  // login page (loaded separately) is unaffected.
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    init = init || {};
+    if (_token) {
+      const h = new Headers(init.headers || {});
+      if (!h.has("Authorization")) h.set("Authorization", "Bearer " + _token);
+      init.headers = h;
+    }
+    return _origFetch(input, init);
+  };
+
+  function redirectToLogin() {
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = "/login.html?next=" + next;
+  }
+
+  // Probe the daemon's auth state. If the daemon requires auth and we
+  // don't have a token, kick the user to /login.html before booting
+  // the rest of the UI. Use the unwrapped fetch so /auth/info isn't
+  // gated by our own missing token.
+  _origFetch("/auth/info").then((r) => r.ok ? r.json() : null)
+    .then(async (info) => {
+      if (info && info.auth_required) {
+        if (!_token) { redirectToLogin(); return; }
+        // We have a token; verify it before launching SSE so a stale
+        // token doesn't quietly fail. /auth/check returns 200 on
+        // valid bearer/cookie auth, 401 otherwise.
+        const r = await fetch("/auth/check");
+        if (r.status === 401) {
+          try { localStorage.removeItem("x2d_token"); } catch (e) {}
+          document.cookie = "x2d_token=; path=/; Max-Age=0; SameSite=Strict";
+          redirectToLogin();
+          return;
+        }
+      }
+      boot();
+    })
+    .catch(() => {
+      // Daemon unreachable — show what we can; the SSE stream will
+      // surface the connect failure.
+      boot();
+    });
+
+  function boot() {
+    // ?capture=1 disables SSE + camera polling so headless screenshot
+    // tools (chromium-browser --headless --screenshot) don't block on
+    // a never-ending page-load. Inject a one-shot fake state so the
+    // UI shows real values in the shot.
+    const params = new URLSearchParams(location.search);
+    if (params.get("capture") === "1") {
+      renderState({
+        print: {
+          nozzle_temper: 213.5, bed_temper: 60.0, chamber_temper: 35.0,
+          subtask_name: "rumi_frame.gcode.3mf", mc_percent: 42,
+          mc_current_layer: 17, total_layer_num: 120,
+          mc_remaining_time: 75,
+          ams: { ams: [{ id: 0, tray: [
+            { tray_color: "FF7676FF", tray_type: "PLA" },
+            { tray_color: "66E08CFF", tray_type: "PETG" },
+            { tray_color: "FFC857FF", tray_type: "PLA" },
+            {} ] }], tray_now: "0" },
+        },
+      });
+      connStatus.textContent = "capture mode";
+      connStatus.className = "pill ok";
+      lastUpdate.textContent = new Date().toLocaleTimeString();
+      return;
+    }
+    setCameraMode("snapshot");
+    loadPrinters();
+  }
 
   // --- header ----------------------------------------------------------
   const printerSelect = $("printer-select");
@@ -249,30 +336,4 @@
     await webrtcPC.setRemoteDescription(answer);
   }
 
-  // Boot. ?capture=1 disables SSE + camera polling so headless screenshot
-  // tools (chromium-browser --headless --screenshot) don't block on a
-  // never-ending page-load.
-  const params = new URLSearchParams(location.search);
-  if (params.get("capture") === "1") {
-    // Inject a one-shot fake state so the UI shows real values in the shot.
-    renderState({
-      print: {
-        nozzle_temper: 213.5, bed_temper: 60.0, chamber_temper: 35.0,
-        subtask_name: "rumi_frame.gcode.3mf", mc_percent: 42,
-        mc_current_layer: 17, total_layer_num: 120,
-        mc_remaining_time: 75,
-        ams: { ams: [{ id: 0, tray: [
-          { tray_color: "FF7676FF", tray_type: "PLA" },
-          { tray_color: "66E08CFF", tray_type: "PETG" },
-          { tray_color: "FFC857FF", tray_type: "PLA" },
-          {} ] }], tray_now: "0" },
-      },
-    });
-    connStatus.textContent = "capture mode";
-    connStatus.className = "pill ok";
-    lastUpdate.textContent = new Date().toLocaleTimeString();
-  } else {
-    setCameraMode("snapshot");
-    loadPrinters();
-  }
 })();
