@@ -1481,13 +1481,47 @@ The Stop hook drives execution; commit + push between every checkbox.
 
 ### Phase 5 — docs + release (items 59-62)
 
-- [ ] **59. README reorg** for the feature-complete product.
+- [x] **59. README reorg** for the feature-complete product.
   - **Sub-tasks**:
-    - [ ] Top-level "What is this" + "Who is this for".
-    - [ ] Feature matrix vs upstream + ha-bambulab.
-    - [ ] Quick install / quick start.
-    - [ ] Links to per-feature docs.
+    - [x] Top-level "What is this" + "Who is this for". The README
+      now leads with a one-paragraph framing — "feature-complete
+      LAN-first stack for Bambu X2D / H2D / signed-MQTT printers"
+      — followed by a §"What is this" that splits the repo into
+      its three actual products (the bridge, the six-surface
+      daemon stack, the BambuStudio Termux port) and §"Who is
+      this for" that names the three audiences (X2D/H2D/X1E
+      owners stuck without a working plugin; HA / MCP / mobile
+      users who want a printer API; people who want a small
+      auditable Python binary). The old "BambuStudio on Termux
+      aarch64" framing is preserved as a sub-section further
+      down for the build-from-source case.
+    - [x] Feature matrix vs upstream + ha-bambulab. New 16-row
+      table comparing the bridge against Bambu Studio + Cloud
+      and ha-bambulab across each Phase 1-4 capability:
+      LAN-only, RSA-SHA256 MQTT, Termux/aarch64, one-line install,
+      CLI control, REST + SSE, Prometheus, multi-printer SSDP,
+      HA discovery, WebRTC, MCP, web UI, queue, timelapses, AI
+      assistant, AMS color sync, BambuStudio GUI on aarch64.
+      Cross-references the full per-entity comparison in
+      `docs/HA_VS_BAMBULAB.md`.
+    - [x] Quick install / quick start. Top-level §"Quick install +
+      start" has the one-line installer command + credentials
+      file template + `x2d_bridge.py status` + `daemon --queue
+      --timelapse --auth-token …` + `xdg-open http://localhost:8765/`.
+      Total: 5 commands to a running web UI. Detailed install /
+      shim / Bambu cloud / camera / etc. preserved further down
+      under §"Detailed install / credentials / launch walkthrough".
+    - [x] Links to per-feature docs. New §"Per-feature documentation"
+      table with one-line description per feature linking to
+      `docs/{QUICKSTART,WEB_UI,MCP,WEBRTC,HA,HA_VS_BAMBULAB,
+      MULTI_PRINTER,QUEUE,TIMELAPSE,ASSISTANT,COLORSYNC}.md`.
+      The five existing docs are linked; the six new docs land
+      in #60.
   - **Done when**: a first-time visitor knows what we are within 60s.
+    **Done.** Open `README.md` and the first three sections (What /
+    Who / Matrix) totalling ~50 lines tell a brand-new visitor
+    exactly what the project is, who it's for, and how it compares
+    to the alternatives — well under a minute of reading.
 
 - [ ] **60. Per-feature docs in `docs/`**:
   MCP, WebRTC, web UI, Home Assistant, multi-printer, queue, AI panel.

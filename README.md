@@ -1,20 +1,126 @@
-# BambuStudio on Termux aarch64 — X2D / H2D / signed-LAN-MQTT toolkit
+# x2d — feature-complete LAN-first stack for Bambu X2D / H2D / signed-MQTT printers
 
 [![ci](https://github.com/tribixbite/x2d/actions/workflows/ci.yml/badge.svg)](https://github.com/tribixbite/x2d/actions/workflows/ci.yml)
 
-This repo collects the patches, runtime shims, and helpers needed to run
-[BambuStudio v02.06.00.51](https://github.com/bambulab/BambuStudio/releases/tag/v02.06.00.51)
-natively on aarch64 Termux + termux-x11, plus a pure-Python LAN client that
-talks to recent Bambu printers (X2D / H2D / refreshed P1+X1) using their new
-RSA-SHA256-signed MQTT protocol — no Bambu Network Plug-in, no cloud login.
+A drop-in replacement for the Bambu Network Plugin + Bambu Cloud, built
+for the printers Bambu's first-party stack doesn't reach: **X2D, H2D,
+and refreshed P1+X1 firmware (Jan-2025+) that requires RSA-SHA256
+signed MQTT** — and for the platforms Bambu doesn't ship to (aarch64
+Linux / Termux / Android phones).
+
+## What is this
+
+**Three things in one repo:**
+
+1. **`x2d_bridge.py`** — a pure-Python LAN client that speaks Bambu's
+   signed-MQTT control plane. Pause / resume / stop / G-code / temp /
+   chamber light / AMS load / jog / FTPS upload + start print — same
+   wire format the cloud plug-in uses, but readable, hackable, and
+   running where you want.
+2. **A six-surface daemon stack** built on top: REST API,
+   Server-Sent Events, Prometheus metrics, structured access log,
+   Home Assistant MQTT auto-discovery, WebRTC chamber-camera streaming,
+   MCP server (Claude Desktop / Cursor / Continue), and a mobile-friendly
+   web UI with multi-printer queue, timelapse browser, AI assistant,
+   and real-time AMS-color → filament-profile auto-resolve.
+3. **A Termux/aarch64 BambuStudio port**: source-patches against
+   upstream `BambuStudio v02.06.00.51`, an `LD_PRELOAD` GTK/locale
+   shim, an `libbambu_networking.so` ABI shim that lets the GUI's
+   "Connect / AMS sync / Print" buttons drive printers via this bridge.
+
+## Who is this for
+
+* You own an **X2D / H2D / X1E / refreshed P1+X1** and Bambu Studio
+  refuses to connect — because the Network Plugin has no aarch64
+  build, OR the firmware needs RSA-SHA256 signed MQTT, OR you don't
+  want a cloud account just to print over LAN.
+* You want to drive your printer from **Home Assistant**, **Claude
+  Desktop / MCP**, **a phone in your pocket**, or **a homelab dashboard**
+  — and you don't want to run a 1.5 GB Bambu Studio install just to
+  hit "pause".
+* You want a **single small Python binary** you can audit, fork, and
+  run on anything from Termux to a Raspberry Pi to a Docker container.
+
+## Feature matrix
+
+| Capability                          | this repo | Bambu Studio + Cloud | ha-bambulab |
+|-------------------------------------|:---------:|:--------------------:|:-----------:|
+| LAN-only operation (no cloud login) | ✅        | ⚠️ partial           | ⚠️ requires creds |
+| **X2D / H2D RSA-SHA256 signed MQTT**| ✅        | ✅ (cloud)           | ❌ blocker  |
+| aarch64 / Termux / Android          | ✅        | ❌ (no plugin .so)   | ❌ (HA Core required) |
+| One-line install                    | ✅        | ❌                   | ⚠️ HACS    |
+| CLI control (pause/resume/temp/...) | ✅        | ❌ (GUI only)        | ❌          |
+| HTTP REST API + Server-Sent Events  | ✅        | ❌                   | ❌          |
+| Prometheus `/metrics` endpoint      | ✅        | ❌                   | ❌          |
+| Multi-printer auto-discovery (SSDP) | ✅        | ✅                   | ⚠️ manual  |
+| Home Assistant MQTT auto-discovery  | ✅ (32+ entities) | ❌            | ✅          |
+| WebRTC chamber camera (~100 ms)     | ✅        | ❌ (HLS only)        | ❌          |
+| MCP server for Claude Desktop / IDE | ✅        | ❌                   | ❌          |
+| Mobile-friendly web UI              | ✅        | ❌                   | ❌          |
+| Multi-printer print queue           | ✅        | ❌                   | ❌          |
+| Auto-recorded timelapses + ffmpeg stitch | ✅   | partial (cloud)      | ❌          |
+| Natural-language assistant in UI    | ✅        | ❌                   | ❌          |
+| Real-time AMS color → profile sync  | ✅        | ✅                   | ❌          |
+| BambuStudio GUI on aarch64 Termux   | ✅        | ❌                   | n/a         |
+
+Full per-entity comparison vs ha-bambulab in
+[`docs/HA_VS_BAMBULAB.md`](docs/HA_VS_BAMBULAB.md).
+
+## Quick install + start
+
+```bash
+# One-line install (Termux / Linux). Pulls the latest release tarball
+# + builds the bridge runtime; idempotent.
+bash <(curl -fsSL https://raw.githubusercontent.com/tribixbite/x2d/main/install.sh)
+
+# Configure the printer
+cat >~/.x2d/credentials <<'EOF'
+[printer]
+ip     = 192.168.1.42
+code   = 12345678
+serial = 03ABC0001234567
+EOF
+
+# Pull live state
+x2d_bridge.py status
+
+# Spin up the daemon (web UI, REST, SSE, /metrics, /healthz)
+x2d_bridge.py daemon --http 0.0.0.0:8765 \
+    --queue --timelapse \
+    --auth-token "$(openssl rand -hex 32)"
+# Open the web UI:
+xdg-open http://localhost:8765/
+```
+
+## Per-feature documentation
+
+| Feature              | Doc |
+|----------------------|-----|
+| Quick start          | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) |
+| Web UI               | [`docs/WEB_UI.md`](docs/WEB_UI.md) |
+| MCP server (Claude Desktop, Cursor, ...) | [`docs/MCP.md`](docs/MCP.md) |
+| WebRTC streaming     | [`docs/WEBRTC.md`](docs/WEBRTC.md) |
+| Home Assistant       | [`docs/HA.md`](docs/HA.md) |
+| HA vs ha-bambulab    | [`docs/HA_VS_BAMBULAB.md`](docs/HA_VS_BAMBULAB.md) |
+| Multi-printer setup  | [`docs/MULTI_PRINTER.md`](docs/MULTI_PRINTER.md) |
+| Print queue          | [`docs/QUEUE.md`](docs/QUEUE.md) |
+| Timelapse browser    | [`docs/TIMELAPSE.md`](docs/TIMELAPSE.md) |
+| AI assistant         | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
+| AMS color sync       | [`docs/COLORSYNC.md`](docs/COLORSYNC.md) |
+| BambuStudio Termux port | this README §"BambuStudio Termux port" below |
 
 > The Bambu Network Plug-in `.so` is shipped only for x86\_64 Linux and
-> arm64 macOS. On aarch64 Termux it has no equivalent build, so out of the
-> box BambuStudio's GUI cannot connect to a LAN printer or sync AMS spool
-> data. The bridge in this repo (`x2d_bridge.py`) replaces what the plug-in
-> would have done for the LAN-only path.
+> arm64 macOS. On aarch64 Termux it has no equivalent build, so out of
+> the box BambuStudio's GUI cannot connect to a LAN printer or sync AMS
+> spool data. The bridge in this repo replaces what the plug-in would
+> have done for the LAN-only path.
 
-## Layout
+## BambuStudio Termux port
+
+If you want the BambuStudio GUI itself to launch + connect on aarch64
+Termux (rather than only driving the printer headlessly via the bridge),
+this repo also ships the source patches and `LD_PRELOAD` shim required.
+Layout:
 
 ```
 .
@@ -26,11 +132,24 @@ RSA-SHA256-signed MQTT protocol — no Bambu Network Plug-in, no cloud login.
 │   ├── BBLTopbar.cpp.termux.patch
 │   └── BBLTopbar.hpp.termux.patch
 ├── runtime/
-│   └── preload_gtkinit.c     # LD_PRELOAD shim: GTK pre-init, locale fix,
-│                             # wxLocale ICU bypass, wx 3.3 assert silencer,
-│                             # hidden config_wizard_startup override
+│   ├── preload_gtkinit.c     # LD_PRELOAD shim: GTK pre-init, locale fix,
+│   │                         # wxLocale ICU bypass, wx 3.3 assert silencer,
+│   │                         # hidden config_wizard_startup override
+│   ├── network_shim/         # libbambu_networking.so ABI shim — lets the
+│   │                         # GUI's Connect/Print/AMS sync buttons drive
+│   │                         # the bridge over a Unix socket (#1)
+│   ├── webrtc/               # aiortc gateway (#45)
+│   ├── webui/                # web UI test harnesses (#46-48)
+│   ├── ha/                   # MQTT auto-discovery publisher (#50-54)
+│   ├── mcp/                  # MCP stdio server (#42-44)
+│   ├── queue/                # multi-printer queue manager (#55)
+│   ├── timelapse/            # auto-timelapse recorder (#56)
+│   ├── assistant/            # natural-language MCP router (#57)
+│   └── colorsync/            # AMS color → filament profile (#58)
+├── web/                      # static HTML/CSS/JS for the thin web UI
+├── docs/                     # per-feature documentation
 ├── run_gui_clean.sh          # canonical GUI launcher
-├── x2d_bridge.py             # signed-MQTT LAN client (status/upload/print/daemon)
+├── x2d_bridge.py             # signed-MQTT LAN client + multi-surface daemon
 ├── bambu_cert.py             # publicly-leaked Bambu Connect signing key
 ├── lan_upload.py             # FTPS:990 implicit-TLS uploader (helper subset)
 ├── lan_print.py              # upload + start_print combo
@@ -44,7 +163,7 @@ RSA-SHA256-signed MQTT protocol — no Bambu Network Plug-in, no cloud login.
 gitignored — the patches in `patches/` reproduce the source changes against
 a clean clone.
 
-## Quick start
+## Detailed install / credentials / launch walkthrough
 
 **TL;DR runtime guide:** see [docs/QUICKSTART.md](docs/QUICKSTART.md)
 for the install → credentials → launch → connect → print walkthrough,
