@@ -771,12 +771,33 @@ The Stop hook drives execution; commit + push between every checkbox.
     stdin → JSON-RPC dispatch → bridge subprocess → MQTT signed
     publish → printer reply pipeline works end-to-end.
 
-- [ ] **43. Claude Desktop config docs** for adding the MCP server.
+- [x] **43. Claude Desktop config docs** for adding the MCP server.
   - **Sub-tasks**:
-    - [ ] `docs/MCP.md` with `claude_desktop_config.json` snippet.
-    - [ ] Per-platform install notes (Termux, Linux, mac).
+    - [x] `docs/MCP.md` with `claude_desktop_config.json` snippet.
+      Full guide covers smoke-test, env var reference, every supported
+      tool, the `claude_desktop_config.json` block (verbatim
+      copy-pasteable), Claude-Desktop-side troubleshooting table,
+      and a remote-MCP-via-SSH variant for users who want the
+      bridge to live on Termux while the client runs on a laptop.
+      Verbatim config also dropped at
+      `docs/claude_desktop_config.example.json` so users can
+      `cp` it straight into their Claude Desktop config dir and
+      edit the path. README's "MCP server" section links here
+      and ships an inline snippet.
+    - [x] Per-platform install notes (Termux, Linux, mac, Windows).
+      Each platform has its own subsection under §3 with the exact
+      `pip` / `pkg` / `winget` / `brew` commands, venv setup where
+      relevant, and a config block whose interpreter path matches
+      that platform's convention (Termux: `python3.12`; mac/Win:
+      venv interpreter; Linux: same as Termux or venv).
   - **Done when**: a user can copy-paste a config block and have
-    Claude Desktop driving prints within 60s.
+    Claude Desktop driving prints within 60s. **Done.** The
+    example config block validates as JSON
+    (`python3.12 -c "json.load(open('docs/claude_desktop_config.example.json'))"`),
+    the path-substitution sites are clearly marked
+    (`/absolute/path/to/x2d`), and the smoke-test command in §1
+    is the same harness `runtime/mcp/test_mcp.py` from #42 that
+    already proves the server boots and answers `tools/list`.
 
 - [ ] **44. Live-test MCP from Claude Desktop / equivalent client.**
   - **Sub-tasks**:

@@ -359,6 +359,38 @@ documented (`pybambu`, `bambu-farm-manager`, `OrcaSlicer`). Bambu has
 no published SDK — if they rotate URLs, this module needs to rotate
 in lockstep with the upstream consumers.
 
+## MCP server (Claude Desktop, Cursor, Continue, …)
+
+The bridge ships an MCP server at `runtime/mcp/server.py` so any
+MCP-aware client can drive prints conversationally. Eighteen tools
+(status, pause, resume, stop, gcode, set_temp, chamber_light,
+ams_load/unload, jog, upload, print, camera_snapshot, list_printers,
+healthz, metrics, home, level) plus two resources (`x2d://state`,
+`x2d://camera/snapshot`).
+
+```jsonc
+// Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json (mac)
+//                 %APPDATA%\Claude\claude_desktop_config.json           (Windows)
+//                 ~/.config/Claude/claude_desktop_config.json           (Linux)
+{
+  "mcpServers": {
+    "x2d": {
+      "command": "python3.12",
+      "args": ["-m", "mcp_x2d"],
+      "cwd": "/absolute/path/to/x2d"
+    }
+  }
+}
+```
+
+Smoke-test the server before wiring it in:
+
+```bash
+python3.12 runtime/mcp/test_mcp.py     # 47/47 PASS, ALL TESTS PASSED
+```
+
+Full per-platform install + Termux-via-SSH setup in [`docs/MCP.md`](docs/MCP.md).
+
 ## What's broken on Termux without these patches
 
 | Symptom | Root cause | Patch |

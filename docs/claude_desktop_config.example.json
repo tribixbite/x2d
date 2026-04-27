@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "x2d": {
+      "command": "python3.12",
+      "args": ["-m", "mcp_x2d"],
+      "cwd": "/absolute/path/to/x2d",
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/x2d"
+      }
+    }
+  }
+}
