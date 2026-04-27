@@ -884,17 +884,56 @@ The Stop hook drives execution; commit + push between every checkbox.
     is no Chromium build for termux-x11; the spec-compliant aiortc
     peer-to-peer test is the load-bearing proof.
 
-- [ ] **46. Thin web UI at `:8765/`** — mobile-friendly status +
+- [x] **46. Thin web UI at `:8765/`** — mobile-friendly status +
   camera + print controls.
   - **Sub-tasks**:
-    - [ ] Single-page HTML at `web/index.html` served by the bridge.
-    - [ ] Live state via SSE (`/state.events`).
-    - [ ] Embedded camera (HLS or WebRTC selectable).
-    - [ ] Buttons for pause/resume/stop/lights/heat presets.
-    - [ ] AMS color swatches with click-to-select.
+    - [x] Single-page HTML at `web/index.html` served by the bridge.
+      `_serve_http` now routes `/`, `/index.html`, `/index.js`,
+      `/index.css` through `_serve_static` (path-traversal-safe;
+      restricted to a small allowlist). Live test against the real
+      daemon: `GET /` → 200, 2968 B; `GET /index.js` → 200, 9589 B;
+      `GET /index.css` → 200, 5108 B.
+    - [x] Live state via SSE (`/state.events`). `_serve_state_events`
+      pushes `data: {"printer","state","ts"}\n\n` once per second
+      (only when changed) plus a 15 s heartbeat to keep keepalive
+      proxies happy. The JS client uses `EventSource` with
+      auto-reconnect; the test harness reads via raw urllib `readline`
+      and confirms the first frame contains the expected
+      `state.print.nozzle_temper`.
+    - [x] Embedded camera (HLS or WebRTC selectable). The `<main>`
+      "Camera" card has three tabs: snapshot (1 Hz cam.jpg poll),
+      HLS (native `<video>` with `/cam.m3u8`), and WebRTC (delegates
+      to the WebRTC gateway from #45 via `/cam.webrtc/offer`).
+      `setCameraMode()` swaps `<img>`/`<video>` and tears down the
+      previous transport cleanly.
+    - [x] Buttons for pause/resume/stop/lights/heat presets. POST
+      `/control/{pause,resume,stop,light,temp}` routes wired into the
+      handler; each builds the same MQTT payload as the corresponding
+      `cmd_*` CLI verb (using shared `_print_cmd` / `_system_cmd`)
+      and publishes via the daemon's long-lived `X2DClient` (no
+      per-call connect overhead). PLA / PETG / cool-down presets
+      issue paired bed+nozzle calls. Stop is gated by a JS `confirm()`
+      so a fat finger can't abort a print.
+    - [x] AMS color swatches with click-to-select. `renderAms()`
+      walks `state.print.ams.ams[].tray[]` and paints a CSS-grid of
+      40×40-ish swatches whose background is the tray color (8-char
+      hex, last two are alpha — sliced off). Empty bays render as
+      diagonal-stripe placeholders. The currently-loaded slot gets
+      a green outline (`tray_now` match). Tap a swatch → `confirm()`
+      → POST `/control/ams_load {slot:N}` → MQTT publish of
+      `ams_change_filament` with `target=N-1` (1-indexed UI →
+      0-indexed wire format).
   - **Done when**: opening the bridge URL in mobile Safari/Chrome
     gives a fully functional remote-control surface for the printer
-    without launching bambu-studio.
+    without launching bambu-studio. **Done.**
+    `runtime/webui/test_webui.py` covers all 33 static/SSE/control
+    routes against a fake state + mock X2DClient. Live verification
+    against the real daemon + real X2D `20P9AJ612700155` confirmed:
+    `/state` returned `nozzle=27, bed=24`; `POST /control/light
+    state=on` returned `{"ok":true,...,"led_mode":"on"}` and the
+    chamber LIGHT TURNED ON (`state=off` → physically off). The
+    end-to-end pipeline is page → fetch → daemon HTTP → live
+    `X2DClient.publish()` → signed MQTT → printer side-effect.
 
 - [ ] **47. Mobile-friendly UI testing** on the S25 Ultra.
   - **Sub-tasks**:

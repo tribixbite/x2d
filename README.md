@@ -359,6 +359,25 @@ documented (`pybambu`, `bambu-farm-manager`, `OrcaSlicer`). Bambu has
 no published SDK — if they rotate URLs, this module needs to rotate
 in lockstep with the upstream consumers.
 
+## Thin web UI (`http://<phone>:8765/`)
+
+The bridge daemon serves a mobile-friendly remote-control surface at
+`/`. No build step, no framework — `web/index.html` + `web/index.js`
++ `web/index.css` (~17 KB total). Live state arrives over Server-Sent
+Events (`/state.events`); pause / resume / stop / lights / heat
+presets / AMS slot loads POST to `/control/<verb>` and the daemon
+publishes via the long-lived MQTT client. Camera tabs let you flip
+between `/cam.jpg` snapshot polling, native HLS at `/cam.m3u8`, and
+WebRTC at `/cam.webrtc/offer`.
+
+```bash
+python3.12 x2d_bridge.py daemon --http 0.0.0.0:8765 --auth-token "$X2D_AUTH_TOKEN"
+# Then open http://<phone-ip>:8765/ in any modern browser.
+```
+
+Test harness: `PYTHONPATH=. python3.12 runtime/webui/test_webui.py` →
+33/33 PASS, exercises every static / SSE / control route end-to-end.
+
 ## MCP server (Claude Desktop, Cursor, Continue, …)
 
 The bridge ships an MCP server at `runtime/mcp/server.py` so any

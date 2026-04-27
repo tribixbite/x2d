@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111416">
+  <title>X2D bridge</title>
+  <link rel="stylesheet" href="/index.css">
+</head>
+<body>
+  <header>
+    <strong id="printer-name">x2d</strong>
+    <span id="conn-status" class="pill bad">offline</span>
+    <span id="last-update" class="pill muted">—</span>
+    <select id="printer-select" hidden></select>
+  </header>
+
+  <main>
+    <section class="card temps">
+      <h2>Temperatures</h2>
+      <div class="temp-grid">
+        <div><span class="lbl">Nozzle</span><span id="temp-nozzle" class="val">—</span></div>
+        <div><span class="lbl">Bed</span><span id="temp-bed" class="val">—</span></div>
+        <div><span class="lbl">Chamber</span><span id="temp-chamber" class="val">—</span></div>
+      </div>
+    </section>
+
+    <section class="card job">
+      <h2>Job</h2>
+      <div class="job-row">
+        <span id="job-name" class="muted">no print</span>
+        <span id="job-progress">—</span>
+      </div>
+      <div class="progressbar"><div id="job-bar"></div></div>
+      <div class="job-row muted small">
+        <span>layer <b id="job-layer">—/—</b></span>
+        <span><b id="job-eta">—</b> remaining</span>
+      </div>
+    </section>
+
+    <section class="card camera">
+      <h2>Camera</h2>
+      <div class="camera-tabs">
+        <button class="tab active" data-mode="snapshot">snapshot</button>
+        <button class="tab" data-mode="hls">HLS</button>
+        <button class="tab" data-mode="webrtc">WebRTC</button>
+      </div>
+      <div class="camera-frame">
+        <img id="cam-img" alt="chamber camera">
+        <video id="cam-video" hidden autoplay muted playsinline></video>
+      </div>
+    </section>
+
+    <section class="card controls">
+      <h2>Controls</h2>
+      <div class="btn-row">
+        <button id="btn-pause"  class="primary">pause</button>
+        <button id="btn-resume" class="primary">resume</button>
+        <button id="btn-stop"   class="danger">stop</button>
+      </div>
+      <div class="btn-row">
+        <button data-light="on">light on</button>
+        <button data-light="off">light off</button>
+        <button data-light="flashing">light flash</button>
+      </div>
+      <div class="btn-row">
+        <span class="muted">heat preset:</span>
+        <button data-heat="pla">PLA 215/60</button>
+        <button data-heat="petg">PETG 240/80</button>
+        <button data-heat="cool">cool down</button>
+      </div>
+    </section>
+
+    <section class="card ams">
+      <h2>AMS slots</h2>
+      <div id="ams-slots" class="ams-grid"></div>
+      <div class="muted small">tap a swatch to load that filament</div>
+    </section>
+
+    <section class="card log">
+      <h2>Bridge log</h2>
+      <pre id="log">connecting…</pre>
+    </section>
+  </main>
+
+  <script src="/index.js"></script>
+</body>
+</html>

@@ -618,23 +618,44 @@ def _check_bearer(handler, expected: str | None, host: str) -> bool:
     return True
 
 
+_WEB_DIR_DEFAULT = Path(__file__).resolve().parent / "web"
+
+
 def _serve_http(bind: str,
                 get_state: Callable[[str], dict | None],
                 get_last_ts: Callable[[str], float] | None = None,
                 max_staleness: float = 30.0,
                 auth_token: str | None = None,
-                printer_names: list[str] | None = None) -> None:
+                printer_names: list[str] | None = None,
+                clients: dict | None = None,
+                web_dir: Path | None = None) -> None:
     """Multi-printer HTTP server (item #36).
 
     `get_state` and `get_last_ts` now take a printer name (empty string
     for the default plain `[printer]` section). The HTTP layer parses
     `?printer=NAME` from the query string and forwards it. Routes:
 
-      GET /printers          → list of configured printer names (JSON)
-      GET /state             → state of default printer
-      GET /state?printer=lab → state of named "lab" printer
-      GET /healthz           → health of default printer
-      GET /healthz?printer=lab → health of named "lab" printer
+      GET  /printers          → list of configured printer names (JSON)
+      GET  /state             → state of default printer
+      GET  /state?printer=lab → state of named "lab" printer
+      GET  /healthz           → health of default printer
+      GET  /healthz?printer=lab → health of named "lab" printer
+      GET  /metrics           → Prometheus exposition (#38)
+      GET  /                  → web UI (#46) — serves web/index.html
+      GET  /index.html        → ditto
+      GET  /index.js          → web UI client script
+      GET  /index.css         → web UI styles
+      GET  /state.events      → SSE: state JSON pushed every 1s (#46)
+      POST /control/pause     → MQTT publish pause (#46)
+      POST /control/resume    → MQTT publish resume (#46)
+      POST /control/stop      → MQTT publish stop (#46)
+      POST /control/light     → {"state":"on|off|flashing"} (#46)
+      POST /control/temp      → {"target":"bed|nozzle|chamber","value":int,"idx":int?} (#46)
+      POST /control/ams_load  → {"slot":int} (#46)
+
+    `clients` (optional) maps printer name → live X2DClient so the
+    POST /control/* routes can publish without re-dialing MQTT each time.
+    Without it the control routes return 503.
     """
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import urllib.parse
@@ -643,6 +664,8 @@ def _serve_http(bind: str,
     host = host_part or "127.0.0.1"
     port = int(port_part)
     names = list(printer_names) if printer_names else [""]
+    web_dir = web_dir or _WEB_DIR_DEFAULT
+    clients = clients or {}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):  # silence default stderr access log
@@ -674,6 +697,74 @@ def _serve_http(bind: str,
             qs = urllib.parse.parse_qs(url.query)
             return (qs.get("printer", [""])[0] or "")
 
+        # ---- web UI helpers (#46) ---------------------------------
+        _STATIC_MIME = {
+            ".html": "text/html; charset=utf-8",
+            ".js":   "application/javascript; charset=utf-8",
+            ".css":  "text/css; charset=utf-8",
+            ".svg":  "image/svg+xml",
+            ".png":  "image/png",
+            ".ico":  "image/x-icon",
+        }
+        _WEB_ALLOWED = {
+            "/":           "index.html",
+            "/index.html": "index.html",
+            "/index.js":   "index.js",
+            "/index.css":  "index.css",
+        }
+
+        def _serve_static(self, fname: str) -> None:
+            path = (web_dir / fname).resolve()
+            try:
+                # Refuse traversal beyond the web dir.
+                path.relative_to(web_dir.resolve())
+            except ValueError:
+                self.send_response(403); self.end_headers(); return
+            if not path.exists() or not path.is_file():
+                self.send_response(404); self.end_headers(); return
+            data = path.read_bytes()
+            ctype = self._STATIC_MIME.get(path.suffix, "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _serve_state_events(self, printer: str) -> None:
+            """Server-Sent Events stream pushing the printer's state JSON
+            every 1s and a `: ping\\n\\n` keepalive every 15s."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                self.wfile.write(b"retry: 2000\n\n")
+                self.wfile.flush()
+                last_sent: str | None = None
+                ticks_since_send = 0
+                while True:
+                    state = get_state(printer)
+                    body = json.dumps({"printer": printer,
+                                        "state":   state or {},
+                                        "ts":      time.time()},
+                                       separators=(",", ":"))
+                    if body != last_sent or ticks_since_send >= 15:
+                        line = f"data: {body}\n\n".encode("utf-8")
+                        self.wfile.write(line)
+                        self.wfile.flush()
+                        last_sent = body
+                        ticks_since_send = 0
+                    else:
+                        ticks_since_send += 1
+                    time.sleep(1.0)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                # Client disconnected or socket failed — exit cleanly so
+                # the worker thread terminates.
+                return
+
         def do_GET(self):
             self._x2d_start = time.time()
             self._x2d_printer = None
@@ -683,6 +774,20 @@ def _serve_http(bind: str,
                 return
             url = urllib.parse.urlparse(self.path)
             path = url.path
+            # Web UI static assets (#46) — open even on non-loopback
+            # because the bearer check above already gated us.
+            if path in self._WEB_ALLOWED:
+                self._serve_static(self._WEB_ALLOWED[path])
+                return
+            if path == "/state.events":
+                printer = self._parse_printer()
+                self._x2d_printer = printer
+                if printer not in names:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self._serve_state_events(printer)
+                return
             if path == "/printers":
                 body = json.dumps({"printers": names}, indent=2).encode()
                 self.send_response(200)
@@ -747,6 +852,119 @@ def _serve_http(bind: str,
             else:
                 self.send_response(404)
                 self.end_headers()
+
+        def _read_body_json(self) -> dict | None:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if length <= 0:
+                return {}
+            if length > 64 * 1024:
+                return None
+            raw = self.rfile.read(length)
+            try:
+                return json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return None
+
+        def _send_json(self, payload: dict, status: int = 200) -> None:
+            body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _publish_via_client(self, printer: str, payload: dict) -> tuple[int, dict]:
+            cli = clients.get(printer)
+            if cli is None:
+                return 503, {"error": "no live MQTT client for printer "
+                              f"{printer!r}; run with --http on the daemon"}
+            try:
+                cli.publish(payload)
+            except Exception as e:
+                return 502, {"error": f"publish failed: {e}",
+                              "payload": payload}
+            return 200, {"ok": True, "printer": printer, "payload": payload}
+
+        def do_POST(self):
+            self._x2d_start = time.time()
+            self._x2d_printer = None
+            self._x2d_authed = (auth_token is not None) and bool(
+                self.headers.get("Authorization", "").startswith("Bearer "))
+            if not _check_bearer(self, auth_token, host):
+                return
+            url = urllib.parse.urlparse(self.path)
+            path = url.path
+            if not path.startswith("/control/"):
+                self.send_response(404); self.end_headers(); return
+            verb = path[len("/control/"):]
+            printer = self._parse_printer()
+            self._x2d_printer = printer
+            if printer not in names:
+                self._send_json({"error": f"unknown printer {printer!r}",
+                                  "available": names}, status=404)
+                return
+            body = self._read_body_json()
+            if body is None:
+                self._send_json({"error": "body must be JSON ≤64 KiB"},
+                                  status=400)
+                return
+            if verb == "pause":
+                payload = _print_cmd("pause", param="")
+            elif verb == "resume":
+                payload = _print_cmd("resume", param="")
+            elif verb == "stop":
+                payload = _print_cmd("stop", param="")
+            elif verb == "light":
+                state = (body or {}).get("state", "")
+                if state not in ("on", "off", "flashing"):
+                    self._send_json({"error":
+                        "state must be on/off/flashing"}, status=400)
+                    return
+                payload = _system_cmd(
+                    "ledctrl", led_node="chamber_light", led_mode=state,
+                    led_on_time=int(body.get("on_time", 500)),
+                    led_off_time=int(body.get("off_time", 500)),
+                    loop_times=int(body.get("loops", 0)),
+                    interval_time=int(body.get("interval", 0)))
+            elif verb == "temp":
+                target = (body or {}).get("target", "")
+                value = body.get("value")
+                if target not in ("bed", "nozzle", "chamber") \
+                        or not isinstance(value, (int, float)):
+                    self._send_json({"error":
+                        "expected target=bed|nozzle|chamber + value=int"},
+                                      status=400)
+                    return
+                if target == "bed":
+                    payload = _print_cmd("set_bed_temp", temp=int(value))
+                elif target == "nozzle":
+                    payload = _print_cmd(
+                        "set_nozzle_temp",
+                        extruder_index=int(body.get("idx", 0)),
+                        target_temp=int(value))
+                else:  # chamber
+                    payload = _print_cmd(
+                        "gcode_line", param=f"M141 S{int(value)}\n")
+            elif verb == "ams_load":
+                slot = body.get("slot")
+                if not isinstance(slot, int) or not 1 <= slot <= 16:
+                    self._send_json({"error":
+                        "slot must be int 1..16"}, status=400)
+                    return
+                # MachineObject::command_ams_change_filament — DeviceManager.cpp:1700
+                payload = _print_cmd(
+                    "ams_change_filament",
+                    target=int(slot) - 1,         # 0-indexed in mqtt
+                    curr_temp=int(body.get("curr_temp", 215)),
+                    tar_temp=int(body.get("tar_temp", 215)))
+            else:
+                self._send_json({"error": f"unknown control verb {verb!r}",
+                                  "supported": ["pause", "resume", "stop",
+                                                "light", "temp", "ams_load"]},
+                                  status=404)
+                return
+            status, resp = self._publish_via_client(printer, payload)
+            self._send_json(resp, status=status)
 
     server = ThreadingHTTPServer((host, port), Handler)
     auth_state = "auth required" if auth_token else \
@@ -2301,10 +2519,13 @@ def cmd_daemon(args: argparse.Namespace) -> int:
             return cli.last_message_ts if cli else 0.0
 
         Thread(target=_serve_http,
-               args=(args.http, get_state, get_last_ts,
-                     float(args.max_staleness),
-                     args.auth_token or None,
-                     list(clients.keys())),
+               kwargs={"bind": args.http, "get_state": get_state,
+                       "get_last_ts": get_last_ts,
+                       "max_staleness": float(args.max_staleness),
+                       "auth_token": args.auth_token or None,
+                       "printer_names": list(clients.keys()),
+                       "clients": clients,
+                       "web_dir": _WEB_DIR_DEFAULT},
                daemon=True).start()
 
     period = max(1, int(args.interval))
