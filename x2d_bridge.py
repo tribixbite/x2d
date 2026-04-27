@@ -1060,6 +1060,34 @@ def _serve_http(bind: str,
                 return
             url = urllib.parse.urlparse(self.path)
             path = url.path
+            # Item #57: AI assistant — POST chat.
+            if path == "/assistant/chat":
+                body = self._read_body_json() or {}
+                msg = (body.get("message") or "").strip()
+                if not msg:
+                    self._send_json({"error":
+                        "expected {message: str, provider?: str, history?: [...]}"},
+                        status=400); return
+                try:
+                    from runtime.assistant.router import route as _route
+                except ImportError as e:
+                    self._send_json({"error": f"assistant import failed: {e}"},
+                                      status=500); return
+                result = _route(msg,
+                                  provider=body.get("provider", "auto"),
+                                  history=body.get("history") or [])
+                self._send_json({
+                    "reply":      result.reply,
+                    "provider":   result.provider,
+                    "tool_calls": result.tool_calls,
+                    "transcript": [
+                        {"role": t.role, "content": t.content,
+                         "name":  t.name,
+                         "tool_calls": t.tool_calls}
+                        for t in result.transcript
+                    ],
+                })
+                return
             # Item #56: stitch a timelapse → MP4 (POST is the right
             # verb because it's a long-running, side-effecting op).
             tl_match = re.match(
@@ -1073,7 +1101,8 @@ def _serve_http(bind: str,
                 self._send_json(result, status=200 if result["ok"] else 500)
                 return
             if not (path.startswith("/control/")
-                     or path.startswith("/queue/")):
+                     or path.startswith("/queue/")
+                     or path == "/assistant/chat"):
                 self.send_response(404); self.end_headers(); return
             # Item #55: queue mutations (POST /queue/<verb>)
             if path.startswith("/queue/"):

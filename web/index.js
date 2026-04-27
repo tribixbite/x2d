@@ -72,6 +72,8 @@
     initQueue();
     // Timelapse card init (#56)
     initTimelapses();
+    // Assistant card init (#57)
+    initAssistant();
     // ?capture=1 disables SSE + camera polling so headless screenshot
     // tools (chromium-browser --headless --screenshot) don't block on
     // a never-ending page-load. Inject a one-shot fake state so the
@@ -578,6 +580,73 @@
     $tlVideo.src = url;
     $tlVideo.hidden = false;
     $tlVideo.play().catch(() => {});
+  }
+
+  // ===== assistant card (#57) =================================
+  const $assLog      = document.getElementById("ass-log");
+  const $assForm     = document.getElementById("ass-form");
+  const $assInput    = document.getElementById("ass-input");
+  const $assSend     = document.getElementById("ass-send");
+  const $assProvider = document.getElementById("ass-provider");
+
+  function initAssistant() {
+    if (!$assForm) return;
+    $assForm.addEventListener("submit", onAssistantSend);
+  }
+
+  function appendAssMsg(role, text, opts) {
+    const div = document.createElement("div");
+    div.className = "ass-msg " + role;
+    div.innerHTML =
+      `<span class="who">${role}</span>` +
+      `<span class="body"></span>`;
+    div.querySelector(".body").textContent = text;
+    if (opts && opts.toolCalls && opts.toolCalls.length) {
+      const small = document.createElement("div");
+      small.className = "muted small";
+      small.style.marginLeft = "4.5rem";
+      small.textContent = "→ " + opts.toolCalls.map(
+        tc => `${tc.name}(${JSON.stringify(tc.arguments || {})})`)
+        .join(", ");
+      div.appendChild(small);
+    }
+    $assLog.appendChild(div);
+    $assLog.scrollTop = $assLog.scrollHeight;
+  }
+
+  async function onAssistantSend(e) {
+    e.preventDefault();
+    const msg = $assInput.value.trim();
+    if (!msg) return;
+    $assInput.value = "";
+    $assSend.disabled = true;
+    appendAssMsg("user", msg);
+    try {
+      const r = await fetch("/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, provider: "auto" }),
+      });
+      const data = await r.json();
+      if (data.provider) {
+        $assProvider.textContent = "provider: " + data.provider +
+          (data.tool_calls ? ` · ${data.tool_calls} tool call${data.tool_calls===1?"":"s"}` : "");
+      }
+      // Render the transcript turns AFTER the user message we already
+      // appended (skip the first `user` turn so we don't dupe it).
+      const turns = (data.transcript || []).slice(1);
+      turns.forEach(t => appendAssMsg(t.role, t.content, {
+        toolCalls: t.tool_calls,
+      }));
+      if (!turns.length && data.reply) {
+        appendAssMsg("assistant", data.reply);
+      }
+    } catch (e) {
+      appendAssMsg("assistant", "(network error: " + e.message + ")");
+    } finally {
+      $assSend.disabled = false;
+      $assInput.focus();
+    }
   }
 
 })();

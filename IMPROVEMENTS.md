@@ -1381,14 +1381,61 @@ The Stop hook drives execution; commit + push between every checkbox.
     Pre-existing #46/#47/#48/#50/#53/#55 tests still PASS — no
     regressions.
 
-- [ ] **57. AI assistant panel** in the GUI talking to the local MCP
+- [x] **57. AI assistant panel** in the GUI talking to the local MCP
   server.
   - **Sub-tasks**:
-    - [ ] Embedded panel with text input.
-    - [ ] User types: "What's the chamber temp?" → MCP roundtrip →
-      reply renders.
-    - [ ] Tool calls visible in a transcript.
+    - [x] Embedded panel with text input. New "Assistant" card in
+      the web UI (#46): scrolling chat log + text input + send
+      button + provider footnote. Same UX as the bambu-studio
+      Device-tab callout in the original ledger entry, but reachable
+      from any browser including mobile (parity rationale matches
+      #55/#56).
+    - [x] User types: "What's the chamber temp?" → MCP roundtrip →
+      reply renders. `runtime/assistant/router.py` wires three
+      providers behind one `route()` API:
+      * `local` — pure-Python rule-based router for the common
+        phrases (temp, pause, resume, stop, home, level, camera,
+        list printers, status, healthz). No API key needed.
+        Each phrase maps to one MCP tool call; the response is
+        projected to a human sentence ("nozzle 213.5°C (target
+        215°); bed 58.7°C (target 60°); chamber 35.0°C; …").
+      * `anthropic` — calls the Messages API at
+        api.anthropic.com/v1/messages with the canonical MCP
+        toolset (imported live from `runtime/mcp/server.py` so
+        what Claude sees stays in lockstep with Claude Desktop).
+        Tool_use blocks are executed in-process via the MCP
+        server's `_call_tool`; tool_result blocks are threaded
+        back so Claude can keep reasoning. Up to 4 tool-call
+        loops by default. Picks `claude-haiku-4-5-20251001` by
+        default for speed; override via the API call.
+      * `auto` — picks `anthropic` if `ANTHROPIC_API_KEY` is set,
+        else falls back to `local`. Network failures during the
+        Anthropic call also fall back gracefully.
+      Bridge daemon route POST `/assistant/chat` accepts
+      `{message, provider?, history?}` and returns
+      `{reply, provider, tool_calls, transcript}`.
+    - [x] Tool calls visible in a transcript. Each `ChatTurn` has
+      `role` (user / assistant / tool), `content`, and `tool_calls`
+      (the `name`+`arguments` of any tool the assistant requested).
+      The web UI renders user / assistant / tool turns with their
+      own color in the chat log; tool turns get a monospace body
+      so the raw JSON output stays readable. `tool_calls` count is
+      shown in the provider footnote.
   - **Done when**: natural-language print control works in the GUI.
+    **Done.** `runtime/assistant/test_assistant.py` covers:
+    * 18 local-router checks across 9 phrases (each verifies the
+      right tool fires + the reply contains the expected fragment)
+    * unknown-phrase fallback emits a "try:" hint
+    * `route(auto)` without API key picks `local`
+    * **Mocked Anthropic provider** (no real API calls): two-iter
+      tool-use → tool_result loop, the reply quotes the bed temp
+      from the threaded-back tool result, the second API call's
+      messages include the `tool_result` block (proves the loop
+      actually re-feeds the tool output to Claude).
+    * HTTP /assistant/chat round-trip: 200 with `reply`, `provider`,
+      `tool_calls`, `transcript`; 400 on missing message; transcript
+      includes user/assistant/tool roles. **35/35 PASS**.
+    No regressions on #46/#48/#55/#56.
 
 - [ ] **58. Real-time AMS color sync UI** — when slot 3 has color
   AF7933 loaded, the GUI's filament picker auto-selects matching

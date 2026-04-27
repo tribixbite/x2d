@@ -309,3 +309,46 @@ button.danger  { background: var(--bad); color: #1a0a0a;
   background: #000;
   margin-top: 0.5rem;
 }
+
+/* Assistant card (#57) */
+.ass-log {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 0.5rem 0.65rem;
+  font-size: 0.85rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+.ass-log:empty::before {
+  content: "Ask anything about the printer.";
+  color: var(--fg-muted);
+}
+.ass-msg { display: flex; gap: 0.5rem; align-items: flex-start; }
+.ass-msg .who {
+  flex: 0 0 4rem; color: var(--fg-muted);
+  font-variant-numeric: tabular-nums; font-size: 0.78rem;
+}
+.ass-msg.user      .who { color: var(--accent); }
+.ass-msg.assistant .who { color: #88ccff; }
+.ass-msg.tool      .who { color: #ffb866; }
+.ass-msg .body { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.ass-msg.tool .body {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  max-height: 4em;
+  overflow-y: auto;
+}
+#ass-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
+}
+#ass-input {
+  background: var(--bg-soft); color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 0.55rem 0.7rem; font: inherit; min-height: 44px;
+}

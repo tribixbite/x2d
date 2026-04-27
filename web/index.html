@@ -77,6 +77,16 @@
       <div class="muted small">tap a swatch to load that filament</div>
     </section>
 
+    <section class="card assistant">
+      <h2>Assistant</h2>
+      <div id="ass-log" class="ass-log"></div>
+      <form id="ass-form" autocomplete="off">
+        <input id="ass-input" type="text" placeholder="ask: 'temps?', 'pause', 'list printers'…">
+        <button id="ass-send" type="submit">send</button>
+      </form>
+      <div class="muted small" id="ass-provider">provider: local (no API key)</div>
+    </section>
+
     <section class="card timelapses">
       <h2>Timelapses</h2>
       <select id="tl-select">
