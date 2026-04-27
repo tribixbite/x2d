@@ -86,9 +86,13 @@ unset EPOXY_USE_ANGLE MESA_GL_VERSION_OVERRIDE MESA_GLES_VERSION_OVERRIDE \
 export GALLIUM_DRIVER=llvmpipe
 export LIBGL_ALWAYS_SOFTWARE=1
 export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-# wx 3.3 GLCanvas needs EGL; surfaceless lets Mesa allocate offscreen render
-# targets without GLX (which termux-x11 doesn't expose either).
-export EGL_PLATFORM=surfaceless
+# wx 3.3 GLCanvas needs EGL. We previously set surfaceless which allocates
+# offscreen-only render targets — those rendered fine but never got blitted
+# to the X window, so the 3D viewport showed blank white. Switching to the
+# native x11 EGL platform (item #25) lets Mesa swrast use XPutImage to
+# present the rendered surface to the X window. termux-x11 supports
+# XPutImage; that's the same path standard wxFrame painting uses.
+export EGL_PLATFORM=x11
 
 # ---------------------------------------------------------------------
 # Bridge supervisor (item #12).

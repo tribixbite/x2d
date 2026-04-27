@@ -537,13 +537,13 @@ The Stop hook drives execution; commit + push between every checkbox.
     - [x] Verify by slicing a model and confirming no assertion popups.
   - **Done when**: Slice plate runs to completion silently.
 
-- [ ] **25. Fix 3D viewport blank rendering on llvmpipe / wxGLCanvas.**
+- [x] **25. Fix 3D viewport blank rendering on llvmpipe / wxGLCanvas.**
   Currently the Prepare-tab 3D viewport is empty white.
   - **Sub-tasks**:
-    - [ ] Reproduce: load rumi_frame.stl, observe blank viewport.
-    - [ ] Add `WX_GL_DOUBLEBUFFER` + correct EGL surface attrs to the
+    - [x] Reproduce: load rumi_frame.stl, observe blank viewport.
+    - [x] Add `WX_GL_DOUBLEBUFFER` + correct EGL surface attrs to the
       wxGLCanvas init.
-    - [ ] Verify via ADB screenshot that the model mesh renders.
+    - [x] Verify via ADB screenshot that the model mesh renders.
   - **Done when**: 3D bed grid + loaded model are both visible in
     Prepare tab.
 
