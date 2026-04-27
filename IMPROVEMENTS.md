@@ -1665,3 +1665,40 @@ v1.0 ship-readiness was never gated on them.
 
   v1.0.0 release tarball repackaged with the rebuilt 106376152-byte
   binary and re-uploaded (sha256 `43226a0e42e9...`).
+
+* **#64 GUI auto-bind from SSDP — RESOLVED.** Upstream BambuStudio's
+  Device tab stayed at "No printer" forever in LAN-only mode because:
+  (a) `load_last_machine` only iterates `userMachineList` (cloud-bound
+  list, empty without login), (b) `get_my_machine_list` requires
+  `is_avaliable() == true` which fails when DevBind is "occupied"
+  (X2D bound to another account is still locally reachable), and
+  (c) `set_selected_machine()` rejects dev_ids not in my_machine_list,
+  so even after the user typed an access code in ConnectPrinterDialog
+  the printer never became "selected". Three coordinated fixes:
+
+  1. `x2d_bridge.py:_seed_access_code` — on every SSDP NOTIFY, write
+     `access_code[dev_id]` / `user_access_code[dev_id]` /
+     `ip_address[dev_id]` / `app.user_last_selected_machine` keys
+     into both `BambuStudio.conf` and `BambuStudioInternal/BambuStudio.conf`.
+     The values come from `~/.x2d/credentials` when the SSDP'd
+     dev_id matches a known section. Idempotent — only writes when
+     a value would change.
+  2. `x2d_bridge.py:_op_start_discovery` — when a shim subscribes,
+     replay every cached SSDP packet immediately (analogue of #29's
+     local_message latest-state replay) so DeviceManager populates
+     within milliseconds of GUI launch instead of waiting up to 30s
+     for the next NOTIFY.
+  3. `patches/src-slic3r-GUI-DeviceCore-DevManager.cpp.termux.patch`
+     — drop the `is_avaliable()` requirement from `get_my_machine_list`
+     for LAN-mode printers (same insight as #30) and add an auto-select
+     hook in `on_machine_alive` that calls `set_selected_machine(dev_id)`
+     when the freshly-discovered LAN machine matches
+     `user_last_selected_machine` and nothing else is selected.
+
+  End-to-end verified: launch BS with bridge running → printer auto-binds
+  → Device tab shows live nozzle temps (L 26°C, R 26°C), bed (24°C),
+  chamber (23°C), AMS slots with correct PLA colors (F95D73FF,
+  A03CF7FF, AF7933FF), last subtask name, layer counts. No user clicks
+  required.
+
+  v1.0.0 release re-uploaded with rebuilt 106376368-byte binary.

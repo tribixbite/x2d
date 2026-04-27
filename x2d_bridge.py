@@ -1616,6 +1616,61 @@ class ServeServer:
               f"triggered by {parsed.get('dev_name', '?')} @ {parsed.get('dev_ip', '?')})",
               file=sys.stderr)
 
+    def _seed_access_code(self, parsed: dict) -> None:
+        """Write access_code / user_access_code / ip_address keyed by
+        dev_id into BambuStudio.conf so the GUI auto-binds on SSDP.
+        Re-runs on every NOTIFY (cheap and idempotent: same code +
+        dev_id only flips the file when the IP changes).
+
+        Looks up the access code in self._known_creds (populated from
+        ~/.x2d/credentials at startup). If the SSDP'd dev_id isn't in
+        creds, do nothing — we don't have the access code for that
+        printer."""
+        import os as _os
+        dev_id = parsed.get("dev_id", "")
+        dev_ip = parsed.get("dev_ip", "")
+        if not (dev_id and dev_ip):
+            return
+        creds = self._known_creds.get(dev_id)
+        if creds is None:
+            return
+        code, _name = creds
+        for app_dir in ("BambuStudio", "BambuStudioInternal"):
+            appconf = Path.home() / ".config" / app_dir / "BambuStudio.conf"
+            if not appconf.exists() or appconf.stat().st_size == 0:
+                continue
+            try:
+                data = json.loads(appconf.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            changed = False
+            for key in ("access_code", "user_access_code"):
+                slot = data.setdefault(key, {})
+                if not isinstance(slot, dict):
+                    slot = {}
+                    data[key] = slot
+                if slot.get(dev_id) != code:
+                    slot[dev_id] = code
+                    changed = True
+            slot_ip = data.setdefault("ip_address", {})
+            if not isinstance(slot_ip, dict):
+                slot_ip = {}
+                data["ip_address"] = slot_ip
+            if slot_ip.get(dev_id) != dev_ip:
+                slot_ip[dev_id] = dev_ip
+                changed = True
+            app = data.setdefault("app", {})
+            if app.get("user_last_selected_machine") != dev_id:
+                app["user_last_selected_machine"] = dev_id
+                changed = True
+            if not changed:
+                continue
+            tmp = appconf.with_suffix(appconf.suffix + ".tmp-x2d-ac")
+            tmp.write_text(json.dumps(data, indent=4))
+            _os.replace(tmp, appconf)
+            print(f"[serve] access-code seed: {appconf} dev_id={dev_id} "
+                  f"ip={dev_ip}", file=sys.stderr)
+
     def _ssdp_loop(self) -> None:
         """Listen for Bambu's multicast NOTIFY broadcasts on UDP 2021
         and convert each into the JSON shape BambuStudio's
@@ -1667,6 +1722,16 @@ class ServeServer:
                 self._seed_appconfig_for_ssdp(parsed)
             except Exception as e:
                 print(f"[serve] ssdp seed failed: {e}", file=sys.stderr)
+            # Also seed access_code / user_access_code / ip_address /
+            # user_last_selected_machine — runs every NOTIFY, idempotent.
+            # This makes the GUI auto-bind without the user clicking
+            # through the ConnectPrinterDialog (which has UX bugs on
+            # the wx 3.3 / GTK build).
+            try:
+                self._seed_access_code(parsed)
+            except Exception as e:
+                print(f"[serve] access-code seed failed: {e}",
+                      file=sys.stderr)
             for fn in listeners:
                 try:
                     fn(parsed)
@@ -2128,6 +2193,19 @@ def _op_start_discovery(h: _ConnHandler, args: dict) -> dict:
             })
         h._ssdp_cb = emit
         h.server.add_ssdp_listener(emit)
+        # Replay every SSDP packet the bridge has seen so far so the
+        # GUI's DeviceManager populates immediately instead of waiting
+        # up to 30s for the next NOTIFY. This is the SSDP analogue of
+        # the local_message latest-state replay (#29). Same shape as a
+        # live ssdp_msg event so DeviceManager::on_machine_alive
+        # processes them through the normal path.
+        with h.server._ssdp_lock:
+            cached_packets = list(h.server._ssdp_cache.values())
+        for parsed in cached_packets:
+            try:
+                emit(parsed)
+            except Exception as e:
+                print(f"[serve] ssdp replay failed: {e}", file=sys.stderr)
     return {}
 
 

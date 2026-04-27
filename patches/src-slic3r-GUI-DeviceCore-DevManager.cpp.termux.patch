@@ -1,0 +1,44 @@
+diff --git a/src/slic3r/GUI/DeviceCore/DevManager.cpp b/src/slic3r/GUI/DeviceCore/DevManager.cpp
+index 177084e..b35721f 100644
+--- a/src/slic3r/GUI/DeviceCore/DevManager.cpp
++++ b/src/slic3r/GUI/DeviceCore/DevManager.cpp
+@@ -277,6 +277,23 @@ namespace Slic3r
+                 obj->erase_user_access_code();
+                 obj->erase_user_access_dev_ip();
+             }
++            // Termux source patch (item #64): auto-select the LAN-mode
++            // printer on first SSDP NOTIFY when no machine is selected and
++            // user_last_selected_machine matches dev_id. Upstream BambuStudio
++            // assumes a cloud-bound list (userMachineList); on LAN-only mode
++            // that list is empty and load_last_machine() bails out, leaving
++            // the Device tab "No printer" forever even though the printer
++            // is locally reachable. The bridge's SSDP-driven config-seed
++            // (x2d_bridge.py:_seed_access_code) writes
++            // user_last_selected_machine; combine with this auto-select hook
++            // to bind without the user ever opening ConnectPrinterDialog.
++            if (obj && selected_machine.empty()) {
++                AppConfig* cfg = Slic3r::GUI::wxGetApp().app_config;
++                std::string last = cfg ? cfg->get("user_last_selected_machine") : "";
++                if (last == dev_id || last.empty()) {
++                    set_selected_machine(dev_id);
++                }
++            }
+         }
+         catch (...) {
+             ;
+@@ -616,7 +633,14 @@ namespace Slic3r
+ 
+         for (auto it = localMachineList.begin(); it != localMachineList.end(); it++)
+         {
+-            if (it->second && it->second->has_access_right() && it->second->is_avaliable() && it->second->is_lan_mode_printer())
++            // Termux source patch (item #64): drop the is_avaliable()
++            // requirement for LAN-mode printers — same insight as #30.
++            // An X2D bound to another account (DevBind: "occupied") is
++            // still locally reachable via Access Code; without this
++            // change the printer doesn't appear in my_machine_list and
++            // set_selected_machine() rejects it, leaving the Device tab
++            // permanently "No printer".
++            if (it->second && it->second->has_access_right() && it->second->is_lan_mode_printer())
+             {
+                 // remove redundant in userMachineList
+                 if (result.find(it->first) == result.end())
