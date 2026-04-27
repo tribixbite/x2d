@@ -206,6 +206,49 @@ class CloudClient:
     # Auth
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def dry_run_check(region: str = "us") -> dict:
+        """Validate that the cloud endpoint is reachable WITHOUT
+        sending credentials. Hits the login URL with a GET (instead
+        of the required POST) — a 405 response proves DNS, TLS, and
+        the API route all resolve. Useful as a smoke test from CI or
+        during install.sh validation. Returns:
+            {'ok': bool,
+             'status': int (HTTP code, 0 on transport error),
+             'region': str,
+             'endpoint': str,
+             'message': str}"""
+        if region not in REGIONS:
+            return {"ok": False, "status": 0, "region": region,
+                    "endpoint": "",
+                    "message": f"unknown region {region!r}; expected us|cn"}
+        url = REGIONS[region]["api"] + "/v1/user-service/user/login"
+        req = urllib.request.Request(url, method="GET", headers={
+            "User-Agent": USER_AGENT,
+            "Accept":     "application/json",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT,
+                                        context=ssl.create_default_context()) as r:
+                # 200 here would be unexpected (login should require POST)
+                # but still proves reachability.
+                return {"ok": True, "status": r.status, "region": region,
+                        "endpoint": url,
+                        "message": f"unexpected success (status {r.status}); "
+                                   "endpoint reached"}
+        except urllib.error.HTTPError as e:
+            # 405 (Method Not Allowed) is the EXPECTED response — proves
+            # the path exists. 404 means Bambu rotated the route.
+            ok = e.code in (405, 400, 401, 403)
+            return {"ok": ok, "status": e.code, "region": region,
+                    "endpoint": url,
+                    "message": f"HTTP {e.code} from {url} — "
+                               f"{'endpoint reachable' if ok else 'endpoint missing or moved'}"}
+        except urllib.error.URLError as e:
+            return {"ok": False, "status": 0, "region": region,
+                    "endpoint": url,
+                    "message": f"network error: {e.reason}"}
+
     def login(self, email: str, password: str, region: str | None = None) -> None:
         """Exchange email + password for an access_token / refresh_token
         pair. Region defaults to "us" unless email ends with .cn or

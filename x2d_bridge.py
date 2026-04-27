@@ -1284,25 +1284,39 @@ def _stringify_preset_values(d: dict) -> dict:
     return out
 
 
+def _x2d_search_roots() -> list[Path]:
+    """Candidate roots for shipped data files. Try (in order):
+    - the script's own directory (dev tree, x2d_bridge.py at repo root)
+    - the parent (dist tree, x2d_bridge.py at <root>/helpers/)
+    so the same code finds files in either layout."""
+    here = Path(__file__).parent
+    return [here, here.parent]
+
+
 def _local_preset_dirs() -> list[Path]:
     """Where to look for shipped BBL filament profiles. The first
     candidate that exists wins; the rest are silently skipped so this
     works in both the dev tree (bs-bionic/...) and the unpacked
     tarball (resources/...)."""
-    here = Path(__file__).parent
-    return [
-        here / "resources" / "profiles" / "BBL" / "filament",
-        here / "bs-bionic" / "resources" / "profiles" / "BBL" / "filament",
-    ]
+    dirs: list[Path] = []
+    for root in _x2d_search_roots():
+        dirs.append(root / "resources" / "profiles" / "BBL" / "filament")
+        dirs.append(root / "bs-bionic" / "resources" / "profiles" / "BBL" / "filament")
+    return dirs
 
 
 def _load_local_presets() -> dict[str, dict[str, str]]:
     out: dict[str, dict[str, str]] = {}
-    here = Path(__file__).parent
 
     # Community-curated presets — small JSON shipped under runtime/.
-    community = here / "runtime" / "network_shim" / "data" / "community_filaments.json"
-    if community.exists():
+    # Same dev-vs-dist multi-root lookup as the BBL profile dirs.
+    community = None
+    for root in _x2d_search_roots():
+        cand = root / "runtime" / "network_shim" / "data" / "community_filaments.json"
+        if cand.exists():
+            community = cand
+            break
+    if community is not None:
         try:
             blob = json.loads(community.read_text())
             for name, raw in blob.items():
@@ -1665,7 +1679,12 @@ def cmd_camera(args: argparse.Namespace) -> int:
 
     def lvl_local_pump():
         # Push module path so a repo-checkout install also imports it.
-        sys.path.insert(0, str(Path(__file__).parent / "runtime" / "network_shim"))
+        # Same dev-vs-dist multi-root lookup as _x2d_search_roots().
+        for root in _x2d_search_roots():
+            cand = root / "runtime" / "network_shim"
+            if (cand / "lvl_local.py").exists():
+                sys.path.insert(0, str(cand))
+                break
         try:
             import lvl_local
         except ImportError as e:
@@ -1882,6 +1901,18 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 
 def cmd_cloud_login(args: argparse.Namespace) -> int:
     import cloud_client
+    if args.dry_run:
+        # Probe-only mode: confirm the cloud endpoint is reachable
+        # without sending credentials. Useful for CI and install-time
+        # smoke tests against networks that may block Bambu's API.
+        region = args.region or "us"
+        result = cloud_client.CloudClient.dry_run_check(region=region)
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    if not args.email or not args.password:
+        print("--email and --password are required (omit them only with --dry-run)",
+              file=sys.stderr)
+        return 2
     cli = cloud_client.CloudClient.load_or_anonymous()
     try:
         cli.login(args.email, args.password, region=args.region)
@@ -2063,12 +2094,18 @@ def main() -> int:
              "Subsequent shim calls (is_user_login / get_user_id / "
              "get_user_presets / get_user_tasks) start returning real data.",
     )
-    cli_login.add_argument("--email", required=True)
-    cli_login.add_argument("--password", required=True,
-                           help="Use a shell secret store; this lands in `ps`")
+    cli_login.add_argument("--email",
+                           help="Required unless --dry-run.")
+    cli_login.add_argument("--password",
+                           help="Required unless --dry-run. "
+                                "Use a shell secret store; this lands in `ps`.")
     cli_login.add_argument("--region", choices=["us", "cn"],
                            help="Override region (default: 'cn' if email "
                                 "ends with .cn, else 'us')")
+    cli_login.add_argument("--dry-run", action="store_true",
+                           help="Don't send credentials. Just verify the cloud "
+                                "endpoint is reachable (DNS + TLS + HTTP). "
+                                "Returns ok/status/region/endpoint JSON.")
     cli_login.set_defaults(fn=cmd_cloud_login)
 
     cli_status = sub.add_parser(
