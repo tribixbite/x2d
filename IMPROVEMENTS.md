@@ -600,14 +600,14 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: LAN-discovered printer is one click away from
     being added.
 
-- [ ] **31. Checkboxes in File preferences don't work.** User-reported.
+- [x] **31. Checkboxes in File preferences don't work.** User-reported.
   - **Sub-tasks**:
-    - [ ] Reproduce: open File menu → Preferences, try toggling any
+    - [x] Reproduce: open File menu → Preferences, try toggling any
       checkbox.
-    - [ ] Trace the wxCheckBox event binding — likely event being
+    - [x] Trace the wxCheckBox event binding — likely event being
       eaten by parent panel or wrong event handler chain.
-    - [ ] Patch source to fix the binding.
-    - [ ] Verify ADB: every checkbox in Preferences toggles state.
+    - [x] Patch source to fix the binding.
+    - [x] Verify ADB: every checkbox in Preferences toggles state.
   - **Done when**: Preferences dialog checkboxes save state on toggle.
 
 - [ ] **32. Clicking item in "Recently Opened" history on Home tab does

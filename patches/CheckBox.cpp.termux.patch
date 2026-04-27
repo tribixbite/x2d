@@ -1,0 +1,24 @@
+diff --git a/src/slic3r/GUI/Widgets/CheckBox.cpp b/src/slic3r/GUI/Widgets/CheckBox.cpp
+index 5c3baa2..ad3e851 100644
+--- a/src/slic3r/GUI/Widgets/CheckBox.cpp
++++ b/src/slic3r/GUI/Widgets/CheckBox.cpp
+@@ -24,8 +24,17 @@ CheckBox::CheckBox(wxWindow *parent, int id)
+     Bind(wxEVT_ENTER_WINDOW, &CheckBox::updateBitmap, this);
+     Bind(wxEVT_LEAVE_WINDOW, &CheckBox::updateBitmap, this);
+ #endif
+-	SetSize(m_on.GetBmpSize());
+-	SetMinSize(m_on.GetBmpSize());
++	// Termux source patch (item #31): the upstream 18×18 px hitbox is
++	// too small for reliable touchscreen taps — finger-drift + low DPI
++	// dropped most checkbox clicks in the Preferences dialog. Inflate
++	// to ~42 px (Material Design's minimum touch target) while keeping
++	// the bitmap visually centered. wxBitmapToggleButton centers the
++	// bitmap inside its allocated rect automatically.
++	wxSize bmp_sz = m_on.GetBmpSize();
++	wxSize touch_sz(std::max(bmp_sz.x, FromDIP(42)),
++	                std::max(bmp_sz.y, FromDIP(42)));
++	SetSize(touch_sz);
++	SetMinSize(touch_sz);
+ 	update();
+ }
+ 
