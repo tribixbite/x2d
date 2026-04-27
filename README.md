@@ -92,6 +92,19 @@ x2d_bridge.py daemon --http 0.0.0.0:8765 \
 xdg-open http://localhost:8765/
 ```
 
+## Demo media
+
+Five short H.264 MP4s in [`docs/demos/`](docs/demos/) — render with
+`PYTHONPATH=. python3.12 runtime/demos/render.py` to regenerate.
+
+| File | Duration | What |
+|---|---|---|
+| [`docs/demos/cli_demo.mp4`](docs/demos/cli_demo.mp4)   | 47s | bridge CLI: status / chamber-light / print / daemon up |
+| [`docs/demos/gui_demo.mp4`](docs/demos/gui_demo.mp4)   | 16s | BambuStudio Termux port: Prepare tab, Device tab, sidebar shrink, X2D preset |
+| [`docs/demos/mcp_demo.mp4`](docs/demos/mcp_demo.mp4)   | 57s | MCP stdio handshake: initialize → tools/list → tools/call status |
+| [`docs/demos/webui_demo.mp4`](docs/demos/webui_demo.mp4) | 15s | thin web UI at S25 Ultra portrait + landscape + tablet viewport |
+| [`docs/demos/ha_demo.mp4`](docs/demos/ha_demo.mp4)     | 55s | Home Assistant registry: 32 entities + 1 Device with live values |
+
 ## Per-feature documentation
 
 | Feature              | Doc |

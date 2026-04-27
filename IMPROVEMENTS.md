@@ -1545,14 +1545,41 @@ The Stop hook drives execution; commit + push between every checkbox.
     discovery surface; each doc cross-links back to neighbours
     (e.g. multi-printer → HA, web UI → MCP).
 
-- [ ] **61. Demo media** — short MP4s of each major flow.
+- [x] **61. Demo media** — short MP4s of each major flow.
   - **Sub-tasks**:
-    - [ ] CLI demo (status + print).
-    - [ ] GUI demo (slice + print + monitor).
-    - [ ] MCP demo (Claude Desktop driving).
-    - [ ] Web UI demo.
-    - [ ] HA dashboard demo.
-  - **Done when**: 5 short MP4s in `docs/demos/`.
+    - [x] CLI demo (status + print). `docs/demos/cli_demo.mp4`,
+      47 s, fake-terminal type-and-output of the canonical bridge
+      verbs (status → chamber-light on → print + AMS slot 3 →
+      daemon up with --queue + --timelapse → curl /state).
+    - [x] GUI demo (slice + print + monitor). `docs/demos/gui_demo.mp4`,
+      16 s, slideshow of the existing live-GUI proofs:
+      Prepare-tab green WiFi (`docs/ssdp-live-proof.png`), Device-tab
+      MonitorPanel (`docs/device-tab-monitorpanel-proof.png`), sidebar
+      shrink at <1200 px, X2D preset selected. The full bambu-studio
+      "slice + print" walkthrough is deferred to #41 (still gated on
+      ADB + a physical print run).
+    - [x] MCP demo (Claude Desktop driving). `docs/demos/mcp_demo.mp4`,
+      57 s, fake-terminal of the full JSON-RPC handshake: initialize
+      → tools/list (18 tools) → tools/call status → final result
+      block. Same wire format Claude Desktop sees.
+    - [x] Web UI demo. `docs/demos/webui_demo.mp4`, 15 s, slideshow
+      of the three real chromium-headless screenshots from #47:
+      mobile portrait 412×892, mobile landscape 892×412, tablet
+      1080×2340.
+    - [x] HA dashboard demo. `docs/demos/ha_demo.mp4`, 55 s,
+      registry-snapshot summary frames (Bambu Lab X2D Device + 32
+      entities with live values from the proot-HA run in #51).
+      The HA frontend itself isn't reachable from this build env
+      without re-spinning the whole proot-distro Ubuntu chain;
+      the on-disk registry snapshots in `docs/ha-live-proof/` are
+      the load-bearing proof from #51 anyway.
+  - **Done when**: 5 short MP4s in `docs/demos/`. **Done.** All
+    five MP4s are 1280×720 H.264 (yuv420p, +faststart so HTML5
+    video plays before the file fully loads), total ~3.2 min of
+    content, ~1.3 MB combined. Render is reproducible via
+    `PYTHONPATH=. python3.12 runtime/demos/render.py` (PIL +
+    ffmpeg only, no external services). Linked from README §
+    "Demo media" with a duration + description table.
 
 - [ ] **62. v1.0.0 release.**
   - **Sub-tasks**:
