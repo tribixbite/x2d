@@ -577,13 +577,13 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: preload_gtkinit.c no longer needs wxLocale shims
     AND the GUI starts normally.
 
-- [ ] **29. AMS auto-detected after SSDP** — Prepare tab still shows
+- [x] **29. AMS auto-detected after SSDP** — Prepare tab still shows
   "AMS: Not installed" even though the X2D has a 4-slot AMS.
   - **Sub-tasks**:
-    - [ ] Bridge: emit AMS state in initial pushall after SSDP NOTIFY.
-    - [ ] Shim: forward AMS state to `OnMachineNewVersionAvailableFn`
+    - [x] Bridge: emit AMS state in initial pushall after SSDP NOTIFY.
+    - [x] Shim: forward AMS state to `OnMachineNewVersionAvailableFn`
       or whatever DeviceManager listens on for AMS init.
-    - [ ] GUI: verify AMS panel populates with 4 slots + colors
+    - [x] GUI: verify AMS panel populates with 4 slots + colors
       automatically on launch.
   - **Done when**: Prepare tab's AMS field shows "4 slots" with colors
     matching the printer's actual AMS state, no manual click needed.

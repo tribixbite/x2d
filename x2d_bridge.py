@@ -581,6 +581,11 @@ class _PrinterSession:
         self._lock = _Lock()
         self._listeners: list[Callable[[dict], None]] = []
         self._connect_listeners: list[Callable[[int, str, str], None]] = []
+        # Item #29: cache the most recent state push so a fresh shim
+        # subscriber can replay it immediately and DeviceManager populates
+        # MachineObject (AMS, temps, lights, etc.) without waiting up to
+        # 30s for the next push.
+        self._latest_state: dict | None = None
         self.client = X2DClient(
             Creds(ip=dev_ip, code=code, serial=dev_id),
             on_state=self._dispatch_state,
@@ -588,12 +593,17 @@ class _PrinterSession:
 
     def _dispatch_state(self, payload: dict) -> None:
         with self._lock:
+            self._latest_state = payload
             listeners = list(self._listeners)
         for fn in listeners:
             try:
                 fn(payload)
             except Exception as e:  # one bad subscriber shouldn't poison others
                 print(f"[serve] state listener raised: {e}", file=sys.stderr)
+
+    def latest_state(self) -> dict | None:
+        with self._lock:
+            return self._latest_state
 
     def add_listener(self, fn: Callable[[dict], None]) -> None:
         with self._lock:
@@ -1207,8 +1217,19 @@ def _op_subscribe_local(h: _ConnHandler, args: dict) -> dict:
     if sess is None:
         raise _OpError(-1, "printer not connected")
     if enable:
+        # Item #29: replay cached state immediately so DeviceManager
+        # populates MachineObject (AMS slots, temps, lights, etc.)
+        # without waiting up to 30s for the next live push. The cached
+        # state was set by _PrinterSession._dispatch_state from a prior
+        # MQTT push (typically the initial pushall after connect).
+        cached = sess.latest_state()
+        if cached is not None:
+            try:
+                h._emit_local_message(dev_id, cached)
+            except Exception as e:
+                print(f"[serve] state replay raised: {e}", file=sys.stderr)
         # The X2DClient already listens for state pushes once subscribed
-        # in connect; we just kick a fresh pushall here.
+        # in connect; kick a fresh pushall here for good measure.
         try:
             sess.client.publish(
                 {"pushing": {"sequence_id": _next_seq(),
