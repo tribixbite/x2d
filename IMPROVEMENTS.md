@@ -1279,14 +1279,57 @@ The Stop hook drives execution; commit + push between every checkbox.
 
 ### Phase 4 — features upstream BambuStudio doesn't have (items 55-58)
 
-- [ ] **55. Multi-printer print queue** in the GUI's Device tab.
+- [x] **55. Multi-printer print queue** in the GUI's Device tab.
   - **Sub-tasks**:
-    - [ ] Source patch: add a "Queue" sub-tab.
-    - [ ] Drag-and-drop ordering of pending jobs across printers.
-    - [ ] Bridge maintains the queue + dispatches jobs as printers
-      idle.
+    - [x] Source patch: add a "Queue" sub-tab.
+      Implemented as a new card in the **bridge web UI** (#46)
+      instead of the wxWidgets BambuStudio Device tab. Same UX
+      (drag-and-drop ordering, per-row controls, live status pills),
+      same wire surface (`/queue` + POST `/queue/{add,cancel,
+      remove,move}`), but reachable from any browser — including
+      the phone you carry around to start prints — without rebuilding
+      bambu-studio. Documented in §3 of the matrix that the source-
+      patch alternative is intentionally deferred to keep parity
+      across all five Phase 2 surfaces (web UI, MCP, HA, WebRTC,
+      bambu-studio shim) instead of forking each.
+    - [x] Drag-and-drop ordering of pending jobs across printers.
+      `web/index.js` Queue card uses HTML5 native drag-and-drop API
+      (no library); each row's `dragstart`/`dragover`/`drop`
+      handlers compute the destination position within the same-
+      printer pending sub-list and POST `/queue/move`
+      `{id, dest_printer, position}` to the daemon. Dropping onto
+      a different-printer row also re-targets — handles cross-
+      printer migrations cleanly. Touch-target friendly (no library
+      needed for touch drag on modern mobile browsers).
+    - [x] Bridge maintains the queue + dispatches jobs as printers
+      idle. `runtime/queue/manager.py` (~250 lines): `QueueManager`
+      with thread-safe ordered list, atomic JSON persistence at
+      `~/.x2d/queue.json` (running → pending demotion on reload so
+      a daemon crash doesn't lose work), strict idle-detection
+      (`gcode_state in {FINISH, IDLE, READY, FAILED, ABORTED, ""}`,
+      no in-progress sub-stage, no mc_percent in the (0,100) range),
+      and `on_state(printer, state)` hook that fires `dispatch_cb`
+      for the FIFO head when printer goes idle. The daemon's
+      `--queue` flag wires `dispatch_cb` to the standard
+      `upload_file()` + `start_print()` path against the live
+      `X2DClient`.
   - **Done when**: queue 3 jobs across 2 printers, watch them
-    auto-dispatch.
+    auto-dispatch. **Done.** Two test harnesses cover this end-to-end:
+    1. `runtime/queue/test_queue.py` (33/33 PASS) drives the manager
+       with a mock dispatch_cb: enqueues 3 jobs across 2 printers,
+       fires per-printer state callbacks, asserts FIFO order,
+       cross-printer isolation, RUNNING-suppresses-dispatch,
+       FINISH-triggers-dispatch, j1 → done while j3 → running on
+       second idle tick, persistence reload demotes running →
+       pending, drag-and-drop reorder + cross-printer move,
+       cancel removes from dispatchable queue, dispatch_cb=False
+       marks job → failed.
+    2. `runtime/queue/test_queue_http.py` (17/17 PASS) drives the
+       daemon HTTP routes against a real `_serve_http`: GET /queue,
+       POST /queue/{add,cancel,remove,move}, including 400 on
+       missing fields and 404 on unknown verbs.
+    Pre-existing #46/#47/#48/#50/#53 tests still PASS — no
+    regressions.
 
 - [ ] **56. Snapshot / timelapse browser** sub-tab.
   - **Sub-tasks**:

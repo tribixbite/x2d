@@ -212,3 +212,66 @@ button.danger  { background: var(--bad); color: #1a0a0a;
   white-space: pre-wrap;
   max-height: 8rem;
 }
+
+/* Queue card (#55) */
+.queue-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.queue-list li {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 0.45rem 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: grab;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+}
+.queue-list li[draggable=true]:active { cursor: grabbing; }
+.queue-list li.over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+.queue-list li .label  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-list li .pill   { background: #2a323a; }
+.queue-list li.running .pill { background: #1d4a30; color: #b8ffd0; }
+.queue-list li.done    .pill { background: #2a323a; color: var(--fg-muted); }
+.queue-list li.failed  .pill { background: #4a1d1d; color: #ffb8b8; }
+.queue-list li button.cancel {
+  background: transparent;
+  color: var(--fg-muted);
+  border: 0;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  font-size: 1.1rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.queue-list li button.cancel:hover { color: var(--bad); background: #2a323a; }
+.queue-add {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+.queue-add input,
+.queue-add select {
+  background: var(--bg-soft);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  min-height: 44px;
+}
+.queue-add input[type=number] { width: 4.5rem; }

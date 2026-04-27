@@ -77,6 +77,18 @@
       <div class="muted small">tap a swatch to load that filament</div>
     </section>
 
+    <section class="card queue">
+      <h2>Print queue</h2>
+      <ol id="queue-list" class="queue-list"></ol>
+      <div class="queue-add">
+        <input id="queue-gcode" type="text" placeholder=".gcode.3mf path">
+        <select id="queue-printer"></select>
+        <input id="queue-slot" type="number" min="1" max="16" value="1" title="AMS slot">
+        <button id="queue-add-btn">enqueue</button>
+      </div>
+      <div class="muted small">Drag a job to reorder; tap × to cancel.</div>
+    </section>
+
     <section class="card log">
       <h2>Bridge log</h2>
       <pre id="log">connecting…</pre>

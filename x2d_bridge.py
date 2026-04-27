@@ -659,7 +659,8 @@ def _serve_http(bind: str,
                 auth_token: str | None = None,
                 printer_names: list[str] | None = None,
                 clients: dict | None = None,
-                web_dir: Path | None = None) -> None:
+                web_dir: Path | None = None,
+                queue_mgr=None) -> None:
     """Multi-printer HTTP server (item #36).
 
     `get_state` and `get_last_ts` now take a printer name (empty string
@@ -899,6 +900,13 @@ def _serve_http(bind: str,
                 # daemon. URL is configurable via $X2D_CAMERA_URL.
                 self._proxy_snapshot()
                 return
+            if path == "/queue":
+                # Item #55: snapshot of the multi-printer queue.
+                if queue_mgr is None:
+                    self._send_json({"jobs": []}); return
+                jobs = [j.to_dict() for j in queue_mgr.list()]
+                self._send_json({"jobs": jobs})
+                return
             if path == "/printers":
                 body = json.dumps({"printers": names}, indent=2).encode()
                 self.send_response(200)
@@ -1005,8 +1013,53 @@ def _serve_http(bind: str,
                 return
             url = urllib.parse.urlparse(self.path)
             path = url.path
-            if not path.startswith("/control/"):
+            if not (path.startswith("/control/")
+                     or path.startswith("/queue/")):
                 self.send_response(404); self.end_headers(); return
+            # Item #55: queue mutations (POST /queue/<verb>)
+            if path.startswith("/queue/"):
+                if queue_mgr is None:
+                    self._send_json({"error": "queue not enabled on this daemon"},
+                                      status=503)
+                    return
+                qverb = path[len("/queue/"):]
+                body = self._read_body_json() or {}
+                if qverb == "add":
+                    if "gcode" not in body:
+                        self._send_json({"error":
+                            "expected {gcode, printer, slot?, label?}"},
+                            status=400); return
+                    job = queue_mgr.add(
+                        printer=body.get("printer", ""),
+                        gcode=body["gcode"],
+                        slot=int(body.get("slot", 1)),
+                        label=body.get("label", ""))
+                    self._send_json({"ok": True, "job": job.to_dict()})
+                    return
+                elif qverb == "cancel":
+                    job_id = body.get("id", "")
+                    ok = queue_mgr.cancel(job_id)
+                    self._send_json({"ok": ok})
+                    return
+                elif qverb == "remove":
+                    job_id = body.get("id", "")
+                    ok = queue_mgr.remove(job_id)
+                    self._send_json({"ok": ok})
+                    return
+                elif qverb == "move":
+                    job_id = body.get("id", "")
+                    ok = queue_mgr.move(
+                        job_id,
+                        dest_printer=body.get("dest_printer"),
+                        position=(body.get("position")
+                                   if body.get("position") is not None
+                                   else None))
+                    self._send_json({"ok": ok})
+                    return
+                self._send_json({"error": f"unknown queue verb {qverb!r}",
+                                  "supported": ["add", "cancel", "remove", "move"]},
+                                  status=404)
+                return
             verb = path[len("/control/"):]
             printer = self._parse_printer()
             self._x2d_printer = printer
@@ -2589,9 +2642,51 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     # Per-printer state cache + clients.
     states: dict[str, dict | None] = {n: None for n in names_to_run}
 
+    # Item #55: optional queue manager. Hooks into per-printer state
+    # callbacks so it can dispatch the next pending job when a printer
+    # goes idle.
+    queue_mgr = None
+    if getattr(args, "queue", False):
+        from runtime.queue.manager import QueueManager
+        from threading import Lock as _DispatchLock
+        _dispatch_lock = _DispatchLock()
+
+        def _dispatch_job(job) -> bool:
+            """Upload the job's .gcode.3mf to the printer + start_print.
+            Runs synchronously while the queue manager waits."""
+            cli = clients.get(job.printer)
+            if cli is None:
+                LOG_QUEUE.warning("queue dispatch: no client for printer %r",
+                                   job.printer)
+                return False
+            try:
+                with _dispatch_lock:
+                    creds = cli.creds
+                    upload_file(creds, Path(job.gcode),
+                                  remote_name=Path(job.gcode).name)
+                    start_print(cli, Path(job.gcode).name,
+                                use_ams=True, ams_slot=int(job.slot))
+                LOG_QUEUE.info("queue dispatched %s → %s slot %d",
+                                job.label or job.gcode, job.printer, job.slot)
+                return True
+            except Exception as e:
+                LOG_QUEUE.exception("queue dispatch failed for %s: %s",
+                                     job.label or job.gcode, e)
+                return False
+
+        queue_mgr = QueueManager(dispatch_cb=_dispatch_job)
+        print(f"[x2d-bridge] queue enabled; persisted at "
+              f"{queue_mgr._path}", file=sys.stderr)
+
     def make_on_state(name: str):
         def on_state(state: dict) -> None:
             states[name] = state
+            if queue_mgr is not None:
+                try:
+                    queue_mgr.on_state(name, state)
+                except Exception as e:
+                    print(f"[x2d-bridge] queue.on_state({name}) failed: {e}",
+                          file=sys.stderr)
             if not args.quiet:
                 print(json.dumps({"ts": time.time(),
                                   "printer": name,
@@ -2646,7 +2741,8 @@ def cmd_daemon(args: argparse.Namespace) -> int:
                        "auth_token": args.auth_token or None,
                        "printer_names": list(clients.keys()),
                        "clients": clients,
-                       "web_dir": _WEB_DIR_DEFAULT},
+                       "web_dir": _WEB_DIR_DEFAULT,
+                       "queue_mgr": queue_mgr},
                daemon=True).start()
 
     period = max(1, int(args.interval))
@@ -2790,6 +2886,7 @@ def cmd_ha_publish(args: argparse.Namespace) -> int:
 
 
 import logging  # used by cmd_ha_publish above
+LOG_QUEUE = logging.getLogger("x2d.queue")
 
 
 def cmd_printers(_args: argparse.Namespace) -> int:
@@ -2924,6 +3021,12 @@ def main() -> int:
                         "--http binds non-loopback. Default $X2D_AUTH_TOKEN. "
                         "Loopback binds (127.0.0.1) stay open even without "
                         "a token (single-user local case).")
+    d.add_argument("--queue", action="store_true",
+                   help="Enable the multi-printer print queue (item #55). "
+                        "Auto-dispatches the next pending job to a printer "
+                        "as soon as it goes idle. State persists at "
+                        "~/.x2d/queue.json. Manage via /queue + "
+                        "POST /queue/{add,cancel,remove,move}.")
     d.set_defaults(fn=cmd_daemon)
 
     # ----- print-control verbs -----------------------------------------

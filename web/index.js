@@ -68,6 +68,8 @@
     });
 
   function boot() {
+    // Queue card init (#55)
+    initQueue();
     // ?capture=1 disables SSE + camera polling so headless screenshot
     // tools (chromium-browser --headless --screenshot) don't block on
     // a never-ending page-load. Inject a one-shot fake state so the
@@ -336,4 +338,115 @@
     await webrtcPC.setRemoteDescription(answer);
   }
 
+  // ===== queue card (#55) =====================================
+  const $qList    = document.getElementById("queue-list");
+  const $qGcode   = document.getElementById("queue-gcode");
+  const $qPrinter = document.getElementById("queue-printer");
+  const $qSlot    = document.getElementById("queue-slot");
+  const $qAddBtn  = document.getElementById("queue-add-btn");
+  let _qDragId    = null;
+
+  function initQueue() {
+    if ($qAddBtn) {
+      $qAddBtn.addEventListener("click", queueAdd);
+      pollQueue();
+      setInterval(pollQueue, 3000);
+    }
+  }
+
+  async function pollQueue() {
+    try {
+      const r = await fetch("/queue");
+      if (!r.ok) return;
+      const data = await r.json();
+      renderQueue(data.jobs || []);
+    } catch (e) { /* ignore */ }
+  }
+
+  function renderQueue(jobs) {
+    const printerOpts = Array.from($qPrinter.options).map(o => o.value);
+    const known = Array.from(new Set(
+      jobs.map(j => j.printer).concat([activePrinter])
+        .filter(p => p !== undefined)));
+    if (known.length && JSON.stringify(known) !== JSON.stringify(printerOpts)) {
+      $qPrinter.innerHTML = "";
+      known.forEach(p => {
+        const o = document.createElement("option");
+        o.value = p; o.textContent = p || "(default)";
+        $qPrinter.appendChild(o);
+      });
+    }
+    $qList.innerHTML = "";
+    jobs.forEach(j => $qList.appendChild(renderQueueRow(j)));
+  }
+
+  function renderQueueRow(job) {
+    const li = document.createElement("li");
+    li.className = job.status;
+    li.draggable = (job.status === "pending");
+    li.dataset.id = job.id;
+    li.innerHTML =
+      `<span class="pill">${job.printer || "default"}</span>` +
+      `<span class="label" title="${escapeAttr(job.gcode)}">${escapeText(job.label || job.gcode)}</span>` +
+      `<span class="pill">slot ${job.slot}</span>` +
+      `<span class="pill">${job.status}</span>` +
+      `<button class="cancel" type="button" title="cancel">×</button>`;
+    li.querySelector("button.cancel").addEventListener("click", () => queueCancel(job.id));
+    li.addEventListener("dragstart", (e) => {
+      _qDragId = job.id; e.dataTransfer.effectAllowed = "move"; });
+    li.addEventListener("dragover",  (e) => { e.preventDefault(); li.classList.add("over"); });
+    li.addEventListener("dragleave", () => { li.classList.remove("over"); });
+    li.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      li.classList.remove("over");
+      if (!_qDragId || _qDragId === job.id) return;
+      const lis = Array.from($qList.children);
+      const target = lis.find(el => el.dataset.id === job.id);
+      const pending = lis.filter(el => el.classList.contains("pending"));
+      const newPos = pending.indexOf(target);
+      await fetch("/queue/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: _qDragId, dest_printer: job.printer,
+                                position: Math.max(0, newPos) }),
+      });
+      _qDragId = null;
+      pollQueue();
+    });
+    return li;
+  }
+
+  async function queueAdd() {
+    const gcode = $qGcode.value.trim();
+    if (!gcode) return;
+    const printer = $qPrinter.value || "";
+    const slot    = parseInt($qSlot.value, 10) || 1;
+    const label   = gcode.split("/").pop();
+    const r = await fetch("/queue/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gcode, printer, slot, label }),
+    });
+    if (r.ok) { $qGcode.value = ""; pollQueue(); }
+    else { log("queue add failed: HTTP " + r.status); }
+  }
+
+  async function queueCancel(id) {
+    await fetch("/queue/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    pollQueue();
+  }
+
+  function escapeText(s) {
+    const d = document.createElement("div");
+    d.textContent = s; return d.innerHTML;
+  }
+  function escapeAttr(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
 })();
