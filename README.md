@@ -210,6 +210,15 @@ x2d_bridge.py daemon --http 127.0.0.1:8765 --quiet
 #   503 + {"healthy": false, ...} when MQTT silently disconnected
 # Threshold is configurable via --max-staleness (default 30s).
 curl http://127.0.0.1:8765/healthz
+
+# Prometheus scrape: gauges for nozzle/bed/chamber temps, AMS humidity,
+# print progress; counters for total_messages, mqtt_disconnects, ssdp_notifies.
+curl http://127.0.0.1:8765/metrics
+
+# Every HTTP hit is appended as one JSON line to ~/.x2d/access.log
+# (ts, method, path, status, duration_ms, printer, authed, client).
+# Rotates to access.log.1 at 1 MiB.
+tail -f ~/.x2d/access.log
 ```
 
 Credentials can also come from `--ip / --code / --serial` flags or

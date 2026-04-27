@@ -673,13 +673,32 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: Prometheus `up{job=x2d}` is 1, all printer state
     fields scraped as gauges.
 
-- [ ] **39. Structured request log** for the bridge HTTP server.
+- [x] **39. Structured request log** for the bridge HTTP server.
   - **Sub-tasks**:
-    - [ ] One JSON line per request: ts, method, path, status,
+    - [x] One JSON line per request: ts, method, path, status,
       duration_ms, printer (if applicable), authed (bool).
-    - [ ] Goes to `~/.x2d/access.log` with the same 1 MiB rotation
-      as bridge.log.
+      Implemented in `Handler.log_request` override: stashes
+      `_x2d_start` / `_x2d_printer` / `_x2d_authed` instance attrs
+      in `do_GET`, then `BaseHTTPRequestHandler` calls back into our
+      override after the response is sent. Module-level
+      `_write_access_log()` serialises with a `_threading.Lock` so
+      concurrent ThreadingHTTPServer workers don't interleave.
+    - [x] Goes to `~/.x2d/access.log` with the same 1 MiB rotation
+      as bridge.log. Single-slot rotation: when active log + new
+      line would exceed `_ACCESS_LOG_MAX_BYTES` (1 MiB),
+      `access.log` → `access.log.1` (overwrite if present), fresh
+      file starts. Tested live: hit /state, /state?printer=lab,
+      /state?printer=bogus (404), /healthz?printer=lab, /printers,
+      /metrics — every one produced a valid JSON line with the
+      correct printer scope.
   - **Done when**: every HTTP hit gets one structured log line.
+    **Done.** Live verification:
+    `curl http://127.0.0.1:18765/state?printer=lab` →
+    `{"ts":...,"method":"GET","path":"/state?printer=lab","status":200,
+    "duration_ms":0.11,"printer":"lab","authed":false,"client":"127.0.0.1"}`
+    in `~/.x2d/access.log`. Rotation unit-tested by shrinking
+    `_ACCESS_LOG_MAX_BYTES` to 200 and writing 10 records — `.log.1`
+    rotated as expected.
 
 - [ ] **40. Bridge auto-connect on SSDP-creds match (Phase 0.5
   carryover, kept for resilience).**

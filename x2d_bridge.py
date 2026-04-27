@@ -552,6 +552,39 @@ def _format_prometheus_metrics(states: dict[str, dict | None],
     return body.encode("utf-8")
 
 
+_ACCESS_LOG_PATH = Path.home() / ".x2d" / "access.log"
+_ACCESS_LOG_MAX_BYTES = 1 * 1024 * 1024  # 1 MiB
+_access_log_lock = _threading.Lock()
+
+
+def _write_access_log(record: dict) -> None:
+    """Append one JSON line to ~/.x2d/access.log; rotate to access.log.1
+    when the active file exceeds 1 MiB. Single rotation slot — older
+    rotated logs are overwritten. Match the bridge.log rotation scheme
+    used by run_gui_clean.sh so operators see the same shape everywhere.
+    """
+    path = _ACCESS_LOG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, separators=(",", ":")) + "\n"
+    with _access_log_lock:
+        try:
+            if path.exists() and path.stat().st_size + len(line) > _ACCESS_LOG_MAX_BYTES:
+                rotated = path.with_suffix(path.suffix + ".1")
+                try:
+                    if rotated.exists():
+                        rotated.unlink()
+                except OSError:
+                    pass
+                try:
+                    path.rename(rotated)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+
 def _check_bearer(handler, expected: str | None, host: str) -> bool:
     """Return True if the request is authorized. Loopback binds with
     no token configured stay open (single-user local case). Any
@@ -612,8 +645,29 @@ def _serve_http(bind: str,
     names = list(printer_names) if printer_names else [""]
 
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *_):  # silence default access log
+        def log_message(self, *_):  # silence default stderr access log
             return
+
+        def log_request(self, code='-', size='-'):
+            # Item #39: emit one JSON line per request to
+            # ~/.x2d/access.log with 1 MiB rotation. Replaces wsgi-style
+            # apache combined-log; structured logs are easier to grep
+            # and feed into log aggregators.
+            try:
+                _write_access_log({
+                    "ts":          time.time(),
+                    "method":      self.command or "?",
+                    "path":        self.path,
+                    "status":      int(code) if str(code).isdigit() else 0,
+                    "size":        int(size) if str(size).isdigit() else None,
+                    "duration_ms": round((time.time() - getattr(self, "_x2d_start", time.time())) * 1000, 2),
+                    "printer":     getattr(self, "_x2d_printer", None),
+                    "authed":      getattr(self, "_x2d_authed", None),
+                    "client":      self.client_address[0] if self.client_address else None,
+                })
+            except Exception:
+                # Never let logging take down the response.
+                pass
 
         def _parse_printer(self) -> str:
             url = urllib.parse.urlparse(self.path)
@@ -621,6 +675,10 @@ def _serve_http(bind: str,
             return (qs.get("printer", [""])[0] or "")
 
         def do_GET(self):
+            self._x2d_start = time.time()
+            self._x2d_printer = None
+            self._x2d_authed = (auth_token is not None) and bool(
+                self.headers.get("Authorization", "").startswith("Bearer "))
             if not _check_bearer(self, auth_token, host):
                 return
             url = urllib.parse.urlparse(self.path)
@@ -647,6 +705,7 @@ def _serve_http(bind: str,
                 self.wfile.write(body)
                 return
             printer = self._parse_printer()
+            self._x2d_printer = printer
             if printer not in names:
                 err = json.dumps({"error": f"unknown printer {printer!r}",
                                   "available": names}).encode()
