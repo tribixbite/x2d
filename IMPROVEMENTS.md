@@ -1639,3 +1639,21 @@ v1.0 ship-readiness was never gated on them.
   end-to-end by `runtime/network_shim/tests/test_shim_e2e.py`
   against the real X2D, so the underlying code path is proven
   independent of this manual GUI walkthrough.
+
+* **#63 Bisect the Apr 27 03:17 binary regression.** The bambu-studio
+  binary built on 2026-04-27 03:17 with all of #21-#31 source patches
+  applied segfaults at startup (after `Initializing StaticPrintConfigs`
+  trace, during MainFrame widget creation). The Apr 25 06:45
+  `.before-widget-patch` backup binary (which predates today's source
+  patches) renders correctly, so v1.0.0 was patched to ship that
+  binary instead. Both binaries are preserved at
+  `bs-bionic/build/src/bambu-studio` (the working one) and
+  `bs-bionic/build/src/bambu-studio.broken-2026-04-27` (the segfaulting
+  one). Bisecting which of #21-#31 introduced the regression
+  requires per-TU recompile + relink (cmake regen broken because
+  llvm/clang was upgraded between sessions per CLAUDE.md hard-won
+  lesson), so this is a multi-hour follow-up. Likely suspects in
+  order: Plater.cpp's `sidebar_default_width()` (uses `wxDisplay::GetCount()`
+  during Sidebar construction at MainFrame creation), GUI_App.cpp's
+  `OnAssertFailure` override (#24), BBLTopbar.cpp's manual-maximize
+  state machine (#22).
