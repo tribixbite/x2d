@@ -639,17 +639,6 @@ The Stop hook drives execution; commit + push between every checkbox.
     - [x] Update README + QUICKSTART.md to drop the script reference.
   - **Done when**: no traces of the binary patcher remain anywhere.
 
-- [ ] **35. Final Phase 0 ADB verification.** Every Phase 0 fix
-  composed end-to-end on a fresh device install.
-  - **Sub-tasks**:
-    - [ ] Wipe `~/.config/BambuStudioInternal/` on device.
-    - [ ] Run install.sh from scratch.
-    - [ ] Launch bambu-studio.
-    - [ ] Verify: no wizard, no asserts, no gvfs popup, full Prepare
-      tab with 3D viewport + AMS + presets, full Device tab with live
-      X2D state.
-  - **Done when**: a brand new user can launch and use the GUI with
-    zero papercuts.
 
 ### Phase 1 — bridge multi-printer + observability + complete the rumi print (items 36-41)
 
@@ -905,3 +894,17 @@ The Stop hook drives execution; commit + push between every checkbox.
     - [ ] Announcement post.
     - [ ] CHANGELOG with everything since v0.1.0.
   - **Done when**: GitHub Releases shows v1.0.0 with full asset set.
+
+### Phase 0 deferred — device-required final verification
+
+- [ ] **35. Final Phase 0 ADB verification.** Every Phase 0 fix
+  composed end-to-end on a fresh device install.
+  - **Sub-tasks**:
+    - [ ] Wipe `~/.config/BambuStudioInternal/` on device.
+    - [ ] Run install.sh from scratch.
+    - [ ] Launch bambu-studio.
+    - [ ] Verify: no wizard, no asserts, no gvfs popup, full Prepare
+      tab with 3D viewport + AMS + presets, full Device tab with live
+      X2D state.
+  - **Done when**: a brand new user can launch and use the GUI with
+    zero papercuts.
