@@ -655,12 +655,12 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: `curl /state?printer=lab` returns lab's state,
     `?printer=living` returns living's.
 
-- [ ] **37. Per-printer `last_message_ts` persistence.**
+- [x] **37. Per-printer `last_message_ts` persistence.**
   - **Sub-tasks**:
-    - [ ] Replace single `~/.x2d/last_message_ts` with per-name files
+    - [x] Replace single `~/.x2d/last_message_ts` with per-name files
       `~/.x2d/last_message_ts_<NAME>` (empty NAME for default).
-    - [ ] Restore at X2DClient init.
-    - [ ] /healthz?printer=NAME reports per-printer age.
+    - [x] Restore at X2DClient init.
+    - [x] /healthz?printer=NAME reports per-printer age.
   - **Done when**: kill+restart daemon → each printer's
     /healthz?printer reports its own real age.
 

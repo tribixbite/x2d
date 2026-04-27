@@ -206,10 +206,22 @@ def sign_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 class X2DClient:
     PORT = 8883
-    # Persistent last-message timestamp (item #19). Lets /healthz report
-    # a meaningful age immediately after a daemon restart instead of
-    # always-stale until the first new push arrives.
-    _TS_PATH = Path.home() / ".x2d" / "last_message_ts"
+    # Persistent last-message timestamp (items #19, #37). Lets /healthz
+    # report a meaningful age immediately after a daemon restart instead
+    # of always-stale until the first new push arrives. Per-printer file
+    # so multi-printer setups don't smash each other's timestamps.
+    _TS_DIR = Path.home() / ".x2d"
+
+    @classmethod
+    def _ts_path_for(cls, serial: str) -> Path:
+        # Persist under ~/.x2d/last_message_ts_<serial>. Hash-fall-back
+        # if serial contains chars unsafe for a filename. Empty serial
+        # (shouldn't happen for a real X2DClient but guard anyway) falls
+        # back to the legacy single-file name.
+        if not serial:
+            return cls._TS_DIR / "last_message_ts"
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in serial)
+        return cls._TS_DIR / f"last_message_ts_{safe}"
 
     def __init__(self, creds: Creds, on_state: Callable[[dict], None] | None = None):
         self.creds = creds
@@ -217,17 +229,30 @@ class X2DClient:
         self._connected = Event()
         self._got_state = Event()
         self._latest_state: dict | None = None
+        # Per-printer persist file path keyed by serial.
+        self._ts_path = self._ts_path_for(creds.serial)
         # Restore last-known ts from disk so /healthz works on first
         # request post-restart. If the file is missing, malformed, or
         # claims a future time, fall through to "0" (treated as
         # "no message ever received").
         self._last_message_ts = 0.0
         try:
-            ts = float(self._TS_PATH.read_text().strip())
+            ts = float(self._ts_path.read_text().strip())
             if 0 < ts <= time.time():
                 self._last_message_ts = ts
         except (FileNotFoundError, ValueError, OSError):
             pass
+        # One-time migration: if the legacy single-file path exists and
+        # this serial has no per-printer file yet, inherit its timestamp.
+        if self._last_message_ts == 0.0 and creds.serial:
+            legacy = self._TS_DIR / "last_message_ts"
+            if legacy.exists():
+                try:
+                    ts = float(legacy.read_text().strip())
+                    if 0 < ts <= time.time():
+                        self._last_message_ts = ts
+                except (ValueError, OSError):
+                    pass
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -260,14 +285,14 @@ class X2DClient:
         self._latest_state = payload
         now = time.time()
         self._last_message_ts = now
-        # Persist atomically (item #19). Cheap — even at 10 Hz this is
-        # a few hundred bytes/s of writeback. Keep the parent dir mode
-        # exclusive (creds live there too).
+        # Persist atomically (items #19 + #37 per-printer). Cheap — even
+        # at 10 Hz this is a few hundred bytes/s of writeback. Keep the
+        # parent dir mode exclusive (creds live there too).
         try:
-            self._TS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._TS_PATH.with_suffix(self._TS_PATH.suffix + ".tmp")
+            self._ts_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._ts_path.with_suffix(self._ts_path.suffix + ".tmp")
             tmp.write_text(f"{now}\n")
-            os.replace(tmp, self._TS_PATH)
+            os.replace(tmp, self._ts_path)
         except OSError as e:
             # Don't let a transient FS error kill the listener — log once.
             if not getattr(self, "_ts_persist_warned", False):
