@@ -723,28 +723,32 @@ class ServeServer:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
             return
-        # Patch the same gate keys install.sh #11 sets.
+        # Patch the same gate keys install.sh #11 sets — defaults to the
+        # X2D since that's what this toolkit is for. The upstream BBL
+        # profile catalogue ships full X2D variants (machine, filaments,
+        # 0.20mm Standard process), so the GUI lands directly on the
+        # right model without the user having to pick.
         data.setdefault("vendors", {})["BBL"] = "1"
         models = data.get("models") or []
         if not any(m.get("vendor") == "BBL" for m in models):
             models.append({
                 "vendor": "BBL",
-                "model": "Bambu Lab X1 Carbon",
+                "model": "Bambu Lab X2D",
                 "nozzle_diameter": '"0.4"',
             })
             data["models"] = models
-        presets["printer"]   = "Bambu Lab X1 Carbon 0.4 nozzle"
-        presets["filament"]  = "Bambu PLA Basic @BBL X1C"
-        presets.setdefault("print", "0.20mm Standard @BBL X1C")
+        presets["printer"]   = "Bambu Lab X2D 0.4 nozzle"
+        presets["filament"]  = "Bambu PLA Basic @BBL X2D"
+        presets.setdefault("print", "0.20mm Standard @BBL X2D")
         if not isinstance(presets.get("filaments"), list) or not presets["filaments"]:
-            presets["filaments"] = ["Bambu PLA Basic @BBL X1C"]
+            presets["filaments"] = ["Bambu PLA Basic @BBL X2D"]
         # Atomic write
         tmp = appconf.with_suffix(appconf.suffix + ".tmp-x2d")
         tmp.write_text(json.dumps(data, indent=4))
         _os.replace(tmp, appconf)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.touch()
-        print(f"[serve] ssdp seed: patched {appconf} (printer→Bambu Lab X1 Carbon, "
+        print(f"[serve] ssdp seed: patched {appconf} (printer→{presets['printer']}, "
               f"triggered by {parsed.get('dev_name', '?')} @ {parsed.get('dev_ip', '?')})",
               file=sys.stderr)
 

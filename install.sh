@@ -185,9 +185,11 @@ fi
 # profiles from `resources/profiles/` into `<data_dir>/system/`, but we
 # skip the wizard. Mirror the copy here so a fresh install lands ready.
 #
-# We use Bambu Lab X1 Carbon as the default model — the X2D doesn't have
-# a stock vendor profile in upstream BambuStudio yet, and the only thing
-# that matters for the Device-tab gate is `is_bbl_vendor_preset()`.
+# We use Bambu Lab X2D as the default — that's what this toolkit targets,
+# and the upstream BBL profile catalogue ships full X2D variants
+# (0.2/0.4/0.6/0.8 nozzles, X2D-specific filaments, 0.20mm Standard @BBL X2D
+# process). On a fresh install the GUI lands directly on the right model
+# without the user having to pick.
 # ---------------------------------------------------------------------------
 
 section "pre-seeding Bambu vendor profiles"
@@ -257,17 +259,17 @@ has_bbl_model = any(m.get("vendor") == "BBL" for m in existing_models)
 if not has_bbl_model:
     existing_models.append({
         "vendor":          "BBL",
-        "model":           "Bambu Lab X1 Carbon",
+        "model":           "Bambu Lab X2D",
         "nozzle_diameter": '"0.4"',
     })
     data["models"] = existing_models
 
 presets = data.setdefault("presets", {})
-presets.setdefault("printer",  "Bambu Lab X1 Carbon 0.4 nozzle")
-presets.setdefault("filament", "Bambu PLA Basic @BBL X1C")
-presets.setdefault("print",    "0.20mm Standard @BBL X1C")
+presets.setdefault("printer",  "Bambu Lab X2D 0.4 nozzle")
+presets.setdefault("filament", "Bambu PLA Basic @BBL X2D")
+presets.setdefault("print",    "0.20mm Standard @BBL X2D")
 if not isinstance(presets.get("filaments"), list) or not presets["filaments"]:
-    presets["filaments"] = ["Bambu PLA Basic @BBL X1C"]
+    presets["filaments"] = ["Bambu PLA Basic @BBL X2D"]
 
 path.write_text(json.dumps(data, indent=4))
 os.chmod(path, 0o644)
