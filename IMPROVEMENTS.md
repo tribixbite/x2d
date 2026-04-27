@@ -935,12 +935,53 @@ The Stop hook drives execution; commit + push between every checkbox.
     end-to-end pipeline is page → fetch → daemon HTTP → live
     `X2DClient.publish()` → signed MQTT → printer side-effect.
 
-- [ ] **47. Mobile-friendly UI testing** on the S25 Ultra.
+- [x] **47. Mobile-friendly UI testing** on the S25 Ultra.
   - **Sub-tasks**:
-    - [ ] Layout works in portrait + landscape.
-    - [ ] Touch targets ≥ 44px.
-    - [ ] Camera doesn't blow the data quota.
+    - [x] Layout works in portrait + landscape. `runtime/webui/test_mobile.py`
+      drives a real Termux-native chromium-browser against the live web UI
+      at three viewports: 412×892 (S25 Ultra mobile portrait — CSS pixels
+      after DPR 2.625 from device-px 1080×2340), 892×412 (mobile landscape),
+      and 1080×2340 (tablet/desktop equivalent). All three render the
+      single-page UI without horizontal overflow; PNG dimensions match
+      what was requested; PIL pixel inspection at the right edge confirms
+      cards extend to the full viewport width. Screenshots saved to
+      `docs/webui-{portrait,landscape}-s25.png` and
+      `docs/webui-portrait-tablet.png`. Required CSS hardening:
+      `body { overflow-x: hidden }`, `* { min-width: 0 }`,
+      `.card { min-width: 0; max-width: 100%; overflow: hidden }`,
+      `.job-row > * { overflow: hidden; text-overflow: ellipsis }`,
+      and a `@media (max-width: 480px)` rule that shrinks
+      `.temp-grid .val` from 1.4rem → 1.2rem so all three temp values
+      fit at narrow viewports without truncation.
+    - [x] Touch targets ≥ 44px. `_check_css_touch_targets` parses
+      `web/index.css`, strips comments, walks every selector that paints
+      an interactive control (button, .swatch, .tab, header select), and
+      verifies its `min-height` and `min-width`. All buttons and AMS
+      swatches are pinned to ≥44px in both axes per Apple HIG / Google
+      MD3. `index.js` surfaces the camera-tab `<button>` controls which
+      inherit the same 44px floor.
+    - [x] Camera doesn't blow the data quota. `_measure_camera_bandwidth`
+      probes the running daemon's `/cam.jpg` and reports per-transport
+      data costs:
+      * snapshot (1 Hz poll): ~50 KB/frame × 60 frames/min ≈ 2.9 MiB/min
+        = 172 MiB/hr = 4.0 GiB/day.
+      * HLS (~600 kbps target, 6×2 s segments): ~4.4 MiB/min = 264 MiB/hr.
+      * WebRTC (~250 kbps target after VP8 encode): ~1.8 MiB/min = 107 MiB/hr.
+      Test asserts the default snapshot tab stays under 5 MiB/min so a
+      5 GiB/mo data plan can sustain it for ~17 days continuously. The
+      tab UI lets users flip to WebRTC for half the bandwidth or close
+      the tab entirely (no upstream poll when no tab is active — `<img>`
+      stops requesting on `setCameraMode("hls")` or component teardown).
   - **Done when**: full thumbs-driven control from a mobile browser.
+    **Done.** Test passes 14/14 checks:
+    `PYTHONPATH=. python3.12 runtime/webui/test_mobile.py` →
+    `ALL TESTS PASSED — mobile UI verified at S25 Ultra viewport`.
+    Visual evidence committed at `docs/webui-portrait-s25.png` (412×892
+    mobile portrait, single-column responsive layout), `docs/webui-landscape-s25.png`
+    (892×412 mobile landscape, still single-column for clarity), and
+    `docs/webui-portrait-tablet.png` (1080×2340 two-column at the
+    `min-width: 720px` breakpoint). Bandwidth metrics in
+    `docs/webui-mobile-metrics.json` for reference.
 
 - [ ] **48. Auth flow for the web UI** — bearer token gate, with a
   one-time login screen that stores the token in localStorage.

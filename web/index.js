@@ -249,7 +249,30 @@
     await webrtcPC.setRemoteDescription(answer);
   }
 
-  // Boot.
-  setCameraMode("snapshot");
-  loadPrinters();
+  // Boot. ?capture=1 disables SSE + camera polling so headless screenshot
+  // tools (chromium-browser --headless --screenshot) don't block on a
+  // never-ending page-load.
+  const params = new URLSearchParams(location.search);
+  if (params.get("capture") === "1") {
+    // Inject a one-shot fake state so the UI shows real values in the shot.
+    renderState({
+      print: {
+        nozzle_temper: 213.5, bed_temper: 60.0, chamber_temper: 35.0,
+        subtask_name: "rumi_frame.gcode.3mf", mc_percent: 42,
+        mc_current_layer: 17, total_layer_num: 120,
+        mc_remaining_time: 75,
+        ams: { ams: [{ id: 0, tray: [
+          { tray_color: "FF7676FF", tray_type: "PLA" },
+          { tray_color: "66E08CFF", tray_type: "PETG" },
+          { tray_color: "FFC857FF", tray_type: "PLA" },
+          {} ] }], tray_now: "0" },
+      },
+    });
+    connStatus.textContent = "capture mode";
+    connStatus.className = "pill ok";
+    lastUpdate.textContent = new Date().toLocaleTimeString();
+  } else {
+    setCameraMode("snapshot");
+    loadPrinters();
+  }
 })();

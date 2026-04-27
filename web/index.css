@@ -25,7 +25,12 @@ body {
   color: var(--fg);
   min-height: 100dvh;
   padding-bottom: 1rem;
+  /* Belt-and-braces against any inadvertent horizontal overflow on
+     small viewports (#47). Individual cards are also locked to
+     min-width: 0 below so flex/grid items don't push the page wide. */
+  overflow-x: hidden;
 }
+* { min-width: 0; }
 header {
   position: sticky; top: 0; z-index: 10;
   background: var(--bg-soft);
@@ -72,6 +77,9 @@ main {
   border: 1px solid var(--line);
   border-radius: var(--r);
   padding: 0.7rem 0.85rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .card h2 {
   font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em;
@@ -86,11 +94,19 @@ main {
   gap: 0.4rem;
   text-align: center;
 }
-.temp-grid .lbl { display: block; color: var(--fg-muted); font-size: 0.78rem; }
+.temp-grid .lbl { display: block; color: var(--fg-muted); font-size: 0.78rem;
+                  text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
 .temp-grid .val { display: block; font-size: 1.4rem; font-weight: 600;
                   font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) {
+  .temp-grid .val { font-size: 1.2rem; }
+  .temp-grid .lbl { font-size: 0.72rem; }
+}
 
-.job-row { display: flex; justify-content: space-between; gap: 0.5rem; }
+.job-row { display: flex; justify-content: space-between; gap: 0.5rem;
+           min-width: 0; }
+.job-row > * { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+              white-space: nowrap; }
 .job-row.small { font-size: 0.82rem; margin-top: 0.4rem; }
 .muted { color: var(--fg-muted); }
 .small { font-size: 0.82rem; }

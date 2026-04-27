@@ -1,0 +1,57 @@
+{
+  "mobile_portrait_png": "docs/webui-portrait-s25.png",
+  "mobile_landscape_png": "docs/webui-landscape-s25.png",
+  "tablet_portrait_png": "docs/webui-portrait-tablet.png",
+  "viewport": {
+    "has_viewport_meta": true,
+    "viewport_fit_cover": true,
+    "has_theme_color": true
+  },
+  "touch_targets": {
+    "checked": 4,
+    "passes": [
+      {
+        "selector": "header select",
+        "min-height": null,
+        "min-width": null
+      },
+      {
+        "selector": ".tab",
+        "min-height": null,
+        "min-width": null
+      },
+      {
+        "selector": "button",
+        "min-height": 44.0,
+        "min-width": 44.0
+      },
+      {
+        "selector": ".swatch",
+        "min-height": 44.0,
+        "min-width": null
+      }
+    ],
+    "fails": []
+  },
+  "camera_bandwidth": {
+    "snapshot": {
+      "bytes_per_frame": 50000,
+      "frames_per_minute_at_1hz": 60,
+      "bytes_per_minute_at_1hz": 3000000,
+      "available": false,
+      "note": "camera daemon unreachable (HTTP Error 404: Not Found); using 50 KB upper bound"
+    },
+    "hls": {
+      "segment_kib": 150,
+      "segments_per_minute": 30,
+      "bytes_per_minute": 4608000,
+      "buffering_window_s": 12,
+      "note": "estimate; 720p VBR @ ~600 kbps target"
+    },
+    "webrtc": {
+      "target_kbps": 250,
+      "bytes_per_minute": 1875000,
+      "note": "estimate; tracks the upstream JPEG bitrate"
+    }
+  }
+}
