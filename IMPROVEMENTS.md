@@ -547,13 +547,13 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: 3D bed grid + loaded model are both visible in
     Prepare tab.
 
-- [ ] **26. File chooser default path = `$HOME` (not `/`).**
+- [x] **26. File chooser default path = `$HOME` (not `/`).**
   Currently the Ctrl+O dialog opens at `/` which triggers the gvfs
   permission popup every time.
   - **Sub-tasks**:
-    - [ ] Patch `wxFileDialog` callsites in BambuStudio to pass
+    - [x] Patch `wxFileDialog` callsites in BambuStudio to pass
       `wxStandardPaths::Get().GetDocumentsDir()` as default path.
-    - [ ] Verify no gvfs popup on Ctrl+O after fresh launch.
+    - [x] Verify no gvfs popup on Ctrl+O after fresh launch.
   - **Done when**: file chooser opens in `~` not `/`.
 
 - [x] **27. Suppress gvfs `Could not read the contents of /` popup.**

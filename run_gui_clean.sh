@@ -166,5 +166,10 @@ if [[ -n "${BRIDGE_PY:-}" ]] && \
     done
 fi
 
-cd "$(dirname "${BS_BIN}")"
+# Termux source patch (item #26): change cwd to $HOME before exec so
+# wxFileDialog (Ctrl+O / Save Project / Import STL) defaults to the
+# user's home dir instead of "/" (which triggers the gvfs permission
+# popup). resources_dir() uses install-prefix-relative paths derived
+# from argv[0], not cwd, so this doesn't break resource discovery.
+cd "${HOME}"
 exec "${BS_BIN}" "$@"
