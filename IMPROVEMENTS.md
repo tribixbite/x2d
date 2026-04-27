@@ -1702,3 +1702,58 @@ v1.0 ship-readiness was never gated on them.
   required.
 
   v1.0.0 release re-uploaded with rebuilt 106376368-byte binary.
+
+* **#65 X2D `print.*` MQTT verify failure — root cause narrowed.** With the
+  user's "I can print over LAN with internet disconnected from Windows BambuStudio"
+  hint, two parallel research subagents (online + codebase/memory) converged
+  on the payload-shape hypothesis. We expanded `start_print` with the full
+  Jan-2025+ field set captured from drndos/openspoolman cloud logs (added
+  `dev_id`, `task_id`/`subtask_id`/`subtask_name`/`job_id`, `project_id`/
+  `profile_id`/`design_id`/`model_id`, `plate_idx` (int), `md5`, `timestamp`,
+  `job_type`, `bed_temp`, `auto_bed_leveling` (int), `extrude_cali_flag`,
+  `nozzle_offset_cali`, `extrude_cali_manual_mode`, `ams_mapping2`, `cfg`)
+  and pulled the printer's cached `mira_official.gcode.3mf` via FTPS RETR
+  for shape comparison (saved at `samples/x2d_cloud_print_mira_official.gcode.3mf`).
+  The 3MF metadata is identical — same `printer_model_id=N6`, same
+  `BambuStudio 02.06.00.51`, same nozzle/plate. So slice content is not the
+  issue.
+
+  Live MQTT subscription on `device/<serial>/report` revealed the real
+  blocker: every `print.*` command (`pause`, `resume`, `stop`, `gcode_line`,
+  `project_file`) gets rejected with `result: "failed", reason: "mqtt
+  message verify failed"`, regardless of payload shape, regardless of
+  sort_keys (insertion order is correct — sort_keys=True breaks even
+  ledctrl which currently works), regardless of whether `dev_id` /
+  `cfg` (the rolling printer-side nonce, e.g. `'591005FDA19'`) are in the
+  body. `system.ledctrl` with the SAME signing path does verify and the
+  printer reports `lights_report.mode` correctly.
+
+  Critical discovery from `pushall` reply: the cached print on this X2D
+  was `print_type: 'cloud'` — Windows BambuStudio queued it via cloud,
+  the printer downloaded over the cloud channel, then ran offline. The
+  user's "internet disconnected" test wasn't isolating the LAN-only
+  command path. So we have no confirmed evidence that BambuStudio's LAN
+  publishes are accepted on this firmware (`X2D 01.01.00.00`).
+
+  Working hypothesis: firmware version 01.01.00.00 split MQTT verification
+  into two tiers — `system.*` accepts the leaked global Bambu Connect cert,
+  but `print.*` (anything that mutates print state) requires per-device
+  authorization that's bound to the printer's SN. That auth is set during
+  cloud activation and persists; LAN-only clients without ever running
+  cloud activation can't replay it. Hackaday Jan-2025 piece + Bambu's
+  authorization control firmware blog suggest exactly this two-tier model.
+
+  Bridge changes nonetheless committed:
+  * `_md5_of()` helper hashes uploaded .3mf before publish.
+  * `start_print()` now sends the full Jan-2025+ field set.
+  * `_ImplicitFTPTLS.retrbinary` + `retrlines` for FTPS RETR/LIST (the
+    bridge previously only supported STOR).
+  * Top-level `download_file()` + `list_files()` helpers for pulling
+    the printer's SD-card cache during further RE work.
+
+  Next experiment: use `mitmproxy` against the X2D's MQTT TLS cert (or
+  point Windows BambuStudio at a fake printer running our bridge) to
+  capture an actual successful project_file publish wire bytes; diff
+  against ours to identify the missing auth field. Until then, manual
+  start-from-printer-touchscreen is the only way to start a print on
+  this X2D from a LAN-only setup.

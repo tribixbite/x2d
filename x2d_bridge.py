@@ -184,21 +184,22 @@ def _signing_key():
 def sign_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Wrap a Bambu MQTT payload with the `header` block the X2D / H2D /
     refreshed P1+X1 firmware require. The signature is computed against the
-    compact-JSON of the *un-headered* dict, then the header is added on top.
-    """
+    compact-JSON of the un-headered dict in DICT-INSERTION ORDER. Empirical
+    testing showed that sort_keys=True breaks ALL commands including
+    pause/resume — so the firmware re-serializes the parsed-and-stripped
+    JSON in the same order it was received (which means the wire bytes must
+    use insertion order too)."""
     body = json.dumps(payload, separators=(",", ":")).encode()
     sig = _signing_key().sign(body, padding.PKCS1v15(), hashes.SHA256())
-    payload = dict(payload)
-    payload["header"] = {
+    out = dict(payload)
+    out["header"] = {
         "sign_ver": "v1.0",
         "sign_alg": "RSA_SHA256",
-        # Base64 matches the canonical Bambu Connect plugin format. Hex
-        # also works on current firmware but base64 is forward-safer.
         "sign_string": base64.b64encode(sig).decode("ascii"),
         "cert_id": BAMBU_CERT_ID,
         "payload_len": len(body),
     }
-    return payload
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +439,105 @@ class _ImplicitFTPTLS(FTP_TLS):
             conn.close()
         return self.voidresp()
 
+    def retrbinary(self, cmd, callback, blocksize=8192, rest=None):  # type: ignore[override]
+        # Same shape as storbinary but for downloads. ProFTPD's session-
+        # reuse requirement applies to RETR + LIST too — ntransfercmd's
+        # session= argument handles that. Unwrap before close on the data
+        # socket otherwise the firmware drops the next command.
+        self.voidcmd("TYPE I")
+        conn = self.transfercmd(cmd, rest)
+        try:
+            while True:
+                data = conn.recv(blocksize)
+                if not data:
+                    break
+                callback(data)
+            if isinstance(conn, ssl.SSLSocket):
+                try:
+                    conn.unwrap()
+                except (OSError, ssl.SSLError):
+                    pass
+        finally:
+            conn.close()
+        return self.voidresp()
+
+    def retrlines(self, cmd, callback=None):  # type: ignore[override]
+        # Same as retrbinary but emits one line at a time (for LIST/NLST).
+        self.voidcmd("TYPE A")
+        conn = self.transfercmd(cmd)
+        try:
+            buf = b""
+            while True:
+                chunk = conn.recv(8192)
+                if not chunk:
+                    if buf:
+                        line = buf.decode("utf-8", errors="replace").rstrip("\r")
+                        if callback:
+                            callback(line)
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line_str = line.decode("utf-8", errors="replace").rstrip("\r")
+                    if callback:
+                        callback(line_str)
+            if isinstance(conn, ssl.SSLSocket):
+                try:
+                    conn.unwrap()
+                except (OSError, ssl.SSLError):
+                    pass
+        finally:
+            conn.close()
+        return self.voidresp()
+
+
+def download_file(creds: Creds, remote_name: str, local_path: Path) -> int:
+    """Download a single file from the X2D's SD card via implicit FTPS.
+    Returns the number of bytes written. Same session-reuse + TLS 1.2
+    pattern as upload_file."""
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+    ftp = _ImplicitFTPTLS(context=ssl_ctx)
+    ftp.connect(creds.ip, 990, timeout=15)
+    ftp.login(user="bblp", passwd=creds.code)
+    ftp.prot_p()
+    written = 0
+    with local_path.open("wb") as f:
+        def cb(chunk: bytes) -> None:
+            nonlocal written
+            f.write(chunk)
+            written += len(chunk)
+        ftp.retrbinary(f"RETR {remote_name}", cb)
+    try:
+        ftp.quit()
+    except (OSError, ssl.SSLError, ftplib.error_perm):
+        try: ftp.close()
+        except Exception: pass
+    return written
+
+
+def list_files(creds: Creds, path: str = "") -> list[str]:
+    """Return raw LIST entries from the X2D's SD card via implicit FTPS.
+    Empty path lists the FTP root (where uploaded files land for X1C-style
+    profiles); pass `"sdcard"` to list the X2D's actual SD mount."""
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+    ftp = _ImplicitFTPTLS(context=ssl_ctx)
+    ftp.connect(creds.ip, 990, timeout=15)
+    ftp.login(user="bblp", passwd=creds.code)
+    ftp.prot_p()
+    lines: list[str] = []
+    cmd = f"LIST {path}".rstrip()
+    ftp.retrlines(cmd, lambda l: lines.append(l))
+    try:
+        ftp.quit()
+    except (OSError, ssl.SSLError, ftplib.error_perm):
+        try: ftp.close()
+        except Exception: pass
+    return lines
+
 
 def upload_file(creds: Creds, local_path: Path, remote_name: str | None = None) -> None:
     if not local_path.is_file():
@@ -478,45 +578,124 @@ def _next_seq() -> str:
     return str(_SEQ_COUNTER)
 
 
+def _md5_of(local_path: Path) -> str:
+    """Hex MD5 of a local file. Bambu firmware (Jan-2025+) verifies this
+    against the uploaded .3mf before queuing the print — without it
+    project_file is silently rejected on X2D / H2D / refreshed X1C."""
+    import hashlib
+    h = hashlib.md5()
+    with local_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest().upper()
+
+
 def start_print(client: X2DClient, gcode_filename: str, *,
                 use_ams: bool = True, ams_slot: int = 0,
                 bed_levelling: bool = True, flow_cali: bool = False,
                 timelapse: bool = False, vibration_cali: bool = False,
-                bed_type: str = "textured_plate") -> None:
+                bed_type: str = "textured_plate",
+                bed_temp: int = 65,
+                local_path: Path | None = None) -> None:
     """Submit a project_file print command to the printer.
 
-    `bed_type` is the build-plate identifier the printer expects when its
-    own selector doesn't match the slice — newer firmware on H2D and some
-    refreshed P1S have rejected payloads without this field. X2D appears to
-    default fine, but we set it for forward-safety. Common values:
-    `textured_plate`, `cool_plate`, `engineering_plate`, `high_temp_plate`.
-    """
-    # Payload shape mirrors bambulabs_api 2.6.6 PrinterMQTTClient.start_print_3mf
-    # — same fields the X2D firmware accepts in LAN mode. The original
-    # shape (with file:///mnt/sdcard/, task_id/project_id/subtask_id and
-    # subtask_name) was silently ignored by recent X2D firmware. Specifically:
-    #   * `url` MUST be `ftp:///<filename>` so the firmware knows to look
-    #     for a LAN-uploaded file (not a cloud-pulled one).
-    #   * `file` field carries the basename; firmware uses it for the
-    #     Files-screen label.
-    #   * No `task_id`/`project_id`/`subtask_id`/`subtask_name` — firmware
-    #     fills those itself for LAN prints.
+    Payload now matches the full Jan-2025+ firmware-required shape captured
+    from real cloud + Windows BambuStudio LAN sessions. Earlier reduced
+    shapes (bambulabs_api 2.6.6 / orca-lan-bridge minimal) get silently
+    dropped on X2D / H2D — the firmware's command handler does shape
+    validation before logging, missing required keys = drop without HMS.
+
+    Required fields the older shapes were missing (per drndos/openspoolman
+    A1 cloud captures and DeepWiki's BambuStudio PrintParams reverse-engineering):
+      * `dev_id`              — device serial; binds the publish to this printer
+      * `task_id` / `subtask_id` / `subtask_name` / `job_id` — task identity
+      * `project_id` / `profile_id` / `design_id` / `model_id` / `plate_idx`
+      * `md5`                 — MD5 of the uploaded .gcode.3mf bytes
+      * `timestamp`           — unix seconds
+      * `job_type`            — 0 for LAN local, 1 for cloud
+      * `bed_temp`            — int degrees C
+      * `auto_bed_leveling`   — int (0/1/2), NOT `bed_leveling` bool
+      * `extrude_cali_flag`   — int 0
+      * `nozzle_offset_cali`  — int 0
+      * `extrude_cali_manual_mode` — int 0
+      * `ams_mapping2`        — newer `[{"ams_id": 0, "slot_id": N}]` form
+      * `cfg`                 — string "0"
+
+    URL scheme: X2D's printer profile maps the FTP root (`/`) to the SD-mount
+    `sdcard/` prefix internally. We pass `ftp:///<name>` (firmware translates),
+    matching what the Windows BS LAN flow does."""
+    if local_path is None:
+        local_path = Path.cwd() / gcode_filename
+    md5_hex = _md5_of(local_path) if local_path.is_file() else ""
+    # ams_mapping2: newer ams_id/slot_id form (vs the legacy flat int list).
+    # When use_ams is false, both lists must be empty.
+    if use_ams:
+        ams_mapping_legacy = [ams_slot]
+        # Treat ams_slot as a global index: 0..3 = ams_id 0; 4..7 = ams_id 1;
+        # etc. Most LAN setups have one AMS so ams_id stays 0.
+        ams_mapping_v2 = [{"ams_id": ams_slot // 4, "slot_id": ams_slot % 4}]
+    else:
+        ams_mapping_legacy = []
+        ams_mapping_v2 = []
+    # Task identity numbers — must be numeric-looking 9-10 digit IDs (not
+    # "0") so the firmware's command handler accepts them. Use timestamp
+    # so each invocation gets a fresh ID and we don't collide with stale
+    # state. Captured cloud BS-Windows payloads use the same shape.
+    job_id_int = int(time.time()) * 10
+    job_id_str = str(job_id_int)
+    # subtask_name is the printer-side label that appears on the
+    # touchscreen. Bambu's Files-screen convention is `<basename>.gcode`
+    # (NOT `.gcode.3mf` — the firmware strips the .3mf when listing).
+    # Verified from the X2D's own `subtask_name` field for its prior
+    # print: 'mira_frame.gcode' (no .3mf suffix).
+    name_no_3mf = gcode_filename
+    if name_no_3mf.endswith(".gcode.3mf"):
+        name_no_3mf = name_no_3mf[: -len(".3mf")]
+    elif name_no_3mf.endswith(".3mf"):
+        name_no_3mf = name_no_3mf[: -len(".3mf")] + ".gcode"
     payload = {
         "print": {
-            "command":        "project_file",
-            "param":          "Metadata/plate_1.gcode",
-            "file":           gcode_filename,
-            "url":            f"ftp:///{gcode_filename}",
-            "bed_type":       bed_type,
-            "bed_leveling":   bed_levelling,
-            "flow_cali":      bool(flow_cali),
-            "vibration_cali": bool(vibration_cali),
-            "timelapse":      timelapse,
-            "layer_inspect":  False,
-            "use_ams":        bool(use_ams),
-            "ams_mapping":    [ams_slot] if use_ams else [],
-            "skip_objects":   None,
-            "sequence_id":    "10000000",
+            "sequence_id":              str(int(time.time())),
+            "command":                  "project_file",
+            "param":                    "Metadata/plate_1.gcode",
+            "file":                     gcode_filename,
+            "url":                      f"ftp:///{gcode_filename}",
+            "md5":                      md5_hex,
+            # Task identity — firmware insists these are present even for
+            # LAN. Numeric-looking strings; same value across the trio.
+            "task_id":                  job_id_str,
+            "subtask_id":               job_id_str,
+            "subtask_name":             name_no_3mf,
+            "job_id":                   job_id_int,
+            "project_id":               job_id_str,
+            "profile_id":               "0",
+            "design_id":                "0",
+            "model_id":                 "0",
+            "plate_idx":                1,         # int, NOT string
+            "dev_id":                   client.creds.serial,
+            "job_type":                 0,         # 0 = LAN local, 1 = cloud
+            "timestamp":                int(time.time()),
+            # Plate / heating
+            "bed_type":                 bed_type,
+            "bed_temp":                 int(bed_temp),
+            "auto_bed_leveling":        1 if bed_levelling else 0,
+            # Calibration int flags (0 = don't calibrate)
+            "extrude_cali_flag":        1 if flow_cali else 0,
+            "nozzle_offset_cali":       0,
+            "extrude_cali_manual_mode": 0,
+            # Print-time toggles (kept for forward-compat with older paths
+            # in firmware that still read these names)
+            "flow_cali":                bool(flow_cali),
+            "bed_leveling":             bool(bed_levelling),
+            "vibration_cali":           bool(vibration_cali),
+            "timelapse":                bool(timelapse),
+            "layer_inspect":            False,
+            # AMS mapping — both legacy and v2 forms; firmware reads whichever
+            "use_ams":                  bool(use_ams),
+            "ams_mapping":              ams_mapping_legacy,
+            "ams_mapping2":             ams_mapping_v2,
+            "skip_objects":             None,
+            "cfg":                      "0",
         }
     }
     client.publish(payload)
@@ -1346,18 +1525,20 @@ def cmd_upload(args: argparse.Namespace) -> int:
 
 def cmd_print(args: argparse.Namespace) -> int:
     creds = Creds.resolve(args)
+    local = Path(args.file)
     if not args.no_upload:
-        upload_file(creds, Path(args.file), remote_name=args.remote)
+        upload_file(creds, local, remote_name=args.remote)
     cli = X2DClient(creds)
     cli.connect()
-    name = args.remote or Path(args.file).name
+    name = args.remote or local.name
     start_print(cli, name,
                 use_ams=not args.no_ams, ams_slot=args.slot,
                 bed_levelling=not args.no_bed_level,
                 flow_cali=args.flow_cali,
                 timelapse=args.timelapse,
                 vibration_cali=args.vib_cali,
-                bed_type=args.bed_type)
+                bed_type=args.bed_type,
+                local_path=local)
     print(f"start_print queued: {name} (slot={args.slot}, ams={not args.no_ams})")
     cli.disconnect()
     return 0
