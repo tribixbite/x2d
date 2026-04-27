@@ -1640,20 +1640,28 @@ v1.0 ship-readiness was never gated on them.
   against the real X2D, so the underlying code path is proven
   independent of this manual GUI walkthrough.
 
-* **#63 Bisect the Apr 27 03:17 binary regression.** The bambu-studio
-  binary built on 2026-04-27 03:17 with all of #21-#31 source patches
-  applied segfaults at startup (after `Initializing StaticPrintConfigs`
-  trace, during MainFrame widget creation). The Apr 25 06:45
-  `.before-widget-patch` backup binary (which predates today's source
-  patches) renders correctly, so v1.0.0 was patched to ship that
-  binary instead. Both binaries are preserved at
-  `bs-bionic/build/src/bambu-studio` (the working one) and
-  `bs-bionic/build/src/bambu-studio.broken-2026-04-27` (the segfaulting
-  one). Bisecting which of #21-#31 introduced the regression
-  requires per-TU recompile + relink (cmake regen broken because
-  llvm/clang was upgraded between sessions per CLAUDE.md hard-won
-  lesson), so this is a multi-hour follow-up. Likely suspects in
-  order: Plater.cpp's `sidebar_default_width()` (uses `wxDisplay::GetCount()`
-  during Sidebar construction at MainFrame creation), GUI_App.cpp's
-  `OnAssertFailure` override (#24), BBLTopbar.cpp's manual-maximize
-  state machine (#22).
+* **#63 ~~Bisect the Apr 27 03:17 binary regression~~ — RESOLVED.**
+  Root cause: item #32 (`feat(phase0): register "wx" script handler`)
+  called `m_browser->AddScriptMessageHandler("wx")` from
+  `WebViewPanel`'s constructor, BEFORE the WebView had run a
+  navigation. WebKit2GTK 4.1 then fires `OnNavigationRequest` with a
+  wxWebViewEvent whose target points at the still-uninitialised
+  browser → NULL deref → repeated `gtk_widget_get_style_context:
+  'GTK_IS_WIDGET (widget)' failed` loops then SIGSEGV. Fix: drop the
+  three `AddScriptMessageHandler("wx")` calls. Home-page
+  Recently-Opened JS→native bridge stays dead but GUI launches and is
+  fully functional. Captured in
+  `patches/WebViewDialog.cpp.termux.patch`.
+
+  Bisect process used CLAUDE.md hard-won-lesson recipe — `cmake
+  --regenerate-during-build` to refresh build.ninja, targeted
+  `ninja src/slic3r/CMakeFiles/libslic3r_gui.dir/GUI/<file>.cpp.o`
+  to rebuild only the suspect TU, `ar r` to swap the .o into
+  `liblibslic3r_gui.a`, then `bash bs-link-cmd.sh` (extracted link
+  command from build.ninja) instead of triggering the full ninja
+  relink. Plater.cpp / GUI_App.cpp / MainFrame.cpp were ruled out
+  by partial-revert + relink; gdb backtrace then pointed at
+  `WebViewPanel::OnNavigationRequest` directly.
+
+  v1.0.0 release tarball repackaged with the rebuilt 106376152-byte
+  binary and re-uploaded (sha256 `43226a0e42e9...`).
