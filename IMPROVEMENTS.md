@@ -630,13 +630,13 @@ The Stop hook drives execution; commit + push between every checkbox.
       with grid lines + bounding box.
   - **Done when**: build plate visible underneath any loaded model.
 
-- [ ] **34. Delete `patch_bambu_skip_wizard.py`** and its references
+- [x] **34. Delete `patch_bambu_skip_wizard.py`** and its references
   in install.sh + run_gui.sh.
   - **Sub-tasks**:
-    - [ ] Remove the script from repo + dist staging.
-    - [ ] Remove install.sh's "applying wizard-skip binary patch" block.
-    - [ ] Remove preload_gtkinit.c's stub for the symbol.
-    - [ ] Update README + QUICKSTART.md to drop the script reference.
+    - [x] Remove the script from repo + dist staging.
+    - [x] Remove install.sh's "applying wizard-skip binary patch" block.
+    - [x] Remove preload_gtkinit.c's stub for the symbol.
+    - [x] Update README + QUICKSTART.md to drop the script reference.
   - **Done when**: no traces of the binary patcher remain anywhere.
 
 - [ ] **35. Final Phase 0 ADB verification.** Every Phase 0 fix

@@ -14,7 +14,9 @@
 #      (default ~/x2d).
 #   5. Drop the libbambu_networking.so + libBambuSource.so plug-ins at
 #      ~/.config/BambuStudioInternal/plugins/ where bambu-studio expects
-#      them, and apply the wizard-skip binary patch to the new binary.
+#      them.  (The wizard-skip is now a source patch in
+#      patches/GUI_App.cpp.termux.patch, baked into the shipped binary —
+#      no runtime patcher needed; see item #21/#34.)
 #   6. Pre-seed ~/.config/BambuStudioInternal/BambuStudio.conf with the
 #      X2D printer model so the dropdown isn't empty.
 #   7. Drop a ~/.x2d/credentials skeleton (mode 600) for the user to
@@ -152,11 +154,12 @@ c_blue "unpacking into $INSTALL_ROOT …"
 tar -xJf "$TMP/$TARBALL" -C "$INSTALL_ROOT" --strip-components=1 \
     || fatal "tar extract failed" 3
 chmod +x "$INSTALL_ROOT/bin/bambu-studio" \
-         "$INSTALL_ROOT/run_gui.sh" \
-         "$INSTALL_ROOT/patch_bambu_skip_wizard.py" 2>/dev/null || true
+         "$INSTALL_ROOT/run_gui.sh" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Plug-ins + binary patch
+# Plug-ins (item #34: binary wizard-patch removed — config_wizard_startup
+# is now source-patched in patches/GUI_App.cpp.termux.patch and baked
+# into the shipped binary)
 # ---------------------------------------------------------------------------
 
 section "installing plug-ins"
@@ -168,13 +171,6 @@ cp -f "$INSTALL_ROOT/plugins/libbambu_networking.so" "$PLUGINS_DIR/" 2>/dev/null
 cp -f "$INSTALL_ROOT/plugins/libBambuSource.so"      "$PLUGINS_DIR/" 2>/dev/null \
     && c_green "libBambuSource.so → $PLUGINS_DIR" \
     || true
-
-if [ -x "$INSTALL_ROOT/patch_bambu_skip_wizard.py" ]; then
-    c_blue "applying wizard-skip binary patch…"
-    python3 "$INSTALL_ROOT/patch_bambu_skip_wizard.py" \
-        "$INSTALL_ROOT/bin/bambu-studio" \
-        || c_yellow "wizard-skip patch reported a mismatch — binary may be a different build; see runtime/network_shim/PROTOCOL.md for the manual offset-finding recipe"
-fi
 
 # ---------------------------------------------------------------------------
 # Vendor profile seed (so the Device tab works on first run)

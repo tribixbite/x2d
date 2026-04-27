@@ -113,31 +113,15 @@ locale_t newlocale(int category_mask, const char *locale, locale_t base) {
 }
 
 /*
- * wxLocale::IsAvailable(int) override. The setlocale shim above DOES make
- * bionic accept canonical names like "en_US" via UTF-8 fallback, but wx
- * 3.3 on this build uses wxUILocale (ICU-backed) for IsAvailable, not the
- * old setlocale path — the ICU locale-data package shipped with Termux's
- * libicu does not include `en_US` as a recognized locale at runtime, so
- * IsAvailable returns false and BambuStudio's load_language() pops the
- * "Switching Bambu Studio to language en_US failed" modal then exits with
- * EXIT_FAILURE.
+ * wxLocale::IsAvailable / wxUILocale::IsAvailable overrides have been
+ * REMOVED (item #28 + #34): the equivalent fix is now a source patch at
+ * patches/GUI_App.cpp.termux.patch which makes load_language() ignore
+ * the IsAvailable check entirely. Keeping the shim symbols would have
+ * been redundant; the source patch is the cleaner, build-time equivalent.
  *
- * Forcing IsAvailable to always return true short-circuits the whole
- * locale-validation mess. wx will then proceed to wxLocale::Init() and
- * use whatever wxSetlocale returns (which in our shim succeeds via the
- * UTF-8 fallback). UI strings come from wxTranslations::AddCatalog,
- * which is independent of locale availability.
+ * If you build a vanilla BambuStudio without the source patch and need
+ * the runtime override back, revive these symbols from git history.
  */
-__attribute__((visibility("default")))
-_Bool _ZN8wxLocale11IsAvailableEi(int lang) {
-    (void)lang;
-    return 1;
-}
-__attribute__((visibility("default")))
-_Bool _ZN10wxUILocale11IsAvailableEi(int lang) {
-    (void)lang;
-    return 1;
-}
 
 /*
  * wxOnAssert override — turn every wx assertion failure into a no-op.
@@ -177,36 +161,22 @@ void _Z10wxOnAssertPKciS0_S0_S0_(const char *f, int l, const char *fn, const cha
 }
 
 /*
- * GUI_App::config_wizard_startup() — historical attempt to skip the
- * Setup Wizard via LD_PRELOAD interposition. KEPT AS A NO-OP MARKER
- * so anyone reading this file sees the rationale.
+ * GUI_App::config_wizard_startup() — REMOVED (item #21 + #34).
+ * The wizard is now skipped by a source patch
+ * (patches/GUI_App.cpp.termux.patch — function body is just
+ * `return false;`) baked into the shipped bambu-studio binary.
  *
- * Why LD_PRELOAD can't actually intercept it:
- *   - It's a non-virtual member function defined in GUI_App.cpp and
- *     called directly from the same translation unit.
- *   - BambuStudio is built with default symbol visibility: hidden, so
- *     the symbol isn't in the binary's .dynsym (`nm -D bambu-studio`
- *     returns no match).
- *   - Without a dynsym entry, ld.so doesn't issue a PLT lookup for
- *     this call — it's a direct relative `bl` instruction baked in at
- *     link time. LD_PRELOAD interception requires PLT or vtable
- *     dispatch; neither applies here.
+ * The shim symbol couldn't have intercepted this call anyway: the
+ * function is non-virtual, hidden-visibility, called from the same
+ * translation unit via direct `bl` — never goes through PLT or vtable.
+ * The runtime binary patcher (patch_bambu_skip_wizard.py) was the
+ * historical workaround; that script has also been deleted.
  *
- * Real mechanism: see patch_bambu_skip_wizard.py — a one-shot binary
- * patch that overwrites the function's prologue with `mov w0, #0; ret`
- * (8 bytes). install.sh calls it after unpacking the dist tarball.
- * The script auto-discovers the offset via byte-signature scan, so
- * it survives BambuStudio rebuilds without a manual offset bump.
- *
- * If a future BambuStudio refactor turns this into a virtual call or
- * exports it in dynsym, the symbol below WOULD then start being honoured
- * — leaving it in the shim is a cheap forward-compat hedge.
+ * If you build a vanilla BambuStudio without the source patch and need
+ * the wizard skipped at runtime, revive this symbol from git history
+ * AND make sure BambuStudio is built with -fvisibility=default OR turn
+ * config_wizard_startup virtual — only then will LD_PRELOAD work.
  */
-__attribute__((visibility("default")))
-_Bool _ZN6Slic3r3GUI7GUI_App21config_wizard_startupEv(void *self) {
-    (void)self;
-    return 0;
-}
 
 /*
  * gtk_window_present() override — sizes + centers transient dialogs.

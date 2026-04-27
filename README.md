@@ -29,7 +29,6 @@ RSA-SHA256-signed MQTT protocol — no Bambu Network Plug-in, no cloud login.
 │   └── preload_gtkinit.c     # LD_PRELOAD shim: GTK pre-init, locale fix,
 │                             # wxLocale ICU bypass, wx 3.3 assert silencer,
 │                             # hidden config_wizard_startup override
-├── patch_bambu_skip_wizard.py   # binary patch: GUI_App::config_wizard_startup → false
 ├── run_gui_clean.sh          # canonical GUI launcher
 ├── x2d_bridge.py             # signed-MQTT LAN client (status/upload/print/daemon)
 ├── bambu_cert.py             # publicly-leaked Bambu Connect signing key
@@ -63,8 +62,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/tribixbite/x2d/main/install.
 Idempotent — runs the platform check, `pkg install`s the runtime deps,
 fetches the latest release tarball, verifies SHA-256, drops the
 `libbambu_networking.so` + `libBambuSource.so` shims into
-`~/.config/BambuStudioInternal/plugins/`, applies the wizard-skip binary
-patch, pre-seeds `~/.config/BambuStudioInternal/BambuStudio.conf` with
+`~/.config/BambuStudioInternal/plugins/`, pre-seeds
+`~/.config/BambuStudioInternal/BambuStudio.conf` with
 the X2D model entry, writes a chmod-600 `~/.x2d/credentials` skeleton
 for you to fill in, and (if Termux:Boot is installed) drops a boot-time
 launcher for the bridge daemon. Re-run any time to upgrade — your
@@ -128,7 +127,6 @@ for p in /path/to/x2d/patches/*.termux.patch; do git apply "$p"; done
 mkdir build && cd build && cmake -GNinja .. && ninja bambu-studio
 gcc -fPIC -shared ../runtime/preload_gtkinit.c \
     $(pkg-config --cflags --libs gtk+-3.0) -ldl -o ../runtime/libpreloadgtk.so
-python3 ../patch_bambu_skip_wizard.py src/bambu-studio
 ```
 
 ## libbambu\_networking.so shim — making the GUI talk to LAN printers
@@ -360,7 +358,6 @@ in lockstep with the upstream consumers.
 | GUI shows "Switching language en\_US failed" then exits | wx 3.3 `wxUILocale::IsAvailable` is ICU-backed, Termux libicu has no `en_US` | shim overrides the symbol |
 | `setlocale("en_US", …)` returns NULL → modal exit | bionic accepts `en_US.UTF-8` but not bare `en_US` | shim retries with `.UTF-8` suffix |
 | GUI runs ~20s then dies on first GL draw with `zink_kopper.c:720` assert | Mesa picks zink (Vulkan→GL); kopper needs DRI3/Present which termux-x11 lacks | `run_gui_clean.sh` forces `GALLIUM_DRIVER=llvmpipe` |
-| Setup Wizard hangs on Bambu cloud calls | wizard tries cloud region/login that times out on Termux | `patch_bambu_skip_wizard.py` (binary patch) |
 | Cancel buttons / AMS spool taps / sidebar buttons silently dropped | custom `Button::mouseReleased` strict bounds check vs. touch-drift | `patches/{Button,AxisCtrlButton,SideButton,TabButton}.cpp.termux.patch` |
 | Maximize button does nothing / window goes off-screen in portrait | termux-x11 has no WM; BBLTopbar relies on `wxFrame::Maximize()`; min-size 1000×600 exceeds portrait width | `patches/BBLTopbar.{cpp,hpp}.termux.patch` |
 | LAN connect / AMS sync / print impossible | Network Plug-in is x86\_64 only | `runtime/network_shim/` (libbambu\_networking.so stub) + `x2d_bridge.py serve` |
