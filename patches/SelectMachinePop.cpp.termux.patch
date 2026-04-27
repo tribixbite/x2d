@@ -1,0 +1,42 @@
+diff --git a/src/slic3r/GUI/SelectMachinePop.cpp b/src/slic3r/GUI/SelectMachinePop.cpp
+index 7d4e568..da0fc53 100644
+--- a/src/slic3r/GUI/SelectMachinePop.cpp
++++ b/src/slic3r/GUI/SelectMachinePop.cpp
+@@ -854,8 +854,15 @@ void SelectMachinePopup::OnLeftUp(wxMouseEvent &event)
+         //bind with access code
+         auto dc_rect = m_panel_direct_connection->ClientToScreen(wxPoint(0, 0));
+         if (mouse_pos.x > dc_rect.x && mouse_pos.y > dc_rect.y && mouse_pos.x < (dc_rect.x + m_panel_direct_connection->GetSize().x) && mouse_pos.y < (dc_rect.y + m_panel_direct_connection->GetSize().y)) {
++            // Termux source patch (item #23): on termux-x11 the
++            // SelectMachinePopup is a wxPopupTransientWindow that sits
++            // above any modal child dialog and intercepts mouse events,
++            // making the IP/access-code fields unfillable. Hide the
++            // popup before showing the modal, restore on close.
++            this->Hide();
+             InputIpAddressDialog dlgo;
+             dlgo.ShowModal();
++            this->Dismiss();
+         }
+ 
+         //hyper link
+@@ -1088,8 +1095,21 @@ PinCodePanel::PinCodePanel(wxWindow* parent, int type, wxWindowID winid /*= wxID
+          }
+      }
+      else if (m_type == 1) {
++         // Termux source patch (item #23): walk up the parent chain to
++         // find the SelectMachinePopup wrapper and dismiss it before
++         // showing the modal Connect dialog. Without this, the popup
++         // intercepts mouse events on the modal's IP/access-code fields.
++         wxWindow* w = this->GetParent();
++         while (w && !dynamic_cast<SelectMachinePopup*>(w)) {
++             w = w->GetParent();
++         }
++         if (w) w->Hide();
+          InputIpAddressDialog dlgo;
+          dlgo.ShowModal();
++         if (w) {
++             SelectMachinePopup* pop = dynamic_cast<SelectMachinePopup*>(w);
++             if (pop) pop->Dismiss();
++         }
+      }
+  }
+ 

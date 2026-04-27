@@ -513,15 +513,15 @@ The Stop hook drives execution; commit + push between every checkbox.
   - **Done when**: ADB tap on Print plate fires `EVT_GLTOOLBAR_PRINT_PLATE`
     and opens the SelectMachine dialog.
 
-- [ ] **23. Source-patch SelectMachinePop modal management** so the bind
+- [x] **23. Source-patch SelectMachinePop modal management** so the bind
   popup auto-dismisses when child Connect dialog opens AND z-orders below
   it.
   - **Sub-tasks**:
-    - [ ] Trace the bind-popup lifecycle in `SelectMachinePop.cpp`.
-    - [ ] On "Bind with Access Code" click: hide the popup before
+    - [x] Trace the bind-popup lifecycle in `SelectMachinePop.cpp`.
+    - [x] On "Bind with Access Code" click: hide the popup before
       showing the Connect dialog; restore on Connect close (or kill it).
-    - [ ] Generate `patches/SelectMachinePop.cpp.termux.patch`.
-    - [ ] ADB-test: open bind popup, click Bind with Access Code,
+    - [x] Generate `patches/SelectMachinePop.cpp.termux.patch`.
+    - [x] ADB-test: open bind popup, click Bind with Access Code,
       verify Connect dialog gets full unobstructed input on IP +
       access code fields.
   - **Done when**: typing in the IP field works without overlap.
