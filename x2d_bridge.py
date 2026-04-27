@@ -447,40 +447,81 @@ def _check_bearer(handler, expected: str | None, host: str) -> bool:
 
 
 def _serve_http(bind: str,
-                get_state: Callable[[], dict | None],
-                get_last_ts: Callable[[], float] | None = None,
+                get_state: Callable[[str], dict | None],
+                get_last_ts: Callable[[str], float] | None = None,
                 max_staleness: float = 30.0,
-                auth_token: str | None = None) -> None:
+                auth_token: str | None = None,
+                printer_names: list[str] | None = None) -> None:
+    """Multi-printer HTTP server (item #36).
+
+    `get_state` and `get_last_ts` now take a printer name (empty string
+    for the default plain `[printer]` section). The HTTP layer parses
+    `?printer=NAME` from the query string and forwards it. Routes:
+
+      GET /printers          → list of configured printer names (JSON)
+      GET /state             → state of default printer
+      GET /state?printer=lab → state of named "lab" printer
+      GET /healthz           → health of default printer
+      GET /healthz?printer=lab → health of named "lab" printer
+    """
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import urllib.parse
 
     host_part, _, port_part = bind.rpartition(":")
     host = host_part or "127.0.0.1"
     port = int(port_part)
+    names = list(printer_names) if printer_names else [""]
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):  # silence default access log
             return
 
+        def _parse_printer(self) -> str:
+            url = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(url.query)
+            return (qs.get("printer", [""])[0] or "")
+
         def do_GET(self):
             if not _check_bearer(self, auth_token, host):
                 return
-            if self.path == "/state":
-                state = get_state()
+            url = urllib.parse.urlparse(self.path)
+            path = url.path
+            if path == "/printers":
+                body = json.dumps({"printers": names}, indent=2).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            printer = self._parse_printer()
+            if printer not in names:
+                err = json.dumps({"error": f"unknown printer {printer!r}",
+                                  "available": names}).encode()
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
+                return
+            if path == "/state":
+                state = get_state(printer)
                 body = json.dumps(state or {}, indent=2).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            elif self.path == "/healthz":
+            elif path == "/healthz":
                 # 200 if we've heard from the printer recently;
                 # 503 if MQTT silently disconnected. Used as a Home
                 # Assistant binary_sensor or a uptime-monitor poll
                 # target. JSON body for diagnostics.
-                last = get_last_ts() if get_last_ts else 0.0
+                last = get_last_ts(printer) if get_last_ts else 0.0
                 age = time.time() - last if last else float("inf")
                 healthy = age <= max_staleness
                 payload = {
+                    "printer":           printer,
                     "healthy":           healthy,
                     "last_message_ts":   last,
                     "last_message_age_s": None if last == 0.0 else round(age, 2),
@@ -500,7 +541,8 @@ def _serve_http(bind: str,
     auth_state = "auth required" if auth_token else \
                  ("OPEN — loopback only" if _is_loopback(host) else "OPEN — exposed; pass --auth-token to require Bearer")
     print(f"[x2d-bridge] HTTP listening on http://{host}:{port}/state "
-          f"(+ /healthz, max-staleness {max_staleness}s; {auth_state})",
+          f"(+ /healthz + /printers, max-staleness {max_staleness}s; "
+          f"{auth_state}; printers={names})",
           file=sys.stderr)
     server.serve_forever()
 
@@ -1876,36 +1918,83 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:
-    creds = Creds.resolve(args)
-    latest_state: dict | None = None
+    """Multi-printer daemon (item #36).
 
-    def on_state(state: dict) -> None:
-        nonlocal latest_state
-        latest_state = state
-        if not args.quiet:
-            print(json.dumps({"ts": time.time(), "state": state}), flush=True)
+    Spawns one X2DClient per printer section in ~/.x2d/credentials. If
+    --printer is passed, only that one is started. State, last_message_ts
+    and pushall polling are tracked per printer. The HTTP server routes
+    `?printer=NAME` to the matching client. Connection failures are
+    isolated: a single unreachable printer doesn't take down the others.
+    """
+    # Determine the set of printers to drive.
+    if args.printer:
+        names_to_run: list[str] = [args.printer]
+    else:
+        names = Creds.list_names()
+        names_to_run = names if names else [""]
+    # Per-printer state cache + clients.
+    states: dict[str, dict | None] = {n: None for n in names_to_run}
 
-    cli = X2DClient(creds, on_state=on_state)
-    cli.connect()
+    def make_on_state(name: str):
+        def on_state(state: dict) -> None:
+            states[name] = state
+            if not args.quiet:
+                print(json.dumps({"ts": time.time(),
+                                  "printer": name,
+                                  "state": state}), flush=True)
+        return on_state
 
-    def _safe_pushall() -> None:
+    clients: dict[str, X2DClient] = {}
+    failed: list[tuple[str, str]] = []
+    for name in names_to_run:
         try:
-            cli.publish({"pushing": {"sequence_id": _next_seq(), "command": "pushall"}})
-        except Exception as e:  # network blip — log and keep the loop alive
-            print(f"[x2d-bridge] pushall publish failed: {e}", file=sys.stderr)
+            ns = argparse.Namespace(ip=None, code=None, serial=None,
+                                    printer=(name or None))
+            creds = Creds.resolve(ns)
+            cli = X2DClient(creds, on_state=make_on_state(name))
+            cli.connect()
+            clients[name] = cli
+            print(f"[x2d-bridge] {name or '<default>'}: connected to {creds.ip}",
+                  file=sys.stderr)
+        except SystemExit as e:
+            failed.append((name, f"creds resolve failed (exit {e.code})"))
+        except Exception as e:
+            failed.append((name, str(e)))
+            print(f"[x2d-bridge] {name or '<default>'}: connect failed: {e} "
+                  f"— other printers continue", file=sys.stderr)
+    if not clients:
+        print(f"[x2d-bridge] no printers reachable: {failed}", file=sys.stderr)
+        return 2
 
-    _safe_pushall()
+    def _safe_pushall(name: str, cli: X2DClient) -> None:
+        try:
+            cli.publish({"pushing": {"sequence_id": _next_seq(),
+                                     "command": "pushall"}})
+        except Exception as e:
+            print(f"[x2d-bridge] {name or '<default>'}: pushall failed: {e}",
+                  file=sys.stderr)
+
+    for name, cli in clients.items():
+        _safe_pushall(name, cli)
 
     if args.http:
+        def get_state(printer: str):
+            return states.get(printer)
+
+        def get_last_ts(printer: str):
+            cli = clients.get(printer)
+            return cli.last_message_ts if cli else 0.0
+
         Thread(target=_serve_http,
-               args=(args.http, lambda: latest_state,
-                     lambda: cli.last_message_ts, float(args.max_staleness),
-                     args.auth_token or None),
+               args=(args.http, get_state, get_last_ts,
+                     float(args.max_staleness),
+                     args.auth_token or None,
+                     list(clients.keys())),
                daemon=True).start()
 
     period = max(1, int(args.interval))
-    print(f"[x2d-bridge] daemon up; polling every {period}s. Ctrl-C / SIGTERM to quit.",
-          file=sys.stderr)
+    print(f"[x2d-bridge] daemon up; {len(clients)} printer(s); polling every "
+          f"{period}s. Ctrl-C / SIGTERM to quit.", file=sys.stderr)
 
     import signal as _signal
     stop = Event()
@@ -1919,8 +2008,13 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     while not stop.is_set():
         if stop.wait(period):
             break
-        _safe_pushall()
-    cli.disconnect()
+        for name, cli in clients.items():
+            _safe_pushall(name, cli)
+    for cli in clients.values():
+        try:
+            cli.disconnect()
+        except Exception:
+            pass
     return 0
 
 

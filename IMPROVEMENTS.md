@@ -642,15 +642,15 @@ The Stop hook drives execution; commit + push between every checkbox.
 
 ### Phase 1 — bridge multi-printer + observability + complete the rumi print (items 36-41)
 
-- [ ] **36. Multi-printer state table in `serve`.** Today the bridge's
+- [x] **36. Multi-printer state table in `serve`.** Today the bridge's
   daemon path is single-printer. Refactor for N.
   - **Sub-tasks**:
-    - [ ] `Creds.list_names()` already returns the named sections;
+    - [x] `Creds.list_names()` already returns the named sections;
       spawn one X2DClient per name.
-    - [ ] Per-printer in-memory state cache.
-    - [ ] HTTP routes get a `?printer=NAME` query param (default to
+    - [x] Per-printer in-memory state cache.
+    - [x] HTTP routes get a `?printer=NAME` query param (default to
       the plain `[printer]` section).
-    - [ ] Live test with 2 named printer sections (one fake unreachable
+    - [x] Live test with 2 named printer sections (one fake unreachable
       for resilience testing).
   - **Done when**: `curl /state?printer=lab` returns lab's state,
     `?printer=living` returns living's.
