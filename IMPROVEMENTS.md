@@ -1207,13 +1207,36 @@ The Stop hook drives execution; commit + push between every checkbox.
     SSDP, etc.). Both #50 unit test + #51 live HA test still pass
     after the entity additions.
 
-- [ ] **53. HA snapshot entity** that grabs a frame on demand or every
+- [x] **53. HA snapshot entity** that grabs a frame on demand or every
   N seconds.
   - **Sub-tasks**:
-    - [ ] Bridge endpoint `/snapshot.jpg` that proxies the latest
-      cam frame.
-    - [ ] HA `image` platform discovery.
+    - [x] Bridge endpoint `/snapshot.jpg` that proxies the latest
+      cam frame. New `_proxy_snapshot()` in `_serve_http`. Pulls
+      `${X2D_CAMERA_URL:-http://127.0.0.1:8766}/cam.jpg` on each
+      request and streams the bytes back. Returns 503 plain-text
+      with the failure reason when the camera daemon is down (HA's
+      image card just keeps the previous frame). `Cache-Control:
+      no-store` so HA never caches a stale shot.
+    - [x] HA `image` platform discovery. `camera_entity()` now
+      registers an `mqtt.image` entity with `image_topic =
+      x2d/<id>/snapshot` and `content_type = image/jpeg`. The
+      publisher's new `_snapshot_loop` thread polls the bridge's
+      `/snapshot.jpg` every `X2D_HA_SNAPSHOT_PERIOD` seconds
+      (default 10) and publishes the JPEG bytes to that topic with
+      `retain=True` so HA always has SOMETHING to render even after
+      a restart. Same wire pattern ha-bambulab uses.
   - **Done when**: HA's image card shows a live-ish snapshot.
+    **Done.** `runtime/ha/test_snapshot.py` end-to-end harness:
+    spawns a synthetic JPEG-serving camera (160×120 solid color,
+    real JFIF), bridge daemon with `X2D_CAMERA_URL` env-overridden
+    at it, in-process amqtt broker, and a real `HAPublisher`
+    pointed at both. Verifies: bridge `/snapshot.jpg` returns the
+    proxied JPEG byte-for-byte; the snapshot loop republishes the
+    same bytes to `x2d/<id>/snapshot` within 5 s; the discovery
+    config has the correct `image_topic` + `content_type` fields
+    HA expects. **9/9 PASS**. The pre-existing #50, #46, and #48
+    test harnesses still pass after the camera-entity rework — no
+    regressions.
 
 - [ ] **54. Multi-printer HA support** — one device per printer
   section in `~/.x2d/credentials`.

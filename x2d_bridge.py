@@ -690,6 +690,8 @@ def _serve_http(bind: str,
     """
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import urllib.parse
+    import urllib.request
+    import urllib.error
 
     host_part, _, port_part = bind.rpartition(":")
     host = host_part or "127.0.0.1"
@@ -768,6 +770,39 @@ def _serve_http(bind: str,
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        def _proxy_snapshot(self) -> None:
+            """Fetch /cam.jpg from the upstream camera daemon and stream
+            it back to the caller. Returns 503 with a plain-text reason
+            if the camera daemon is unreachable; HA's image platform
+            handles the failure gracefully (renders the previous
+            frame). The upstream URL is `$X2D_CAMERA_URL` or
+            `http://127.0.0.1:8766` by default."""
+            cam_base = os.environ.get(
+                "X2D_CAMERA_URL", "http://127.0.0.1:8766").rstrip("/")
+            url = cam_base + "/cam.jpg"
+            try:
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    body = r.read()
+                    ctype = r.headers.get("Content-Type", "image/jpeg")
+            except (urllib.error.URLError, ConnectionError,
+                    TimeoutError, OSError) as e:
+                msg = (f"camera daemon unreachable at {url} ({e}); "
+                       "start `x2d_bridge.py camera --bind 127.0.0.1:8766`")
+                body = msg.encode()
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
 
         def _serve_state_events(self, printer: str) -> None:
             """Server-Sent Events stream pushing the printer's state JSON
@@ -858,6 +893,11 @@ def _serve_http(bind: str,
                     self.end_headers()
                     return
                 self._serve_state_events(printer)
+                return
+            if path == "/snapshot.jpg":
+                # Item #53: proxy the latest /cam.jpg from the camera
+                # daemon. URL is configurable via $X2D_CAMERA_URL.
+                self._proxy_snapshot()
                 return
             if path == "/printers":
                 body = json.dumps({"printers": names}, indent=2).encode()

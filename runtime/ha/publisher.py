@@ -227,19 +227,19 @@ CONTROL_ENTITIES: list[Entity] = [
 ]
 
 
-# Camera entity — published to a real MQTT topic where the publisher
-# pushes JPEG bytes periodically. HA's `mqtt.image` platform requires
-# `image_topic`; we satisfy that with `x2d/<id>/snapshot` and let the
-# next-iteration upload loop in #53 handle the actual byte push.
-# The discovery payload here just registers the entity; bytes start
-# flowing once #53 lands.
-def camera_entity(snapshot_url: str, base_topic: str) -> Entity:
+# Camera entity — JPEG bytes flow through `x2d/<id>/snapshot` on the
+# MQTT broker. The publisher polls the bridge daemon's /snapshot.jpg
+# (which proxies the camera daemon's /cam.jpg, item #53) every
+# `X2D_HA_SNAPSHOT_PERIOD` seconds and republishes the bytes with
+# `retain=True` so HA's image card always has SOMETHING to show even
+# after a restart. ha-bambulab uses the same MQTT-bytes pattern; we
+# match it for parity.
+def camera_entity(_snapshot_url: str, base_topic: str) -> Entity:
     return Entity(
         "image", "snapshot", "Chamber camera",
         "", "", "", "", "mdi:camera",
         extra={"image_topic":   f"{base_topic}/snapshot",
-                "content_type":  "image/jpeg",
-                "url_template":  snapshot_url})
+                "content_type":  "image/jpeg"})
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +298,12 @@ class HAPublisher:
         self._client.will_set(self._availability_topic(), "offline",
                               qos=1, retain=True)
         self._sse_thread: threading.Thread | None = None
+        self._snapshot_thread: threading.Thread | None = None
+        # Snapshot poll cadence (seconds) — once every 10s by default;
+        # HA's image card refreshes within a couple seconds of receiving
+        # the new MQTT bytes.
+        self.snapshot_period = float(
+            os.environ.get("X2D_HA_SNAPSHOT_PERIOD", "10"))
 
     # ----- topics ------------------------------------------------------
     def _state_topic(self) -> str:
@@ -479,6 +485,32 @@ class HAPublisher:
             backoff = min(backoff * 1.5, 15.0)
 
     # ----- lifecycle ---------------------------------------------------
+    def _snapshot_loop(self) -> None:
+        """Item #53: poll the bridge daemon's /snapshot.jpg and
+        republish the bytes to `x2d/<id>/snapshot` so HA's image card
+        always has the latest frame. Cadence is `snapshot_period`
+        seconds. Failures are non-fatal — HA keeps showing the
+        previous frame."""
+        url = self.daemon_url + "/snapshot.jpg"
+        while not self._stop.is_set():
+            try:
+                req = urllib.request.Request(url)
+                if self.daemon_token:
+                    req.add_header("Authorization",
+                                    f"Bearer {self.daemon_token}")
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    if r.status == 200:
+                        body = r.read()
+                        if body and body[:3] == b"\xff\xd8\xff":  # JFIF magic
+                            self._client.publish(
+                                f"{self.base_topic}/snapshot",
+                                payload=body, qos=0, retain=True)
+            except (urllib.error.URLError, urllib.error.HTTPError,
+                    ConnectionError, TimeoutError, OSError) as e:
+                LOG.debug("snapshot poll failed: %s", e)
+            if self._stop.wait(self.snapshot_period):
+                break
+
     def start(self) -> None:
         self._client.connect_async(self.broker_host, self.broker_port,
                                     keepalive=30)
@@ -487,6 +519,10 @@ class HAPublisher:
             target=self._sse_loop, name=f"x2d-ha-sse-{self.printer_name}",
             daemon=True)
         self._sse_thread.start()
+        self._snapshot_thread = threading.Thread(
+            target=self._snapshot_loop,
+            name=f"x2d-ha-snap-{self.printer_name}", daemon=True)
+        self._snapshot_thread.start()
 
     def run_forever(self) -> int:
         self.start()
