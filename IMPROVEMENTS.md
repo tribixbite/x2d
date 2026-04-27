@@ -476,3 +476,432 @@ For every item:
     - [x] README documents the new endpoint alongside MJPEG.
   - **Done when**: HLS playback works end-to-end in a mobile browser
     and survives a 5-min sustained stream.
+
+## Round 3 — feature-complete multi-phase build (items 21-58)
+
+Goal: deliver a Termux-aarch64 BambuStudio + bridge stack that's strictly
+*more* capable than upstream Linux/Win/Mac BambuStudio. Five phases.
+The Stop hook drives execution; commit + push between every checkbox.
+
+### Phase 0 — source-patch every GUI bug we've been hacking around (items 21-35)
+
+- [ ] **21. Source-patch `GUI_App::config_wizard_startup` to return false.**
+  - **Sub-tasks**:
+    - [ ] Edit `bs-bionic/src/slic3r/GUI/GUI_App.cpp:7748` so the function
+      body is `return false;` and nothing else.
+    - [ ] Generate `patches/GUI_App.cpp.termux.patch` from the diff.
+    - [ ] Rebuild bambu-studio (incremental ninja).
+    - [ ] Verify wizard doesn't pop on fresh launch via ADB.
+    - [ ] Delete `patch_bambu_skip_wizard.py` + its install.sh hook +
+      its preload_gtkinit.c stub — all replaced by the source patch.
+  - **Done when**: launching bambu-studio with no AppConfig never opens
+    the WebGuideDialog AND no runtime patcher / LD_PRELOAD shim symbol
+    is involved.
+
+- [ ] **22. Source-patch BBLTopbar so Print plate button stacks vertically
+  on narrow displays.**
+  - **Sub-tasks**:
+    - [ ] Read `bs-bionic/src/slic3r/GUI/MainFrame.cpp:1820-1845` to
+      understand the slice/print panel layout.
+    - [ ] Replace `wxBoxSizer(wxHORIZONTAL)` with vertical-stack-on-narrow
+      logic (wrap into a wxGridSizer or check `display_w < 1200` and
+      orient vertical).
+    - [ ] Generate `patches/MainFrame.cpp.termux.patch` (extending the
+      existing one).
+    - [ ] Rebuild + ADB verify both Slice plate AND Print plate visible
+      and clickable on 1080-wide display.
+  - **Done when**: ADB tap on Print plate fires `EVT_GLTOOLBAR_PRINT_PLATE`
+    and opens the SelectMachine dialog.
+
+- [ ] **23. Source-patch SelectMachinePop modal management** so the bind
+  popup auto-dismisses when child Connect dialog opens AND z-orders below
+  it.
+  - **Sub-tasks**:
+    - [ ] Trace the bind-popup lifecycle in `SelectMachinePop.cpp`.
+    - [ ] On "Bind with Access Code" click: hide the popup before
+      showing the Connect dialog; restore on Connect close (or kill it).
+    - [ ] Generate `patches/SelectMachinePop.cpp.termux.patch`.
+    - [ ] ADB-test: open bind popup, click Bind with Access Code,
+      verify Connect dialog gets full unobstructed input on IP +
+      access code fields.
+  - **Done when**: typing in the IP field works without overlap.
+
+- [ ] **24. Source-patch the wxWidgets sizer assertion `CheckExpectedParentIs`
+  in `sizer.cpp:851`.** Fires 5x per slice operation; each requires a
+  manual Continue click.
+  - **Sub-tasks**:
+    - [ ] Trace which sizer/widget pair triggers it. From the message:
+      `wxStaticText("Main Extruder")` parented to wrong wxWindow.
+    - [ ] Fix the parent in the BambuStudio source (likely
+      Plater.cpp / Sidebar code) to match what the sizer expects.
+    - [ ] Verify by slicing a model and confirming no assertion popups.
+  - **Done when**: Slice plate runs to completion silently.
+
+- [ ] **25. Fix 3D viewport blank rendering on llvmpipe / wxGLCanvas.**
+  Currently the Prepare-tab 3D viewport is empty white.
+  - **Sub-tasks**:
+    - [ ] Reproduce: load rumi_frame.stl, observe blank viewport.
+    - [ ] Add `WX_GL_DOUBLEBUFFER` + correct EGL surface attrs to the
+      wxGLCanvas init.
+    - [ ] Verify via ADB screenshot that the model mesh renders.
+  - **Done when**: 3D bed grid + loaded model are both visible in
+    Prepare tab.
+
+- [ ] **26. File chooser default path = `$HOME` (not `/`).**
+  Currently the Ctrl+O dialog opens at `/` which triggers the gvfs
+  permission popup every time.
+  - **Sub-tasks**:
+    - [ ] Patch `wxFileDialog` callsites in BambuStudio to pass
+      `wxStandardPaths::Get().GetDocumentsDir()` as default path.
+    - [ ] Verify no gvfs popup on Ctrl+O after fresh launch.
+  - **Done when**: file chooser opens in `~` not `/`.
+
+- [ ] **27. Suppress gvfs `Could not read the contents of /` popup.**
+  Even after #26 it can still trigger from other paths.
+  - **Sub-tasks**:
+    - [ ] Set `G_USER_DATA_DIR` + `XDG_DATA_HOME` in `run_gui.sh` to
+      `$HOME` so gvfs doesn't probe `/`.
+    - [ ] Or if needed, patch wx-gtk to not enumerate the root.
+    - [ ] Verify zero popups on first launch.
+  - **Done when**: cold start of bambu-studio shows no gvfs error
+    modals at all.
+
+- [ ] **28. Source-patch wxLocale en_US fallback** to replace the
+  `LD_PRELOAD` shim that overrides `wxLocale::IsAvailable`.
+  - **Sub-tasks**:
+    - [ ] Edit `bs-bionic/src/slic3r/GUI/GUI_App.cpp` to skip the
+      problematic `wxLocale::IsAvailable` check on bionic.
+    - [ ] Remove the `_ZN8wxLocale11IsAvailableEi` symbol from
+      `runtime/preload_gtkinit.c`.
+    - [ ] Verify GUI launches with no "Switching language" modal.
+  - **Done when**: preload_gtkinit.c no longer needs wxLocale shims
+    AND the GUI starts normally.
+
+- [ ] **29. AMS auto-detected after SSDP** — Prepare tab still shows
+  "AMS: Not installed" even though the X2D has a 4-slot AMS.
+  - **Sub-tasks**:
+    - [ ] Bridge: emit AMS state in initial pushall after SSDP NOTIFY.
+    - [ ] Shim: forward AMS state to `OnMachineNewVersionAvailableFn`
+      or whatever DeviceManager listens on for AMS init.
+    - [ ] GUI: verify AMS panel populates with 4 slots + colors
+      automatically on launch.
+  - **Done when**: Prepare tab's AMS field shows "4 slots" with colors
+    matching the printer's actual AMS state, no manual click needed.
+
+- [ ] **30. Network combobox lists SSDP X2D under "Other Device".**
+  Currently it shows nothing — only Bind options. The SSDP-discovered
+  device should appear as a one-click selectable item.
+  - **Sub-tasks**:
+    - [ ] Trace SelectMachinePop's "Other Device" populate logic.
+    - [ ] Wire the DeviceManager.localMachineList into that populate
+      path so SSDP-discovered devices show.
+    - [ ] Verify ADB: open bind popup, see "x2d (192.168.0.138)"
+      under Other Device, click → auto-fills Connect dialog.
+  - **Done when**: LAN-discovered printer is one click away from
+    being added.
+
+- [ ] **31. Checkboxes in File preferences don't work.** User-reported.
+  - **Sub-tasks**:
+    - [ ] Reproduce: open File menu → Preferences, try toggling any
+      checkbox.
+    - [ ] Trace the wxCheckBox event binding — likely event being
+      eaten by parent panel or wrong event handler chain.
+    - [ ] Patch source to fix the binding.
+    - [ ] Verify ADB: every checkbox in Preferences toggles state.
+  - **Done when**: Preferences dialog checkboxes save state on toggle.
+
+- [ ] **32. Clicking item in "Recently Opened" history on Home tab does
+  nothing.** User-reported.
+  - **Sub-tasks**:
+    - [ ] Reproduce: load a project, restart bambu, click the project
+      name in Recently Opened — currently no-op.
+    - [ ] Trace the Recently Opened click handler.
+    - [ ] Fix the bound event so clicking actually opens the project.
+    - [ ] Verify ADB: click an item, project loads.
+  - **Done when**: Recently Opened items reload on click.
+
+- [ ] **33. Build plate preview missing.** User-reported. Probably the
+  same wxGLCanvas root cause as #25.
+  - **Sub-tasks**:
+    - [ ] Verify whether #25 fixes this too OR it's a separate plate-
+      preview rendering path.
+    - [ ] Fix whatever's separately broken.
+    - [ ] Verify: the build plate appears in Prepare tab's 3D viewport
+      with grid lines + bounding box.
+  - **Done when**: build plate visible underneath any loaded model.
+
+- [ ] **34. Delete `patch_bambu_skip_wizard.py`** and its references
+  in install.sh + run_gui.sh.
+  - **Sub-tasks**:
+    - [ ] Remove the script from repo + dist staging.
+    - [ ] Remove install.sh's "applying wizard-skip binary patch" block.
+    - [ ] Remove preload_gtkinit.c's stub for the symbol.
+    - [ ] Update README + QUICKSTART.md to drop the script reference.
+  - **Done when**: no traces of the binary patcher remain anywhere.
+
+- [ ] **35. Final Phase 0 ADB verification.** Every Phase 0 fix
+  composed end-to-end on a fresh device install.
+  - **Sub-tasks**:
+    - [ ] Wipe `~/.config/BambuStudioInternal/` on device.
+    - [ ] Run install.sh from scratch.
+    - [ ] Launch bambu-studio.
+    - [ ] Verify: no wizard, no asserts, no gvfs popup, full Prepare
+      tab with 3D viewport + AMS + presets, full Device tab with live
+      X2D state.
+  - **Done when**: a brand new user can launch and use the GUI with
+    zero papercuts.
+
+### Phase 1 — bridge multi-printer + observability + complete the rumi print (items 36-41)
+
+- [ ] **36. Multi-printer state table in `serve`.** Today the bridge's
+  daemon path is single-printer. Refactor for N.
+  - **Sub-tasks**:
+    - [ ] `Creds.list_names()` already returns the named sections;
+      spawn one X2DClient per name.
+    - [ ] Per-printer in-memory state cache.
+    - [ ] HTTP routes get a `?printer=NAME` query param (default to
+      the plain `[printer]` section).
+    - [ ] Live test with 2 named printer sections (one fake unreachable
+      for resilience testing).
+  - **Done when**: `curl /state?printer=lab` returns lab's state,
+    `?printer=living` returns living's.
+
+- [ ] **37. Per-printer `last_message_ts` persistence.**
+  - **Sub-tasks**:
+    - [ ] Replace single `~/.x2d/last_message_ts` with per-name files
+      `~/.x2d/last_message_ts_<NAME>` (empty NAME for default).
+    - [ ] Restore at X2DClient init.
+    - [ ] /healthz?printer=NAME reports per-printer age.
+  - **Done when**: kill+restart daemon → each printer's
+    /healthz?printer reports its own real age.
+
+- [ ] **38. Prometheus `/metrics` endpoint.**
+  - **Sub-tasks**:
+    - [ ] Per-printer gauges: bed_temp, nozzle_temp, mc_percent,
+      ams_humidity, etc.
+    - [ ] Counters: total_messages, mqtt_disconnects, ssdp_notifies.
+    - [ ] Compatible with Prometheus scrape format (text exposition).
+  - **Done when**: Prometheus `up{job=x2d}` is 1, all printer state
+    fields scraped as gauges.
+
+- [ ] **39. Structured request log** for the bridge HTTP server.
+  - **Sub-tasks**:
+    - [ ] One JSON line per request: ts, method, path, status,
+      duration_ms, printer (if applicable), authed (bool).
+    - [ ] Goes to `~/.x2d/access.log` with the same 1 MiB rotation
+      as bridge.log.
+  - **Done when**: every HTTP hit gets one structured log line.
+
+- [ ] **40. Bridge auto-connect on SSDP-creds match (Phase 0.5
+  carryover, kept for resilience).**
+  - **Sub-tasks**:
+    - [ ] When SSDP NOTIFY's dev_id matches a creds section's serial,
+      bridge opens the MQTT subscription proactively.
+    - [ ] Cached state replays on every shim subscribe.
+    - [ ] Even if Phase 0 fixes the GUI Connect path, this gives
+      sub-second StatusPanel population on launch.
+  - **Done when**: Device tab shows live state immediately on launch
+    without ANY user action in the GUI.
+
+- [ ] **41. Print the rumi frame end-to-end via the GUI.**
+  - **Sub-tasks**:
+    - [ ] Open `rumi_frame.stl` (or `rumi.gcode.3mf`) in Prepare.
+    - [ ] Slice plate → no assertion popups.
+    - [ ] AMS slot 3 (brown/orange) auto-mapped.
+    - [ ] Click Print plate → SelectMachine dialog → X2D shown.
+    - [ ] Send → upload + start_print → physical print starts.
+    - [ ] Watch StatusPanel populate with live progress.
+  - **Done when**: photo of the rumi_frame.stl printing on the X2D
+    in PLA from AMS slot 3, taken via ADB screenshot of the camera
+    tab if streaming works OR documented physical observation.
+
+### Phase 2 — MCP + WebRTC + thin web UI (items 42-49)
+
+- [ ] **42. MCP server stdio module** at `runtime/mcp/server.py`.
+  - **Sub-tasks**:
+    - [ ] Wraps every bridge op as an MCP tool: status, pause, resume,
+      stop, gcode, set_temp, chamber_light, ams_load/unload, jog,
+      camera_snapshot, list_printers, etc.
+    - [ ] Conforms to MCP spec (modelcontextprotocol.io).
+    - [ ] Includes resources: latest state JSON, latest camera frame.
+  - **Done when**: `python -m mcp_x2d` over stdio responds to MCP
+    `tools/list` with the full toolset.
+
+- [ ] **43. Claude Desktop config docs** for adding the MCP server.
+  - **Sub-tasks**:
+    - [ ] `docs/MCP.md` with `claude_desktop_config.json` snippet.
+    - [ ] Per-platform install notes (Termux, Linux, mac).
+  - **Done when**: a user can copy-paste a config block and have
+    Claude Desktop driving prints within 60s.
+
+- [ ] **44. Live-test MCP from Claude Desktop / equivalent client.**
+  - **Sub-tasks**:
+    - [ ] Run a test client (could be a Python script using
+      mcp-python-sdk).
+    - [ ] Issue tool calls: status → pause → resume → snapshot.
+    - [ ] Verify each one fires the corresponding bridge action.
+  - **Done when**: every tool round-trips successfully.
+
+- [ ] **45. WebRTC streaming via `aiortc`.**
+  - **Sub-tasks**:
+    - [ ] Add `aiortc` to dependencies.
+    - [ ] New camera transport that pushes the same ffmpeg JPEG
+      frames into a WebRTC track.
+    - [ ] HTTP signaling endpoint: `/cam.webrtc/offer` for SDP
+      exchange.
+    - [ ] Sub-second latency vs HLS's 6-8s.
+  - **Done when**: a browser at `http://<phone>:8765/cam.webrtc.html`
+    shows the chamber stream with <1s latency.
+
+- [ ] **46. Thin web UI at `:8765/`** — mobile-friendly status +
+  camera + print controls.
+  - **Sub-tasks**:
+    - [ ] Single-page HTML at `web/index.html` served by the bridge.
+    - [ ] Live state via SSE (`/state.events`).
+    - [ ] Embedded camera (HLS or WebRTC selectable).
+    - [ ] Buttons for pause/resume/stop/lights/heat presets.
+    - [ ] AMS color swatches with click-to-select.
+  - **Done when**: opening the bridge URL in mobile Safari/Chrome
+    gives a fully functional remote-control surface for the printer
+    without launching bambu-studio.
+
+- [ ] **47. Mobile-friendly UI testing** on the S25 Ultra.
+  - **Sub-tasks**:
+    - [ ] Layout works in portrait + landscape.
+    - [ ] Touch targets ≥ 44px.
+    - [ ] Camera doesn't blow the data quota.
+  - **Done when**: full thumbs-driven control from a mobile browser.
+
+- [ ] **48. Auth flow for the web UI** — bearer token gate, with a
+  one-time login screen that stores the token in localStorage.
+  - **Sub-tasks**:
+    - [ ] Login page that POSTs to a new `/auth/check` endpoint.
+    - [ ] Token persistence in localStorage.
+    - [ ] Auto-attach Authorization header to all subsequent requests.
+  - **Done when**: opening the web UI on a fresh browser prompts for
+    token, then never again until token rotates.
+
+- [ ] **49. Phase 2 end-to-end smoke test.** Drive a print from
+  Claude Desktop via MCP while watching the WebRTC stream in a
+  browser.
+  - **Sub-tasks**:
+    - [ ] All three surfaces alive concurrently.
+    - [ ] No deadlocks, no thread leaks.
+  - **Done when**: works for 10+ minutes with no degradation.
+
+### Phase 3 — Home Assistant integration (items 50-54)
+
+- [ ] **50. MQTT auto-discovery payloads** matching Home Assistant's
+  expectations.
+  - **Sub-tasks**:
+    - [ ] One MQTT topic per printer state field (bed_temp,
+      nozzle_temp, mc_percent, etc.).
+    - [ ] HA `homeassistant/sensor/<dev_id>/<field>/config` discovery
+      messages.
+    - [ ] Per-AMS-slot color/material entities.
+    - [ ] Camera entity (snapshot URL).
+    - [ ] Lights, fans as switch entities mapped to MQTT cmds.
+  - **Done when**: a fresh HA install auto-discovers ALL X2D entities
+    with no YAML.
+
+- [ ] **51. Live test against a real Home Assistant install.**
+  - **Sub-tasks**:
+    - [ ] Set up HA in a container or on the x86 box.
+    - [ ] Configure MQTT broker (mosquitto).
+    - [ ] Point bridge's HA module at the broker.
+    - [ ] Verify entities populate with live values.
+  - **Done when**: HA dashboard shows all printer state in real time.
+
+- [ ] **52. Better than ha-bambulab feature comparison.**
+  - **Sub-tasks**:
+    - [ ] Catalog ha-bambulab's entities.
+    - [ ] Confirm we have parity OR explicit improvements.
+    - [ ] Document the migration path for ha-bambulab users.
+  - **Done when**: feature matrix in `docs/HA_VS_BAMBULAB.md` shows
+    ours strictly ≥.
+
+- [ ] **53. HA snapshot entity** that grabs a frame on demand or every
+  N seconds.
+  - **Sub-tasks**:
+    - [ ] Bridge endpoint `/snapshot.jpg` that proxies the latest
+      cam frame.
+    - [ ] HA `image` platform discovery.
+  - **Done when**: HA's image card shows a live-ish snapshot.
+
+- [ ] **54. Multi-printer HA support** — one device per printer
+  section in `~/.x2d/credentials`.
+  - **Sub-tasks**:
+    - [ ] Each named printer gets its own HA Device.
+    - [ ] Entities namespaced by printer.
+    - [ ] Tested with 2 printers.
+  - **Done when**: HA shows 2 separate printer devices with all
+    entities each.
+
+### Phase 4 — features upstream BambuStudio doesn't have (items 55-58)
+
+- [ ] **55. Multi-printer print queue** in the GUI's Device tab.
+  - **Sub-tasks**:
+    - [ ] Source patch: add a "Queue" sub-tab.
+    - [ ] Drag-and-drop ordering of pending jobs across printers.
+    - [ ] Bridge maintains the queue + dispatches jobs as printers
+      idle.
+  - **Done when**: queue 3 jobs across 2 printers, watch them
+    auto-dispatch.
+
+- [ ] **56. Snapshot / timelapse browser** sub-tab.
+  - **Sub-tasks**:
+    - [ ] Bridge auto-records a frame every 30s during prints.
+    - [ ] GUI sub-tab shows thumbnails per print job.
+    - [ ] One-click stitch into MP4 timelapse via ffmpeg.
+  - **Done when**: completed print's timelapse playable from the GUI.
+
+- [ ] **57. AI assistant panel** in the GUI talking to the local MCP
+  server.
+  - **Sub-tasks**:
+    - [ ] Embedded panel with text input.
+    - [ ] User types: "What's the chamber temp?" → MCP roundtrip →
+      reply renders.
+    - [ ] Tool calls visible in a transcript.
+  - **Done when**: natural-language print control works in the GUI.
+
+- [ ] **58. Real-time AMS color sync UI** — when slot 3 has color
+  AF7933 loaded, the GUI's filament picker auto-selects matching
+  filament profile.
+  - **Sub-tasks**:
+    - [ ] Bridge maps tray color → curated filament profile name.
+    - [ ] GUI listens via shim event and auto-selects.
+  - **Done when**: physically changing AMS slot color updates GUI
+    filament selection within 5s.
+
+### Phase 5 — docs + release (items 59-62)
+
+- [ ] **59. README reorg** for the feature-complete product.
+  - **Sub-tasks**:
+    - [ ] Top-level "What is this" + "Who is this for".
+    - [ ] Feature matrix vs upstream + ha-bambulab.
+    - [ ] Quick install / quick start.
+    - [ ] Links to per-feature docs.
+  - **Done when**: a first-time visitor knows what we are within 60s.
+
+- [ ] **60. Per-feature docs in `docs/`**:
+  MCP, WebRTC, web UI, Home Assistant, multi-printer, queue, AI panel.
+  - **Sub-tasks**:
+    - [ ] One markdown file per feature.
+    - [ ] Each with overview, install/config, examples.
+  - **Done when**: every feature has a reachable doc.
+
+- [ ] **61. Demo media** — short MP4s of each major flow.
+  - **Sub-tasks**:
+    - [ ] CLI demo (status + print).
+    - [ ] GUI demo (slice + print + monitor).
+    - [ ] MCP demo (Claude Desktop driving).
+    - [ ] Web UI demo.
+    - [ ] HA dashboard demo.
+  - **Done when**: 5 short MP4s in `docs/demos/`.
+
+- [ ] **62. v1.0.0 release.**
+  - **Sub-tasks**:
+    - [ ] Tag, build, upload tarball + sha + per-platform notes.
+    - [ ] Announcement post.
+    - [ ] CHANGELOG with everything since v0.1.0.
+  - **Done when**: GitHub Releases shows v1.0.0 with full asset set.
