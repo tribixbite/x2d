@@ -1523,12 +1523,27 @@ The Stop hook drives execution; commit + push between every checkbox.
     exactly what the project is, who it's for, and how it compares
     to the alternatives — well under a minute of reading.
 
-- [ ] **60. Per-feature docs in `docs/`**:
+- [x] **60. Per-feature docs in `docs/`**:
   MCP, WebRTC, web UI, Home Assistant, multi-printer, queue, AI panel.
   - **Sub-tasks**:
-    - [ ] One markdown file per feature.
-    - [ ] Each with overview, install/config, examples.
-  - **Done when**: every feature has a reachable doc.
+    - [x] One markdown file per feature. Now in `docs/`:
+      `QUICKSTART.md`, `WEB_UI.md`, `MCP.md`, `WEBRTC.md`,
+      `HA.md`, `HA_VS_BAMBULAB.md`, `MULTI_PRINTER.md`,
+      `QUEUE.md`, `TIMELAPSE.md`, `ASSISTANT.md`, `COLORSYNC.md`
+      — 11 docs total covering every Phase 1-4 feature.
+    - [x] Each with overview, install/config, examples. Every new
+      doc follows the same skeleton: one-paragraph "what", an
+      "Enable" or "API" / "Setup" code block users can copy-paste,
+      a list of HTTP routes / config fields / phrase triggers
+      (whichever applies), and a tail link to the `runtime/.../
+      test_*.py` harness with the PASS count so a developer can
+      jump straight from doc → reference test.
+  - **Done when**: every feature has a reachable doc. **Done.**
+    All 13 README doc links resolve (verified by grepping
+    `[docs/*.md](docs/*.md)` patterns and stat-ing each path).
+    The README's §"Per-feature documentation" link table is the
+    discovery surface; each doc cross-links back to neighbours
+    (e.g. multi-printer → HA, web UI → MCP).
 
 - [ ] **61. Demo media** — short MP4s of each major flow.
   - **Sub-tasks**:
