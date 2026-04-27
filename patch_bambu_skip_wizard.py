@@ -33,6 +33,22 @@ from pathlib import Path
 # Patch payload: `mov w0, #0` + `ret`  (8 bytes, little-endian aarch64)
 PATCH = struct.pack("<II", 0x52800000, 0xd65f03c0)
 
+# Where INSIDE the function we write the patch. NOT the function start —
+# the prologue does load-bearing setup (frame allocation, GUI state init)
+# that the rest of BambuStudio's startup expects to have happened.
+# Patching at the prologue makes the GUI render with empty Prepare/Device
+# panels because the AppConfig / preset state hasn't been touched.
+#
+# The empirically-correct site is +PATCH_OFFSET_FROM_PROLOGUE bytes into
+# the function: the function has done its setup, the call to run_wizard()
+# has been DECIDED but not yet EXECUTED, and `mov w0, #0; ret` aborts the
+# wizard cleanly while leaving GUI state intact.
+#
+# Verified live on Termux: GUI's Prepare tab shows the Printer + Process +
+# Quality panels and Device tab shows the agent MonitorPanel only with
+# this offset; patching at the prologue (0x00) breaks both.
+PATCH_OFFSET_FROM_PROLOGUE = 0x78
+
 # SHORT prologue (8 bytes): the strict aarch64 function-prologue
 # boilerplate. Many functions share this — used only as a fast pre-filter.
 ORIG_HEAD_VARIANTS: list[bytes] = [
@@ -40,12 +56,11 @@ ORIG_HEAD_VARIANTS: list[bytes] = [
     bytes.fromhex("ffc301d1fd7b06a9"),  # alt stp offset
 ]
 
-# LONG signatures (32 bytes): prologue + register-save sequence.
-# These are unique enough across the binary to nail down the right
-# function. Add a new entry whenever a rebuild changes the byte
-# sequence — extract via:
+# LONG signatures (32 bytes): prologue + register-save sequence at the
+# function start. We use these to VERIFY we found the right function;
+# the actual patch lands at +PATCH_OFFSET_FROM_PROLOGUE bytes later.
+# Add a new entry whenever a rebuild changes the byte sequence — extract via:
 #     dd if=bambu-studio.orig bs=1 skip=$prologue_offset count=32 | xxd
-# Multiple known-good signatures so we survive minor rebuilds.
 LONG_SIGNATURES: list[bytes] = [
     # Termux build 02.06.00.51 (NDK r28c + clang -O2):
     # ff c3 01 d1   sub  sp, sp, #0x70
@@ -64,10 +79,9 @@ LONG_SIGNATURES: list[bytes] = [
     ),
 ]
 
-# Fast-path file offset; if the long signature matches here we patch
-# in-place without scanning. Becomes obsolete after rebuilds — that's
-# fine, the scan handles drift.
-LEGACY_OFFSET = 0x0000000002477c9c
+# Fast-path file offset to the FUNCTION START (where the long signature
+# lives). The patch is applied at this offset + PATCH_OFFSET_FROM_PROLOGUE.
+LEGACY_PROLOGUE_OFFSET = 0x0000000002477c9c
 
 # Scan range: the function lives inside .text well after the dynamic
 # loader stubs at the start. Bound the scan so we don't melt CPU on
@@ -94,14 +108,14 @@ def _matches_short_prologue(buf: bytes, off: int) -> bool:
 
 
 def _scan_prologue(buf: bytes) -> int:
-    """Find config_wizard_startup by scanning for the long signature.
+    """Find the config_wizard_startup PROLOGUE (function start) by
+    scanning for the long signature. Returns the prologue's file offset
+    (NOT the patch offset — caller must add PATCH_OFFSET_FROM_PROLOGUE).
 
     Strategy: find every short-prologue match (cheap), then verify each
     against the full 32-byte signature. Only signature matches qualify.
-    Tie-break by proximity to LEGACY_OFFSET so a small rebuild drift
-    matches the same function.
-
-    Returns the file offset of the best candidate, or -1 if none exist."""
+    Tie-break by proximity to LEGACY_PROLOGUE_OFFSET so a small rebuild
+    drift matches the same function."""
     qualified: list[int] = []
     for short in ORIG_HEAD_VARIANTS:
         i = SCAN_START
@@ -115,7 +129,7 @@ def _scan_prologue(buf: bytes) -> int:
             i = j + 4
     if not qualified:
         return -1
-    qualified.sort(key=lambda x: abs(x - LEGACY_OFFSET))
+    qualified.sort(key=lambda x: abs(x - LEGACY_PROLOGUE_OFFSET))
     return qualified[0]
 
 
@@ -126,16 +140,16 @@ def main(path: Path) -> int:
     backup = path.with_suffix(path.suffix + ".orig")
     raw = path.read_bytes()
 
-    # Fast path: legacy offset already shows the patch.
-    if _is_already_patched(raw, LEGACY_OFFSET):
-        print(f"already patched at legacy offset 0x{LEGACY_OFFSET:x}: {path}")
+    legacy_patch_offset = LEGACY_PROLOGUE_OFFSET + PATCH_OFFSET_FROM_PROLOGUE
+    # Fast path: already patched at the legacy patch site.
+    if _is_already_patched(raw, legacy_patch_offset):
+        print(f"already patched at legacy offset 0x{legacy_patch_offset:x}: {path}")
         return 0
 
-    target_offset: int
-    if _matches_long_signature(raw, LEGACY_OFFSET):
-        target_offset = LEGACY_OFFSET
-        print(f"long signature match at legacy offset 0x{LEGACY_OFFSET:x} — "
-              f"patching there")
+    prologue_offset: int
+    if _matches_long_signature(raw, LEGACY_PROLOGUE_OFFSET):
+        prologue_offset = LEGACY_PROLOGUE_OFFSET
+        print(f"long signature match at legacy prologue 0x{LEGACY_PROLOGUE_OFFSET:x}")
     else:
         scanned = _scan_prologue(raw)
         if scanned < 0:
@@ -149,13 +163,15 @@ def main(path: Path) -> int:
                   " function's prologue and add to LONG_SIGNATURES",
                   file=sys.stderr)
             return 3
-        if _is_already_patched(raw, scanned):
-            print(f"already patched at scanned offset 0x{scanned:x}: {path}")
-            return 0
-        target_offset = scanned
-        drift = target_offset - LEGACY_OFFSET
-        print(f"long-signature scan found function at 0x{target_offset:x} "
-              f"(legacy 0x{LEGACY_OFFSET:x}, drift {drift:+d} bytes)")
+        prologue_offset = scanned
+        drift = prologue_offset - LEGACY_PROLOGUE_OFFSET
+        print(f"long-signature scan found function at 0x{prologue_offset:x} "
+              f"(legacy 0x{LEGACY_PROLOGUE_OFFSET:x}, drift {drift:+d} bytes)")
+
+    target_offset = prologue_offset + PATCH_OFFSET_FROM_PROLOGUE
+    if _is_already_patched(raw, target_offset):
+        print(f"already patched at scanned offset 0x{target_offset:x}: {path}")
+        return 0
 
     if not backup.exists():
         backup.write_bytes(raw)
@@ -165,7 +181,8 @@ def main(path: Path) -> int:
         f.seek(target_offset)
         f.write(PATCH)
     print(f"patched {path}: config_wizard_startup -> return false "
-          f"(offset 0x{target_offset:x})")
+          f"(prologue 0x{prologue_offset:x}, patch site 0x{target_offset:x} "
+          f"= prologue + 0x{PATCH_OFFSET_FROM_PROLOGUE:x})")
     return 0
 
 
