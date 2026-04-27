@@ -1028,10 +1028,20 @@ def _serve_http(bind: str,
                     target=int(slot) - 1,         # 0-indexed in mqtt
                     curr_temp=int(body.get("curr_temp", 215)),
                     tar_temp=int(body.get("tar_temp", 215)))
+            elif verb == "gcode":
+                line = (body or {}).get("line", "")
+                if not isinstance(line, str) or not line.strip():
+                    self._send_json({"error":
+                        "expected {\"line\": \"<g-code>\"}"}, status=400)
+                    return
+                payload = _print_cmd(
+                    "gcode_line",
+                    param=line if line.endswith("\n") else line + "\n")
             else:
                 self._send_json({"error": f"unknown control verb {verb!r}",
                                   "supported": ["pause", "resume", "stop",
-                                                "light", "temp", "ams_load"]},
+                                                "light", "temp", "ams_load",
+                                                "gcode"]},
                                   status=404)
                 return
             status, resp = self._publish_via_client(printer, payload)

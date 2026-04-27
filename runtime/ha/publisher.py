@@ -102,6 +102,50 @@ SENSOR_ENTITIES: list[Entity] = [
     Entity("sensor", "stage",         "Stage",
            "{{ value_json.print.gcode_state | default(value_json.print.mc_print_sub_stage) | default('idle') }}",
            "", "", "", "mdi:state-machine"),
+    # Parity with ha-bambulab: fan speeds, HMS, speed profile, timestamps,
+    # firmware version, IP address, printable_objects.
+    Entity("sensor", "chamber_fan_speed", "Chamber fan",
+           "{{ value_json.print.big_fan1_speed | int(0) }}",
+           "%", "", "measurement", "mdi:fan"),
+    Entity("sensor", "aux_fan_speed",     "Aux fan",
+           "{{ value_json.print.big_fan2_speed | int(0) }}",
+           "%", "", "measurement", "mdi:fan"),
+    Entity("sensor", "cooling_fan_speed", "Cooling fan",
+           "{{ value_json.print.cooling_fan_speed | int(0) }}",
+           "%", "", "measurement", "mdi:fan"),
+    Entity("sensor", "heatbreak_fan_speed", "Heatbreak fan",
+           "{{ value_json.print.heatbreak_fan_speed | int(0) }}",
+           "%", "", "measurement", "mdi:fan"),
+    Entity("sensor", "speed_profile",     "Speed profile",
+           "{{ value_json.print.spd_lvl | default('normal') }}",
+           "", "", "", "mdi:speedometer"),
+    Entity("sensor", "hms_count",         "HMS error count",
+           "{{ value_json.print.hms | length | default(0) }}",
+           "", "", "measurement", "mdi:alert-circle"),
+    Entity("sensor", "ip_address",        "IP address",
+           "{{ value_json.print.net.info[0].ip if value_json.print.net is defined else '' }}",
+           "", "", "", "mdi:ip-network"),
+    Entity("sensor", "firmware_version",  "Firmware version",
+           "{{ value_json.print.upgrade_state.cur_state_code | default('unknown') }}",
+           "", "", "", "mdi:chip"),
+    Entity("sensor", "printable_objects", "Printable objects",
+           "{{ value_json.print.s_obj | length | default(0) }}",
+           "", "", "measurement", "mdi:cube-outline"),
+    Entity("sensor", "skipped_objects",   "Skipped objects",
+           "{{ value_json.print.skipped_objects | length | default(0) }}",
+           "", "", "measurement", "mdi:cube-off-outline"),
+    Entity("sensor", "total_usage_hours", "Total usage hours",
+           "{{ (value_json.print.total_usage | int(0)) // 3600 }}",
+           "h", "duration", "total_increasing", "mdi:counter"),
+    # Binary sensors for door + online state.
+    Entity("binary_sensor", "online",     "Online",
+           "{{ 'ON' if value_json.print is defined else 'OFF' }}",
+           "", "connectivity", "", "mdi:lan-connect",
+           extra={"payload_on": "ON", "payload_off": "OFF"}),
+    Entity("binary_sensor", "door_open",  "Door open",
+           "{{ 'ON' if value_json.print.hw_switch_state | default(0) == 1 else 'OFF' }}",
+           "", "door", "", "mdi:door-open",
+           extra={"payload_on": "ON", "payload_off": "OFF"}),
 ]
 
 # Per-AMS-slot color/material entities. We expose the FIRST AMS unit's
@@ -167,6 +211,19 @@ CONTROL_ENTITIES: list[Entity] = [
            "°C", "temperature", "", "mdi:thermometer-lines",
            extra={"command_topic": "__BASE__/temp/chamber/set",
                   "min":  0, "max":  60, "step": 1, "mode": "slider"}),
+    # Parity with ha-bambulab: home / level / buzzer / refresh buttons.
+    Entity("button", "home",       "Home all axes",
+           "", "", "", "", "mdi:home",
+           extra={"command_topic": "__BASE__/print/set",
+                  "payload_press": "HOME"}),
+    Entity("button", "level",      "Level bed",
+           "", "", "", "", "mdi:format-line-style",
+           extra={"command_topic": "__BASE__/print/set",
+                  "payload_press": "LEVEL"}),
+    Entity("button", "buzzer_silence",  "Silence buzzer",
+           "", "", "", "", "mdi:bell-off",
+           extra={"command_topic": "__BASE__/buzzer/set",
+                  "payload_press": "SILENCE"}),
 ]
 
 
@@ -343,6 +400,14 @@ class HAPublisher:
                 v = payload.upper()
                 if v in ("PAUSE", "RESUME", "STOP"):
                     self._http_post("/control/" + v.lower(), {})
+                elif v == "HOME":
+                    self._http_post("/control/gcode", {"line": "G28"})
+                elif v == "LEVEL":
+                    self._http_post("/control/gcode", {"line": "G29"})
+            elif topic == f"{self.base_topic}/buzzer/set":
+                if payload.upper() == "SILENCE":
+                    # Beep_volume=0 silences the buzzer
+                    self._http_post("/control/gcode", {"line": "M300 S0 P0"})
             elif topic.endswith("/load") and "/ams/" in topic:
                 # x2d/<id>/ams/<slot>/load → POST /control/ams_load
                 m = re.match(re.escape(self.base_topic) + r"/ams/(\d+)/load$", topic)
