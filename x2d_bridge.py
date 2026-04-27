@@ -2333,6 +2333,34 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_webrtc(args: argparse.Namespace) -> int:
+    """Run the WebRTC video gateway (item #45). Pulls JPEG frames from
+    a running camera daemon and re-publishes them as a live VP8/H.264
+    track over WebRTC. Sub-second latency vs HLS's ~6-8 s.
+
+    The signaling endpoint is POST /cam.webrtc/offer; the static viewer
+    page is GET /cam.webrtc.html.
+    """
+    try:
+        from runtime.webrtc.server import run as _run_webrtc
+    except ImportError as e:
+        print(f"[x2d-bridge] webrtc deps missing: {e}\n"
+              f"  Install: python3.12 -m pip install --no-build-isolation "
+              f"aiortc 'av==13.1.0' aiohttp\n"
+              f"  See docs/MCP.md §2 for Termux-specific libsrtp build steps.",
+              file=sys.stderr)
+        return 2
+    host_part, _, port_part = args.bind.rpartition(":")
+    host = host_part or "127.0.0.1"
+    port = int(port_part)
+    stun = [s.strip() for s in args.stun.split(",") if s.strip()] \
+        if args.stun else None
+    return _run_webrtc(host=host, port=port,
+                       camera_url=args.camera_url,
+                       frame_hz=float(args.frame_hz),
+                       stun_servers=stun)
+
+
 def cmd_printers(_args: argparse.Namespace) -> int:
     """List every [printer] / [printer:NAME] section in ~/.x2d/credentials.
     Output is JSON: `{"printers": [{"name": "", "ip": "...", "serial": "..."}, …]}`
@@ -2586,6 +2614,25 @@ def main() -> int:
              "the empty string.",
     )
     pl.set_defaults(fn=cmd_printers)
+
+    wr = sub.add_parser(
+        "webrtc",
+        help="WebRTC gateway: pulls /cam.jpg from the camera daemon "
+             "and re-publishes as a live VP8 track over WebRTC. "
+             "Browser viewer at /cam.webrtc.html.",
+    )
+    wr.add_argument("--bind", default="127.0.0.1:8765",
+                    help="HTTP signaling bind addr (default 127.0.0.1:8765)")
+    wr.add_argument("--camera-url", default="http://127.0.0.1:8766",
+                    help="Upstream camera daemon URL "
+                         "(default http://127.0.0.1:8766)")
+    wr.add_argument("--frame-hz", default=os.environ.get(
+        "X2D_WEBRTC_FRAME_HZ", "30"),
+                    help="JPEG poll rate from the camera daemon")
+    wr.add_argument("--stun", default=os.environ.get(
+        "X2D_WEBRTC_ICE_STUN", "stun:stun.l.google.com:19302"),
+                    help="Comma-separated STUN URLs (empty disables)")
+    wr.set_defaults(fn=cmd_webrtc)
 
     sv = sub.add_parser(
         "serve",

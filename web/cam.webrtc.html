@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>X2D chamber camera (WebRTC)</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111416;
+      --bg-soft: #1a1f23;
+      --fg: #e8eaed;
+      --fg-muted: #8c95a0;
+      --accent: #66e08c;
+      --bad: #ff7676;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.6rem 0.9rem;
+      background: var(--bg-soft);
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+      border-bottom: 1px solid #2a2f33;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; margin: 0; }
+    .status { font-size: 0.85rem; color: var(--fg-muted); }
+    .status .ok { color: var(--accent); }
+    .status .bad { color: var(--bad); }
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.5rem;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      max-height: calc(100dvh - 7rem);
+      background: #000;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    footer {
+      padding: 0.6rem 0.9rem;
+      background: var(--bg-soft);
+      display: flex;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: var(--fg-muted);
+      border-top: 1px solid #2a2f33;
+    }
+    button {
+      padding: 0.45rem 0.9rem;
+      background: var(--accent);
+      color: #08130d;
+      border: 0;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button[disabled] { opacity: 0.5; cursor: default; }
+    .pill {
+      padding: 0.15rem 0.55rem;
+      background: #262d33;
+      border-radius: 999px;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>X2D chamber camera</h1>
+    <span class="status" id="status">disconnected</span>
+    <span style="margin-left:auto;">
+      <button id="connect">connect</button>
+      <button id="disconnect" disabled>disconnect</button>
+    </span>
+  </header>
+  <main>
+    <video id="video" autoplay playsinline muted></video>
+  </main>
+  <footer>
+    <span class="pill" id="fps">— fps</span>
+    <span class="pill" id="rtt">RTT —</span>
+    <span class="pill" id="bitrate">— kbps</span>
+    <span style="opacity:0.7;">aiortc + JPEG → VP8 over WebRTC</span>
+  </footer>
+  <script src="cam.webrtc.js"></script>
+</body>
+</html>

@@ -120,6 +120,28 @@ else
     c_green "paho-mqtt already importable"
 fi
 
+# Optional: install the WebRTC stack so `x2d_bridge.py webrtc` works.
+# Skip silently if deps fail to build — the rest of the toolkit still
+# functions without WebRTC. On Termux this needs libsrtp built from
+# source; see docs/WEBRTC.md.
+if ! python3 -c 'import aiortc, av, aiohttp' 2>/dev/null; then
+    c_blue "(optional) pip install aiortc/av/aiohttp for WebRTC streaming…"
+    if pip install --no-build-isolation --no-deps \
+            'aiortc==1.10.1' 'av==13.1.0' 'aiohttp' \
+            'pyee' 'aioice' 'pylibsrtp<1.0' 'google-crc32c' \
+            'pyOpenSSL' 'ifaddr' 2>&1 | tail -3; then
+        if python3 -c 'import aiortc, av, aiohttp' 2>/dev/null; then
+            c_green "WebRTC stack installed"
+        else
+            c_blue "WebRTC stack partially installed; non-fatal"
+        fi
+    else
+        c_blue "WebRTC stack not installed (non-fatal); see docs/WEBRTC.md"
+    fi
+else
+    c_green "aiortc / av / aiohttp already importable"
+fi
+
 # ---------------------------------------------------------------------------
 # Tarball fetch + verify + unpack
 # ---------------------------------------------------------------------------
