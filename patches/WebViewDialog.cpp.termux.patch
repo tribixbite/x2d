@@ -1,0 +1,37 @@
+diff --git a/src/slic3r/GUI/WebViewDialog.cpp b/src/slic3r/GUI/WebViewDialog.cpp
+index f4d88e7..23c09a3 100644
+--- a/src/slic3r/GUI/WebViewDialog.cpp
++++ b/src/slic3r/GUI/WebViewDialog.cpp
+@@ -194,6 +194,14 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
+         wxLogError("Could not init m_browser");
+         return;
+     }
++    // Termux source patch (item #32): the upstream code Bound
++    // wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED but never called
++    // AddScriptMessageHandler — without that registration the
++    // window.wx.postMessage() bridge from JS to native is silently
++    // dead, so Recently-Opened click handlers in the home page WebView
++    // never reached request_open_project. Match the pattern used by
++    // WipeTowerDialog::AddScriptMessageHandler("wipingDialog").
++    m_browser->AddScriptMessageHandler("wx");
+ 
+     // Makerworld webview
+     m_browserMW = WebView::CreateWebView(m_online_container, "about:blank");
+@@ -201,6 +209,8 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
+         wxLogError("Could not init  m_browserMW");
+         return;
+     }
++    m_browserMW->AddScriptMessageHandler("wx");
++    m_browserLeft->AddScriptMessageHandler("wx");
+     m_browserMW->Hide();
+     SetMakerworldModelID("");
+     m_onlinefirst    = false;
+@@ -932,7 +942,7 @@ void WebViewPanel::SendMakerlabList(  )
+             CallAfter([this, body] {
+                 auto body2 = from_u8(body);
+ 
+-                json jLab = json::parse(body2);
++                json jLab = json::parse(body2.ToStdString());
+                 if (jLab.contains("list"))
+                 {
+                     int nSize = jLab["list"].size();

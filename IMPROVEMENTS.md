@@ -610,14 +610,14 @@ The Stop hook drives execution; commit + push between every checkbox.
     - [x] Verify ADB: every checkbox in Preferences toggles state.
   - **Done when**: Preferences dialog checkboxes save state on toggle.
 
-- [ ] **32. Clicking item in "Recently Opened" history on Home tab does
+- [x] **32. Clicking item in "Recently Opened" history on Home tab does
   nothing.** User-reported.
   - **Sub-tasks**:
-    - [ ] Reproduce: load a project, restart bambu, click the project
+    - [x] Reproduce: load a project, restart bambu, click the project
       name in Recently Opened — currently no-op.
-    - [ ] Trace the Recently Opened click handler.
-    - [ ] Fix the bound event so clicking actually opens the project.
-    - [ ] Verify ADB: click an item, project loads.
+    - [x] Trace the Recently Opened click handler.
+    - [x] Fix the bound event so clicking actually opens the project.
+    - [x] Verify ADB: click an item, project loads.
   - **Done when**: Recently Opened items reload on click.
 
 - [ ] **33. Build plate preview missing.** User-reported. Probably the
