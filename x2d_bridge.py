@@ -3380,19 +3380,85 @@ def cmd_cloud_login(args: argparse.Namespace) -> int:
         result = cloud_client.CloudClient.dry_run_check(region=region)
         print(json.dumps(result, indent=2))
         return 0 if result["ok"] else 1
-    if not args.email or not args.password:
-        print("--email and --password are required (omit them only with --dry-run)",
-              file=sys.stderr)
+
+    # Allow email/password from CLI, env, or interactive stdin (handy
+    # when the user doesn't want creds in shell history).
+    email = args.email or os.environ.get("BAMBU_EMAIL", "")
+    password = args.password or os.environ.get("BAMBU_PASSWORD", "")
+    if not email:
+        try:
+            email = input("Bambu account email: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\naborted", file=sys.stderr)
+            return 1
+    if not password:
+        import getpass
+        try:
+            password = getpass.getpass("Password: ")
+        except (EOFError, KeyboardInterrupt):
+            print("\naborted", file=sys.stderr)
+            return 1
+    if not email or not password:
+        print("email and password are required", file=sys.stderr)
         return 2
+
+    def prompt_tfa(_email: str) -> str:
+        print(f"\nThis account requires 2FA. Open your authenticator "
+              f"app, then enter the 6-digit code:")
+        return input("2FA code: ").strip()
+
+    def prompt_email_code(_email: str) -> str:
+        print(f"\nA verification code was emailed to {_email}. Enter it:")
+        return input("Email code: ").strip()
+
     cli = cloud_client.CloudClient.load_or_anonymous()
     try:
-        cli.login(args.email, args.password, region=args.region)
+        cli.login(email, password, region=args.region,
+                  two_factor_resolver=prompt_tfa,
+                  email_code_resolver=prompt_email_code)
     except cloud_client.CloudError as e:
         print(f"login failed: {e}", file=sys.stderr)
         return 1
+    expires_in = int(max(0, cli.session.expires_at - time.time()))
+    expires_str = time.strftime('%Y-%m-%d %H:%M:%S',
+                                time.localtime(cli.session.expires_at))
     print(f"logged in as user_id={cli.session.user_id or '?'} "
           f"(region={cli.session.region}, "
-          f"expires_at={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(cli.session.expires_at))})")
+          f"expires_at={expires_str}, "
+          f"valid for {expires_in // 86400}d {(expires_in % 86400) // 3600}h)")
+    print(f"session saved to {cloud_client.SESSION_PATH}")
+    return 0
+
+
+def cmd_cloud_printers(args: argparse.Namespace) -> int:
+    """List the printers bound to the logged-in Bambu account."""
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        print("not logged in — run `x2d_bridge.py cloud-login` first",
+              file=sys.stderr)
+        return 1
+    try:
+        devices = cli.get_bound_devices()
+    except cloud_client.CloudError as e:
+        print(f"cloud API call failed: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(devices, indent=2))
+    else:
+        if not devices:
+            print("(no printers bound to this account)")
+            return 0
+        print(f"{len(devices)} printer(s) bound to user "
+              f"{cli.session.user_id}:")
+        for d in devices:
+            online = "online " if d.get("online") else "offline"
+            name = d.get("name") or d.get("dev_name") or "?"
+            dev_id = d.get("dev_id") or d.get("device_id") or "?"
+            model = d.get("dev_product_name") or d.get("dev_model_name") or "?"
+            access_code = (d.get("dev_access_code") or "").strip()
+            print(f"  [{online}] {name}  serial={dev_id}  "
+                  f"model={model}  access_code={access_code or '(hidden)'}")
     return 0
 
 
@@ -3605,6 +3671,16 @@ def main() -> int:
         help="Wipe ~/.x2d/cloud_session.json.",
     )
     cli_logout.set_defaults(fn=cmd_cloud_logout)
+
+    cli_printers = sub.add_parser(
+        "cloud-printers",
+        help="List Bambu cloud-bound printers for the logged-in account "
+             "(requires `cloud-login` first). Shows dev_id, online status, "
+             "model, and access_code so you can populate ~/.x2d/credentials.",
+    )
+    cli_printers.add_argument("--json", action="store_true",
+                              help="Raw JSON output instead of the human table")
+    cli_printers.set_defaults(fn=cmd_cloud_printers)
 
     pl = sub.add_parser(
         "printers",

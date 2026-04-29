@@ -38,7 +38,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # Bambu has two regional clouds. The login endpoint disambiguates from
 # the email's TLD; users can also force one via X2D_REGION=us|cn.
@@ -55,7 +55,30 @@ REGIONS: dict[str, dict[str, str]] = {
 
 SESSION_PATH = Path.home() / ".x2d" / "cloud_session.json"
 DEFAULT_TIMEOUT = 15
-USER_AGENT = "BambuStudio/02.06.00.51 x2d-cloud-client/0.1"
+
+# Mimic OrcaSlicer's headers — Bambu's API sometimes 403s on bare requests
+# behind Cloudflare. Verified working set from ha-bambulab and openhab-addons
+# (Apr 2026). X-BBL-Region is intentionally NOT included; region is purely
+# host-based (api.bambulab.com vs .cn) per all third-party clients.
+USER_AGENT = "bambu_network_agent/01.09.05.01"
+BBL_HEADERS = {
+    "User-Agent":            USER_AGENT,
+    "X-BBL-Client-Name":     "OrcaSlicer",
+    "X-BBL-Client-Type":     "slicer",
+    "X-BBL-Client-Version":  "01.09.05.51",
+    "X-BBL-Language":        "en-US",
+    "X-BBL-OS-Type":         "linux",
+    "X-BBL-OS-Version":      "6.6.0",
+    "X-BBL-Agent-Version":   "01.09.05.01",
+    "X-BBL-Executable-info": "{}",
+    "X-BBL-Agent-OS-Type":   "linux",
+    "Accept":                "application/json",
+    "Accept-Encoding":       "gzip, deflate",
+}
+
+# TFA (TOTP) endpoint lives on bambulab.com (not api.bambulab.com) and
+# returns the token in a Set-Cookie header instead of JSON.
+TFA_URL = "https://bambulab.com/api/sign-in/tfa"
 
 
 @dataclass
@@ -115,13 +138,13 @@ def _request(method: str,
              *,
              body: dict | None = None,
              headers: dict | None = None,
-             timeout: float = DEFAULT_TIMEOUT) -> dict:
+             timeout: float = DEFAULT_TIMEOUT,
+             return_cookies: bool = False) -> dict:
     """One HTTP round-trip returning parsed JSON. Raises CloudError on
-    non-2xx or unparseable response."""
-    h = {
-        "User-Agent":   USER_AGENT,
-        "Accept":       "application/json",
-    }
+    non-2xx or unparseable response. With return_cookies=True, the
+    parsed JSON is augmented with a synthetic '_cookies' dict (used by
+    the TFA endpoint, which delivers the token via Set-Cookie)."""
+    h = dict(BBL_HEADERS)
     if body is not None:
         h["Content-Type"] = "application/json"
     if headers:
@@ -135,11 +158,38 @@ def _request(method: str,
     ctx = ssl.create_default_context()
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
-            payload = r.read().decode("utf-8", errors="replace")
-            try:
-                return json.loads(payload)
-            except json.JSONDecodeError as e:
-                raise CloudError(f"non-JSON response: {payload[:200]}", r.status, payload) from e
+            raw = r.read()
+            # Decode gzip/deflate manually since urllib doesn't auto-handle
+            # Accept-Encoding when the server does honor it.
+            enc = (r.headers.get("Content-Encoding") or "").lower()
+            if enc == "gzip":
+                import gzip
+                raw = gzip.decompress(raw)
+            elif enc == "deflate":
+                import zlib
+                raw = zlib.decompress(raw)
+            payload = raw.decode("utf-8", errors="replace")
+            cookies = {}
+            if return_cookies:
+                # urllib doesn't expose Set-Cookie nicely; parse manually.
+                from http.cookies import SimpleCookie
+                for h_val in r.headers.get_all("Set-Cookie") or []:
+                    sc = SimpleCookie()
+                    sc.load(h_val)
+                    for k, m in sc.items():
+                        cookies[k] = m.value
+            # Empty body is legal for some endpoints (e.g. TFA returns 200
+            # with token in cookie and no body). Synthesize a dict.
+            if not payload.strip():
+                out = {}
+            else:
+                try:
+                    out = json.loads(payload)
+                except json.JSONDecodeError as e:
+                    raise CloudError(f"non-JSON response: {payload[:200]}", r.status, payload) from e
+            if return_cookies:
+                out["_cookies"] = cookies
+            return out
     except urllib.error.HTTPError as e:
         body_str = ""
         try:
@@ -157,6 +207,23 @@ def _request(method: str,
                          status=e.code, body=body_str) from e
     except urllib.error.URLError as e:
         raise CloudError(f"network failure on {method} {url}: {e.reason}") from e
+
+
+def _username_from_jwt(token: str) -> str:
+    """Extract the `username` claim from a Bambu JWT (HS256-signed by
+    Bambu, so we don't verify — just decode the unprotected payload)."""
+    try:
+        import base64 as _b64
+        # JWT = header.payload.signature; payload is base64url-encoded JSON.
+        parts = token.split(".")
+        if len(parts) < 2:
+            return ""
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = _b64.urlsafe_b64decode(parts[1] + pad).decode()
+        d = json.loads(payload)
+        return str(d.get("username") or d.get("uid") or d.get("sub") or "")
+    except Exception:
+        return ""
 
 
 class CloudClient:
@@ -249,53 +316,145 @@ class CloudClient:
                     "endpoint": url,
                     "message": f"network error: {e.reason}"}
 
-    def login(self, email: str, password: str, region: str | None = None) -> None:
-        """Exchange email + password for an access_token / refresh_token
-        pair. Region defaults to "us" unless email ends with .cn or
-        the user passes region="cn"."""
-        if not region:
-            region = "cn" if email.lower().endswith(".cn") else "us"
-        if region not in REGIONS:
-            raise ValueError(f"unknown region {region!r}; expected us|cn")
-        url = REGIONS[region]["api"] + "/v1/user-service/user/login"
-        # Bambu's login API accepts both account/password (legacy) and
-        # email/password. We send the email under both keys to maximise
-        # compatibility across endpoint revisions.
-        body = {
-            "account":  email,
-            "email":    email,
-            "password": password,
-            "apiError": "",
-        }
-        r = _request("POST", url, body=body)
-        access  = r.get("accessToken")  or r.get("access_token")  or ""
-        refresh = r.get("refreshToken") or r.get("refresh_token") or ""
-        # Bambu's response sometimes carries `expiresIn` (seconds) and
-        # sometimes `expiresAt` (epoch). Handle both, default to 1h ttl
-        # if missing entirely.
-        expires_in = r.get("expiresIn") or r.get("expires_in")
-        expires_at = r.get("expiresAt") or r.get("expires_at")
-        if isinstance(expires_at, (int, float)) and expires_at > 0:
-            expiry = float(expires_at)
-        elif isinstance(expires_in, (int, float)) and expires_in > 0:
-            expiry = time.time() + float(expires_in)
-        else:
-            expiry = time.time() + 3600
-        if not access:
-            raise CloudError("login response missing access_token", body=str(r))
+    def _resolve_region(self, email: str, region: str | None) -> str:
+        if region:
+            if region not in REGIONS:
+                raise ValueError(f"unknown region {region!r}; expected us|cn")
+            return region
+        env = os.environ.get("X2D_REGION", "").strip().lower()
+        if env in REGIONS:
+            return env
+        # Bambu's accounts are global but the API host is regional. Default
+        # to .com (US/EU/Asia-ex-CN) unless the email TLD says otherwise.
+        return "cn" if email.lower().endswith(".cn") else "us"
+
+    def _commit_session(self, region: str, access: str, refresh: str,
+                        expires_at: float, raw: dict) -> None:
+        """Take a successful-login response and persist it as the active
+        session. Centralised so the password / email-code / TFA paths all
+        end up with identical session objects."""
+        # Username from JWT is more reliable than the inconsistent
+        # userId/uid response fields.
+        uid = _username_from_jwt(access)
+        if not uid:
+            uid = str(raw.get("userId") or raw.get("uid") or "")
         self.session = Session(
             access_token=access,
             refresh_token=refresh,
-            expires_at=expiry,
-            user_id=str(r.get("userId") or r.get("uid") or ""),
+            expires_at=expires_at,
+            user_id=uid,
             region=region,
-            extra={k: v for k, v in r.items()
+            extra={k: v for k, v in raw.items()
                    if k not in {"accessToken", "access_token",
                                 "refreshToken", "refresh_token",
                                 "expiresIn", "expires_in",
-                                "expiresAt", "expires_at"}},
+                                "expiresAt", "expires_at",
+                                "_cookies"}},
         )
         self.save()
+
+    def _expiry_from_response(self, r: dict) -> float:
+        expires_in = r.get("expiresIn") or r.get("expires_in")
+        expires_at = r.get("expiresAt") or r.get("expires_at")
+        if isinstance(expires_at, (int, float)) and expires_at > 0:
+            return float(expires_at)
+        if isinstance(expires_in, (int, float)) and expires_in > 0:
+            return time.time() + float(expires_in)
+        # Bambu tokens last ~3 months in practice; default conservative
+        # ttl of 1h forces a refresh probe sooner.
+        return time.time() + 3600
+
+    def login(self, email: str, password: str,
+              region: str | None = None,
+              *,
+              two_factor_resolver: Callable[[str], str] | None = None,
+              email_code_resolver: Callable[[str], str] | None = None) -> None:
+        """Exchange email + password for an access_token / refresh_token
+        pair. Region defaults to "us" unless email ends with .cn or
+        the user passes region="cn".
+
+        If the account requires 2FA (TOTP) or email-code verification,
+        the matching resolver callback is invoked with a hint string and
+        must return the 6-digit code. Pass None to fail-fast on those
+        paths instead.
+        """
+        region = self._resolve_region(email, region)
+        url = REGIONS[region]["api"] + "/v1/user-service/user/login"
+        # Bambu's login API uses `account` (legacy field name).
+        # `apiError` is harmless empty per ha-bambulab.
+        body = {"account": email, "password": password, "apiError": ""}
+        r = _request("POST", url, body=body)
+        access = r.get("accessToken") or r.get("access_token") or ""
+        if access:
+            self._commit_session(
+                region, access,
+                r.get("refreshToken") or r.get("refresh_token") or "",
+                self._expiry_from_response(r), r)
+            return
+
+        login_type = (r.get("loginType") or "").lower()
+        if login_type == "verifycode":
+            # Email-code flow: send the code, prompt for it, re-POST login.
+            self._send_email_code(region, email)
+            if not email_code_resolver:
+                raise CloudError(
+                    "account requires email verification code; pass "
+                    "email_code_resolver=callback or use cli interactively",
+                    status=200, body=str(r))
+            code = email_code_resolver(email)
+            self._submit_email_code(region, email, code)
+            return
+        if login_type == "tfa":
+            tfa_key = r.get("tfaKey") or ""
+            if not tfa_key:
+                raise CloudError("loginType=tfa but no tfaKey in response",
+                                 status=200, body=str(r))
+            if not two_factor_resolver:
+                raise CloudError(
+                    "account requires 2FA TOTP code; pass "
+                    "two_factor_resolver=callback or use cli interactively",
+                    status=200, body=str(r))
+            code = two_factor_resolver(email)
+            self._submit_tfa_code(region, tfa_key, code)
+            return
+        # Anything else is genuinely broken auth.
+        raise CloudError(
+            "login response missing accessToken and unknown loginType",
+            body=str(r))
+
+    def _send_email_code(self, region: str, email: str) -> None:
+        url = REGIONS[region]["api"] + "/v1/user-service/user/sendemail/code"
+        _request("POST", url, body={"email": email, "type": "codeLogin"})
+
+    def _submit_email_code(self, region: str, email: str, code: str) -> None:
+        url = REGIONS[region]["api"] + "/v1/user-service/user/login"
+        r = _request("POST", url, body={"account": email, "code": code})
+        access = r.get("accessToken") or r.get("access_token") or ""
+        if not access:
+            raise CloudError(
+                "email-code login response missing accessToken",
+                body=str(r))
+        self._commit_session(
+            region, access,
+            r.get("refreshToken") or r.get("refresh_token") or "",
+            self._expiry_from_response(r), r)
+
+    def _submit_tfa_code(self, region: str, tfa_key: str, code: str) -> None:
+        # TFA endpoint is on bambulab.com (not api.bambulab.com), and the
+        # token comes back in a Set-Cookie header instead of JSON. The
+        # CN region's TFA endpoint is bambulab.cn (if it exists at all);
+        # ha-bambulab uses the .com host for both regions so we mirror it.
+        r = _request("POST", TFA_URL,
+                     body={"tfaKey": tfa_key, "tfaCode": code},
+                     return_cookies=True)
+        token = (r.get("_cookies") or {}).get("token") or ""
+        if not token:
+            raise CloudError("TFA response missing token cookie", body=str(r))
+        self._commit_session(
+            region, access=token,
+            refresh="",  # TFA path doesn't issue a refresh token
+            expires_at=time.time() + 90 * 86400,  # ~3 months, observed default
+            raw=r)
 
     def refresh(self) -> None:
         """Exchange the refresh_token for a new access_token. Raises
