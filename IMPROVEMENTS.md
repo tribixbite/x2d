@@ -1831,3 +1831,31 @@ v1.0 ship-readiness was never gated on them.
 
   Files touched: none yet — research only. Bridge updates queued pending
   resolution of 84033547.
+
+  **Update — additional probing (same session):**
+
+  Decoded the X2D's `printer_cert` chain returned during install: `CN=<serial>`
+  signed by `CN=BBL Device CA N6-V2` (intermediate) signed by `CN=BBL CA2 RSA`
+  (root). Bambu's PEN OID arc is `1.3.6.1.4.1.1666250441` (verified via
+  iana.org). The X2D's device cert carries Bambu-custom extensions
+  identifying device type (`.1.3 = "Printer"`, `.1.4 = "N6-V2"`) — the
+  factory app-type certs almost certainly carry `.1.3 = "App"` analogues.
+
+  Installing a self-signed cert that claims `Issuer = CN=BBL Device CA N6-V2`
+  and carries the App-type custom extensions still returns `result: SUCCESS`
+  with `printer_cert` echo, but the trust list never grows past three
+  entries — every subsequent install gets a SUCCESS reply but no list change.
+  Discovered fourth error code: `84033548` returned when signing with a
+  factory cert_id (vs `84033547` with our user-installed). The firmware
+  distinguishes "user-pool cert, sig fails verify" from "factory-pool cert,
+  sig fails verify"; neither pool will accept our signature without the
+  matching priv key, and our installed cert appears to be in a
+  registered-but-not-authoritative side pool that doesn't gate sig
+  verification.
+
+  **Conclusion**: cracking LAN `print.*` via self-signed cert install hits a
+  hard wall at the firmware's authoritative-cert validation step. The path
+  forward is the official Bambu cloud cert-mint flow:
+  `GET /v1/iot-service/api/user/applications/{appToken}/cert?aes256=…`
+  (per bambu-mcp's RE'd cloud-api docs). That's the OAuth+bind path the
+  user asked about. Pivoting to implement it next as item #67.
