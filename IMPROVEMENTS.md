@@ -1757,3 +1757,77 @@ v1.0 ship-readiness was never gated on them.
   against ours to identify the missing auth field. Until then, manual
   start-from-printer-touchscreen is the only way to start a print on
   this X2D from a LAN-only setup.
+
+* **#66 X2D LAN cert install — `app_cert_install` MQTT command discovered.**
+  Major progress on #65. Methodical probing of the X2D's MQTT `security.*`
+  command surface (subscribed to `/report`, published various `{"security":
+  {"command":"X","type":"app",...}}` payloads, observed which echoed back
+  "security command not support" vs other errors) yielded one previously
+  undocumented LAN-mode capability:
+
+  - `security.app_cert_list` (already known via bambu-mcp's Frida captures
+    from Bambu Handy) returns the printer's current trust set:
+    ```
+    cert_ids: [
+      "4a63194e9c2427366567a8da2530a777CN=GLOF3813734089.bambulab.com",
+      "77bcfb6303214f046175eb6681a46d83CN=GLOF3813734089.bambulab.com"
+    ]
+    ```
+    Two factory-installed entries on this firmware (X2D 01.01.00.00).
+    Both have 32-hex (MD5) fingerprints under the GLOF3813734089 issuer.
+    Our leaked `GLOF...-524a37c80000c6a6a274a47b3281` Bambu Connect cert
+    is NOT on the list — confirms Agent A's research that the leaked cert
+    can sign `system.*` only because that path doesn't actually verify
+    signatures (`json wrong format` on unsigned ledctrl == payload-shape
+    error, not verify-failed).
+
+  - `security.app_cert_install` (NEW, no public reference found) **adds
+    a cert to the trust list, gated only by the bblp/access_code MQTT
+    auth — no OAuth / cloud / account-bind required.** Schema discovered
+    by sending `{"command":"app_cert_install"}` and watching error
+    progressions:
+    1. `{}` → `"no app_cert"`  (field name `app_cert` required)
+    2. `{app_cert: ""}` → `"app_cert value is null"` (must be non-empty)
+    3. `{app_cert: "<b64 PEM>"}` → `"no crl"` (CRL field required)
+    4. `{app_cert: "<b64 PEM>", crl: "<b64 PEM>"}` → `result: SUCCESS`,
+       printer responds with its own X.509 device cert in `printer_cert`
+       (subject CN=`<serial>`, issuer `BBL Device CA N6-V2`, RSA-4096).
+
+    A self-signed cert with subject `CN=GLOF3813734089.bambulab.com` plus
+    a self-issued matching CRL was accepted; the trust list grew to three
+    entries:
+    ```
+    026b36b4d7c696d25910c4ecc90ac210f2661eb8CN=GLOF3813734089.bambulab.com  (NEW)
+    4a63194e9c2427366567a8da2530a777CN=GLOF3813734089.bambulab.com           (factory)
+    77bcfb6303214f046175eb6681a46d83CN=GLOF3813734089.bambulab.com           (factory)
+    ```
+    The new fingerprint is 40-hex (SHA1 of the cert DER), versus the 32-hex
+    (MD5) factory entries. Hash-algo selection appears tied to cert version
+    or signature algorithm.
+
+  - With the cert installed, signing `print.pause` with `cert_id` =
+    `026b36b4...CN=GLOF...` advanced the firmware error from `84033545`
+    ("cert not in trust list") to `84033547` (separate sig-verify failure).
+    So the cert lookup succeeds but the signature does not verify against
+    the looked-up cert's pubkey, despite using the same RSA priv key that
+    signed both the cert and the message. Tested variants that all still
+    fail: PSS padding, SHA1/SHA512, sort_keys, sign_string="" placeholder,
+    inner-only signing, header-first ordering. Still pending: signing scheme
+    where the cert is CA-signed (not self-signed) — the firmware may treat
+    self-signed certs as "registrable but not authoritative".
+
+  Bambu Handy APK static extraction was attempted (~127MB compressed,
+  Flutter Dart AOT + multiple obfuscation layers including a packed
+  `assets/l6a18f19c_*.so` loader that decrypts `assets/kqkticwjgzy.dat`
+  at runtime). No PEM/DER private keys nor "GLOF" / "bambulab" string
+  literals visible in any native lib. Heavy-protection RE → would need
+  Frida live-hook on a rooted Android, out of scope on this Termux phone.
+
+  Practical takeaway: **LAN-only `print.*` is now ONE step away from
+  working without any cloud interaction.** Cracking the exact bytes that
+  the firmware verifies the signature over (or proving CA-chain validity
+  is required) is the remaining puzzle. Worth ~1 more session of probing
+  before falling back to OAuth+cloud.
+
+  Files touched: none yet — research only. Bridge updates queued pending
+  resolution of 84033547.
