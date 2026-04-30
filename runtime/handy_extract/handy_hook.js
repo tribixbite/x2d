@@ -347,6 +347,28 @@ function installAntiAntiDebug() {
   //   3. Hard cap at HARD_LIMIT total exceptions; once exceeded,
   //      uninstall the handler and let the next signal propagate to
   //      the OS for a clean crash + tombstone (better than a hang).
+  // Locate pthread_exit at install time so the exception handler can
+  // redirect Thread-2's PC to it. This is the killer feature: the
+  // Promon shield's tamper-die clears all registers + lr=0 then BR x0
+  // (where x0=0xdead5019), so there's NO valid return to recover to.
+  // Memory-dump analysis (path #4, runtime/handy_extract/dump_unpacker.sh)
+  // confirmed: 141 BR x0 sites in the unpacked shield region; the
+  // 0xdead5019 magic is constructed at runtime via XOR-swap arithmetic
+  // so static patching is infeasible.
+  //
+  // Fix: redirect the dying thread's PC to pthread_exit so ONLY that
+  // thread dies, not the whole process. pthread_exit(NULL) terminates
+  // the calling thread via direct syscall; safe to call even with
+  // corrupted GP registers because we set x0=NULL explicitly.
+  let _pthread_exit_addr = null;
+  for (const m of Process.enumerateModules()) {
+    try {
+      const a = m.findExportByName('pthread_exit');
+      if (a) { _pthread_exit_addr = a; break; }
+    } catch (e) {}
+  }
+  A('pthread_exit @ ' + _pthread_exit_addr);
+
   let _excCount = 0;
   const _excLogMax = 16;
   const _excHardLimit = 256;
@@ -392,15 +414,27 @@ function installAntiAntiDebug() {
         ctx.pc = lr;
         return true;
       }
-      // LR is null/zero/clearly invalid. PC+=4 walks the unmapped page
-      // 4 bytes at a time and produces 64+ further faults before reaching
-      // anything meaningful (which it never does — magic-PC pages are
-      // never mapped). Don't bother. Bail on the first invalid-lr
-      // exception and let the kernel deliver SIGSEGV — the process will
-      // die with a clean tombstone, far better diagnosis than a long
-      // PC-walk leading to the same outcome.
-      A(`!! exception #${_excCount} ${t} @ ${addrStr} — invalid lr=${lr}, propagating signal (process will be killed)`);
-      return false; // not handled — let kernel kill the process
+      // LR is null/zero/clearly invalid. The shield's tamper-die path
+      // clears all registers + zeroes lr before BR x0.
+      //
+      // Tested approach: redirect PC to pthread_exit so the dying
+      // thread terminates cleanly without killing the process.
+      // OUTCOME: Thread-2 died fine, but Bambu's main thread then
+      // futex-waited forever on a signal that Thread-2 was supposed
+      // to broadcast (the shield expects Thread-2 to publish a
+      // "no-tamper" status). With Thread-2 gone, main thread blocks
+      // indefinitely (verified via /proc/PID/syscall = 98 (futex_wait)
+      // on address 0x70c8215cc0). Verdict: pthread_exit redirect
+      // FREEZES Bambu instead of killing it — strictly worse than
+      // letting SIGBUS propagate.
+      //
+      // Reverting to bail-fast: return false on first invalid-lr
+      // exception, kernel delivers SIGSEGV, process dies cleanly,
+      // user sees a tombstone, can restart. Mitm-proxy path captures
+      // crypto in subsequent fresh runs without needing the gadget
+      // armed at all.
+      A(`!! exception #${_excCount} ${t} @ ${addrStr} — invalid lr=${lr}, propagating signal (process will be killed by kernel)`);
+      return false;
     });
     A('installed exception handler (return-to-LR with NativePointer-isNull fix)');
   } catch (e) { A(`exception handler install failed: ${e}`); }
