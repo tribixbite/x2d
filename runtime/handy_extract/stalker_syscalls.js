@@ -51,6 +51,27 @@ function findSym(name) {
   return null;
 }
 
+// Mark system / runtime libs as excluded so Stalker doesn't rewrite
+// every libart / libc / libssl basic block. Drastically reduces overhead
+// — we only care about app-bundled code (libapp.so, the loader stub,
+// the unpacked dex/payload). Without this, a Flutter app's ~14 threads
+// each running art/libc/libssl will trip Android's ANR watchdog.
+function excludeSystemModules() {
+  const SYSTEM_PREFIXES = [
+    '/system/', '/apex/', '/vendor/', '/product/', '/system_ext/',
+  ];
+  let excluded = 0;
+  for (const m of Process.enumerateModules()) {
+    if (SYSTEM_PREFIXES.some(p => (m.path || '').startsWith(p))) {
+      try {
+        Stalker.exclude({ base: m.base, size: m.size });
+        excluded++;
+      } catch (e) { /* range may overlap with one already excluded */ }
+    }
+  }
+  send({type:'log', msg:`[stalker] excluded ${excluded} system module ranges`});
+}
+
 // Stats — printed by `stats()` callable from the REPL or after a
 // time-based unfollow.
 const stats = {
@@ -114,6 +135,28 @@ function followAll(label) {
   Process.enumerateThreads().forEach(t => followThread(t.id, label || 'enum'));
 }
 
+// Restricted follow: only the MAIN thread (tid == process.id). The
+// shield's tamper-detect runs on the main thread (during loadLibrary
+// of assets/l6a18f19c_a64.so — its .init_array fires in the loading
+// thread which is the caller). New threads spawned by the shield's
+// watchdog are caught by the pthread_create hook below.
+function followMainOnly() {
+  const mainTid = Process.id;
+  let found = false;
+  Process.enumerateThreads().forEach(t => {
+    if (t.id === mainTid) {
+      followThread(t.id, 'main');
+      found = true;
+    }
+  });
+  if (!found) {
+    // Process.id may not equal mainTid on some Android builds; fall
+    // back to the lowest-numbered thread (typically the main one).
+    const threads = Process.enumerateThreads().sort((a,b) => a.id - b.id);
+    if (threads.length) followThread(threads[0].id, 'main-fallback');
+  }
+}
+
 function unfollowAll() {
   for (const tid of followed) {
     try { Stalker.unfollow(tid); } catch (e) {}
@@ -123,8 +166,12 @@ function unfollowAll() {
     `suppressed=${stats.suppressed}, by_nr=${JSON.stringify(stats.by_nr)}`);
 }
 
-// 1. Follow every existing thread.
-followAll('initial');
+// 1. Exclude system modules from Stalker first (so future follow()
+//    calls don't trace into them).
+excludeSystemModules();
+
+// 2. Follow only the main thread initially.
+followMainOnly();
 
 // 2. Hook pthread_create — re-enumerate threads on each call so we
 // catch the new one. Bionic's pthread_t is opaque so we can't read
@@ -139,13 +186,13 @@ if (pthreadCreate) {
   A('hooked pthread_create');
 }
 
-// 3. After 8 s drop Stalker — the shield's startup tamper-checks have
+// 4. After 5 s drop Stalker — the shield's startup tamper-checks have
 // all completed by then and Stalker overhead would otherwise stall the
 // app's cert-fetch / RSA-sign work.
 setTimeout(() => {
-  A('8s elapsed — stopping Stalker for runtime efficiency');
+  A('5s elapsed — stopping Stalker for runtime efficiency');
   unfollowAll();
-}, 8000);
+}, 5000);
 
 // Expose a manual-control RPC so the host can adjust if needed.
 rpc.exports = {
