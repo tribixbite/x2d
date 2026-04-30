@@ -1859,3 +1859,68 @@ v1.0 ship-readiness was never gated on them.
   `GET /v1/iot-service/api/user/applications/{appToken}/cert?aes256=…`
   (per bambu-mcp's RE'd cloud-api docs). That's the OAuth+bind path the
   user asked about. Pivoting to implement it next as item #67.
+
+* **#68 Bambu Handy Frida hook — live test against Solana Saga.** Followed
+  up #66 by attempting dynamic recovery of the per-installation X.509 cert
+  and signing key from a logged-in Bambu Handy session on a rooted device.
+  Built `runtime/handy_extract/{setup_rooted_device.sh,handy_hook.js,
+  dump_keys.py}` and ran end-to-end on a Solana Saga (Magisk 26.4,
+  Android 13). Layer-by-layer findings:
+
+  Layer 1 — frida-server path fingerprint. **Bypassed.** Mainline
+  frida-server 17.9.3 dropped at `/data/local/tmp/frida-server` was
+  detected on attach ("agent connection closed unexpectedly"). Renaming
+  to `/data/local/tmp/.lib_helper/upd.bin` and binding port 39999
+  defeated the disk-path detection.
+
+  Layer 2 — initial spawn. **Bypassed.** Spawn-mode (`dev.spawn(pkg)`,
+  string not list — frida 17.x rejects argv lists for Android apps with
+  "the 'argv' option is not supported when spawning Android apps") gets
+  the process paused at entry; 20 crypto hooks installed cleanly across
+  every loaded `libcrypto.so` (system + Conscrypt + app-bundled — three
+  distinct base addresses; `Module.findExportByName` only finds the
+  first, replaced with `Process.enumerateModules().filter()`).
+
+  Layer 3 — self-ptrace anti-debug. **Discovered, partial bypass.** The
+  shield spawns a sibling process with the same package cmdline that
+  ptraces the main UI. `/proc/<main>/status` shows
+  `TracerPid: <sibling-pid>` blocking any second ptracer from attaching.
+  Killing the sibling clears `TracerPid` to 0 and frida attaches
+  immediately, but a watchdog notices the orphaned ptracer death within
+  seconds and force-stops the whole app.
+
+  Layer 4 — seccomp + agent-channel block. **Hard wall, requires
+  Zygisk.** With ptrace cleared, attach succeeds (`TracerPid` switches
+  to frida-server's pid; main process enters `ptrace_stop` state), the
+  injected agent's libgum.so loads, but `dev.attach()` returns
+  `ProcessNotRespondingError: unexpectedly timed out trying to sync up
+  with agent`. Cause: the app installs a seccomp BPF filter
+  (`Seccomp: 2, Seccomp_filters: 1`) that blocks the syscalls the agent
+  needs (`socket`/`connect` for the libgum→server channel, possibly
+  `clone`/`mmap` for thread bring-up). The agent runs but can't talk
+  back, so all our crypto hooks register on the device but emit no
+  events to the host.
+
+  To get past Layer 4 the canonical 2026 tooling is a **Zygisk module**
+  that injects the agent before `.init_array` (and therefore before
+  seccomp activates). Promon-class shields universally fall to
+  Shamiko-class injectors, but that's a multi-hour custom build job and
+  out of scope for this session. Other options surveyed:
+    - StrongR-Frida 17.x prebuilt — repo no longer ships binary releases.
+    - Custom-built frida-server with `libgum` renamed + statically
+      linked into the agent (so the seccomp library-blocklist misses
+      it). Multi-hour from frida source tree.
+
+  Toolkit at `runtime/handy_extract/` is fully functional through Layer
+  3; gaps documented in its README.md "If it doesn't work" section.
+  Commits at 5b91edd / 937fc24.
+
+  **Updated path forward**: pivot back to OAuth (#67). Even without the
+  cert blob, a logged-in JWT lets us probe cloud endpoints we couldn't
+  before: `/v1/iot-service/api/user/bind` for printer list, the cert-mint
+  endpoint with various `aes256` payloads (the AES wrapping key may not
+  always be applied — worth probing before declaring it impossible),
+  and `/iot-service/api/user/print` for cloud-mediated print job
+  submission. Cloud-mediated `print.project_file` is the realistic ship
+  target; LAN-direct `print.*` likely requires the full Zygisk extraction
+  effort or remains a known limitation.

@@ -261,10 +261,31 @@ def main():
     sess.log(f"session dir: {sess.dir}")
 
     if args.attach:
-        proc = next((p for p in dev.enumerate_processes() if p.name == args.package), None)
-        if not proc:
+        # Frida exposes applications by `identifier` (=package name) but
+        # processes by `name` (=app label like "Bambu Handy"). Prefer
+        # enumerate_applications() because it correctly maps the package
+        # to the main UI process pid; enumerate_processes alone may match
+        # a short-lived sub-process by package-named cmdline first.
+        pid = None
+        try:
+            apps = dev.enumerate_applications()
+            for a in apps:
+                if a.identifier == args.package and a.pid:
+                    pid = a.pid
+                    sess.log(f"  matched app identifier={a.identifier!r} "
+                             f"label={a.name!r} pid={pid}")
+                    break
+        except Exception:
+            pass
+        if not pid:
+            # Fallback: by process name OR cmdline match.
+            for p in dev.enumerate_processes():
+                if p.name == args.package or args.package in p.name:
+                    pid = p.pid
+                    sess.log(f"  matched process name={p.name!r} pid={pid}")
+                    break
+        if not pid:
             sys.exit(f"package {args.package} is not running. Launch it first.")
-        pid = proc.pid
         sess.log(f"attaching to {args.package} pid={pid}")
         session = dev.attach(pid)
     else:
