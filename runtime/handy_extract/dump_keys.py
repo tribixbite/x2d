@@ -298,7 +298,18 @@ def main():
 
     # V8 runtime gives us the Java bridge for okhttp/Conscrypt logging;
     # QuickJS is leaner but Java-less. Default to V8.
-    script = session.create_script(HOOK_JS.read_text(), runtime="v8")
+    #
+    # Concatenate the Stalker syscall guard if the file exists. Stalker
+    # rewrites every basic block to drop destructive raw `svc 0`
+    # syscalls (exit_group/kill/tgkill/ptrace/seccomp) — needed because
+    # the shield's tamper-response uses raw svc bypassing libc wrappers.
+    # The guard self-disables after 8 s to drop overhead.
+    script_src = HOOK_JS.read_text()
+    stalker_js = HOOK_JS.parent / "stalker_syscalls.js"
+    if stalker_js.exists():
+        script_src += "\n\n// === stalker_syscalls.js (concatenated) ===\n"
+        script_src += stalker_js.read_text()
+    script = session.create_script(script_src, runtime="v8")
     script.on("message", lambda m, d: on_message(sess, m, d))
     script.load()
     if not args.attach:
