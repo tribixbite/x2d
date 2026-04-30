@@ -86,6 +86,15 @@ function installAntiAntiDebug() {
   const cands = Process.enumerateModules().filter(m => /libc\.so|libssl|libcrypto/.test(m.name));
   A(`module enum: ${cands.length} candidates - ${cands.map(m=>m.name).join(',')}`);
 
+  // Listeners installed by the shield-bypass hooks. Tracked so we can
+  // detach them ALL after the shield's startup checks are over —
+  // every Interceptor.attach on a hot libc symbol (read, syscall,
+  // prctl) crosses the JS bridge per call. Once the shield's
+  // ptrace daemon and seccomp install have run (within ~500ms of
+  // gadget bind), keeping these armed only burns CPU on the main
+  // thread and starves UI rendering, leaving the user stuck on a
+  // spinner.
+  const shieldListeners = [];
   function hook(name, mod, sym, mkHandler) {
     let p = null;
     try { p = Module.findExportByName(mod, sym); } catch (e) {}
@@ -100,7 +109,8 @@ function installAntiAntiDebug() {
     }
     if (!p) { A(`hook ${sym}: export not found`); return; }
     try {
-      Interceptor.attach(p, mkHandler());
+      const l = Interceptor.attach(p, mkHandler());
+      shieldListeners.push(l);
       A(`hooked ${sym} @ ${p}`);
     } catch (e) { A(`hook ${sym} failed: ${e}`); }
   }
@@ -219,16 +229,24 @@ function installAntiAntiDebug() {
     } catch (e) { A(`hook read failed: ${e}`); }
   }
 
-  // Auto-detach the high-frequency hooks after the shield's checks
-  // are over. ptrace/prctl/syscall stay armed indefinitely.
+  // Auto-detach ALL shield-bypass hooks after the startup window.
+  // The shield's tamper-die / seccomp / ptrace installation all
+  // complete within the first ~500ms; keeping ptrace/prctl/syscall
+  // hooks armed long-term costs a JS-bridge crossing per libc call
+  // and starves Bambu's UI thread (user observed: app "freezes with
+  // a spinner after splash" — main thread was busy serializing
+  // every prctl/syscall via the JS VM). The exception handler stays
+  // installed because `Process.setExceptionHandler` is process-wide
+  // and not a per-call hook.
   setTimeout(() => {
-    for (const l of statusListeners) {
-      try { l.detach(); } catch (e) {}
-    }
+    let n = 0;
+    for (const l of statusListeners) { try { l.detach(); n++; } catch (e) {} }
     statusListeners.length = 0;
     procStatusFds.clear();
+    for (const l of shieldListeners) { try { l.detach(); n++; } catch (e) {} }
+    shieldListeners.length = 0;
     if (typeof _fcap === 'function')
-      _fcap('anti-anti-debug status hooks detached after 12s');
+      _fcap('[anti] all shield-bypass hooks detached (' + n + ' listeners) after 12s');
   }, 12000);
 
   // Refuse-to-die: replace every plausible self-kill with a no-op stub.
