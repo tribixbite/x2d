@@ -107,6 +107,14 @@ def find_xrefs_to(text_base: int, text_bytes: bytes,
     """
     md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
     md.detail = False
+    # Capstone's `disasm()` stops at the first byte sequence it can't
+    # decode (data interspersed in code, alignment padding, jump tables).
+    # AArch64 .text is full of such gaps. With `skipdata=True` Capstone
+    # emits placeholder `.byte` entries and resumes — without it we miss
+    # ~99 % of the section. (Confirmed on libflutter.so: 2,646 vs 1.5M
+    # decoded instructions.)
+    md.skipdata = True
+    md.skipdata_setup = (".byte", None, None)
     pending: dict[str, int] = {}
     found: dict[int, int] = {}
 

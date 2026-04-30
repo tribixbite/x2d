@@ -658,6 +658,168 @@ function hookMbedTLS() {
   return hooks;
 }
 
+// ---------- Flutter bundled BoringSSL (libflutter.so) ---------------------
+//
+// libflutter.so ships its own BoringSSL with all symbols stripped (only
+// 50 dynamic exports, all `InternalFlutterGpu_*`). System libcrypto hooks
+// don't fire because Bambu's Dart HTTP client (dart:io / dio) goes
+// through this bundled BoringSSL, not Conscrypt.
+//
+// Static analysis (runtime/handy_extract/find_boringssl.py against the
+// libflutter.so we extracted from split_config.arm64_v8a.apk) located
+// the function entry offsets below by xref'ing rodata source-path strings
+// (e.g. "boringssl/src/ssl/ssl_privkey.cc") and walking back to the
+// nearest STP X29,X30,[SP,#-N]! prologue. Offsets are RELATIVE to the
+// libflutter.so loaded base — add them to module.base at hook time.
+//
+// Drift-resistance: Flutter Engine pinned versions correlate strongly
+// with these offsets. If a future Flutter version changes them, re-run
+// find_boringssl.py against the new libflutter.so and replace this map.
+//
+// Map produced 2026-04-30 against the Bambu Handy v3.19.0 split-config
+// libflutter.so (BuildID 0a7fde9baaf490ad50a8480ebc422ea4ee862a2e).
+const LIBFLUTTER_BORINGSSL_OFFSETS = {
+  // Shared-key primitive — fires on every TLS / signed-MQTT publish.
+  // RSA pkey ctx contains the BIGNUM* fields (n, e, d, p, q, ...).
+  pkey_rsa_sign:        0x6ed024,
+  // Cert-chain validation — fires when Bambu validates the cloud's
+  // server cert during the TLS handshake. Safe place to disable
+  // pinning by always returning 1.
+  ASN1_item_verify:     0x6f4794,
+  // SSL-level signing path — Bambu calls this when its TLS stack
+  // signs handshake transcripts (or when it signs MQTT publishes
+  // through libflutter's BoringSSL). Buffer is the raw to-be-signed
+  // bytes; key context contains RSA*.
+  ssl_private_key_sign: 0x70f378,
+  // Generic SSL_lib entry — could be SSL_read / SSL_write / SSL_get_error.
+  // Hook with a header-byte sniff to disambiguate at runtime.
+  ssl_lib_unknown:      0x84b55c,
+  ssl_private_key_sign_2: 0x8537a0,
+};
+
+function hookFlutterBoringSSL() {
+  let count = 0;
+  const mod = Process.findModuleByName('libflutter.so');
+  if (!mod) {
+    PRINT('libflutter.so not loaded — skipping bundled BoringSSL hooks');
+    return 0;
+  }
+  PRINT(`libflutter.so @ ${mod.base} (size ${mod.size}) — installing bundled-BoringSSL hooks`);
+  for (const [name, offset] of Object.entries(LIBFLUTTER_BORINGSSL_OFFSETS)) {
+    const addr = mod.base.add(offset);
+    try {
+      if (name.startsWith('ssl_private_key_sign')) {
+        // ssl_private_key_sign(SSL *ssl, uint8_t *out, size_t *out_len,
+        //                       size_t max_out, uint16_t signature_algorithm,
+        //                       const uint8_t *in, size_t in_len)
+        // Capture both the input (pre-sign data) AND the output buffer
+        // (signature). The signed data is what we want — that's the
+        // exact bytes the printer will verify.
+        Interceptor.attach(addr, {
+          onEnter(args) {
+            this.out = args[1];
+            this.outlenp = args[2];
+            this.sigalg = args[4].toInt32();
+            this.in = args[5];
+            this.inlen = args[6].toUInt32();
+            EMIT('flutter_sign_call', {
+              fn: name, mod: 'libflutter.so',
+              sig_alg: this.sigalg, in_len: this.inlen,
+              in_hex: this.in && this.inlen > 0
+                ? this.in.readByteArray(Math.min(this.inlen, 512))
+                : null
+            });
+          },
+          onLeave(retval) {
+            // Return value: ssl_private_key_success(=0) | ssl_private_key_failure(=1) | ssl_private_key_retry(=2)
+            // We only emit on success — failed signs aren't useful.
+            if (retval.toInt32() !== 0) return;
+            try {
+              const olen = this.outlenp.readU32();
+              EMIT('flutter_sign_result', {
+                fn: name, mod: 'libflutter.so',
+                out_len: olen,
+                out_hex: this.out.readByteArray(Math.min(olen, 1024))
+              });
+              PRINT(`[!] ssl_private_key_sign produced ${olen}-byte signature (alg=${this.sigalg})`);
+            } catch (e) {}
+          }
+        });
+        PRINT(`hooked libflutter.so!${name} @ ${addr}`);
+        count++;
+      } else if (name === 'ASN1_item_verify') {
+        // ASN1_item_verify(it, alg, signature, pkey, asn) — used in cert
+        // chain validation. We DON'T patch the return value here because
+        // Bambu's printer cert may legitimately need to fail before the
+        // user-installed cert is trusted. We just log so we can see what
+        // certificates are being validated.
+        Interceptor.attach(addr, {
+          onEnter(args) {
+            this.alg = args[1];
+            this.pkey = args[3];
+            this.sig = args[2];
+          },
+          onLeave(retval) {
+            EMIT('flutter_cert_verify', {
+              fn: name, mod: 'libflutter.so',
+              result: retval.toInt32(),
+            });
+          }
+        });
+        PRINT(`hooked libflutter.so!${name} @ ${addr}`);
+        count++;
+      } else if (name === 'pkey_rsa_sign') {
+        // pkey_rsa_sign(EVP_PKEY_CTX *ctx, uint8_t *sig, size_t *siglen,
+        //               const uint8_t *tbs, size_t tbslen)
+        Interceptor.attach(addr, {
+          onEnter(args) {
+            this.tbs = args[3];
+            this.tbslen = args[4].toUInt32();
+            EMIT('flutter_pkey_rsa_sign', {
+              fn: name, mod: 'libflutter.so', tbslen: this.tbslen,
+              tbs_hex: this.tbs && this.tbslen > 0
+                ? this.tbs.readByteArray(Math.min(this.tbslen, 512))
+                : null
+            });
+          }
+        });
+        PRINT(`hooked libflutter.so!${name} @ ${addr}`);
+        count++;
+      } else if (name === 'ssl_lib_unknown') {
+        // 0x84b55c is ambiguous — could be SSL_read / SSL_write / SSL_get_error.
+        // SSL_read(SSL*, void* buf, int num) and SSL_write(SSL*, const void* buf, int num)
+        // both have buf as args[1] and num as args[2]. SSL_get_error takes only
+        // SSL* + int. Hook conservatively: if return value > 0 and args[1] looks
+        // like a valid pointer with > 32 bytes, treat as SSL_read/write and
+        // dump the buffer.
+        Interceptor.attach(addr, {
+          onEnter(args) {
+            this.arg1 = args[1];
+            this.arg2 = args[2].toInt32();
+          },
+          onLeave(retval) {
+            const rv = retval.toInt32();
+            if (rv <= 32) return;  // too small to be useful payload
+            if (!this.arg1 || this.arg1.isNull()) return;
+            try {
+              const head = this.arg1.readByteArray(Math.min(rv, 256));
+              EMIT('flutter_ssl_io', {
+                fn: name + '_(read_or_write)', mod: 'libflutter.so',
+                len: rv, head_hex: head
+              });
+            } catch (e) {}
+          }
+        });
+        PRINT(`hooked libflutter.so!${name} (SSL_read/write probe) @ ${addr}`);
+        count++;
+      }
+    } catch (e) {
+      PRINT(`hook libflutter.so!${name} failed: ${e}`);
+    }
+  }
+  return count;
+}
+
 function hookHTTPS() {
   // Java runtime is only available when Frida runs the V8 runtime AND the
   // app has loaded ART. QuickJS doesn't expose Java at all. Treat as
@@ -704,6 +866,7 @@ setTimeout(() => {
     let total = 0;
     total += hookOpenSSL();
     total += hookMbedTLS();
+    total += hookFlutterBoringSSL();
     hookHTTPS();
     PRINT(`installed ${total} crypto hooks. Now interact with the app — every`);
     PRINT('signed MQTT publish or AES decrypt will be reported.');
