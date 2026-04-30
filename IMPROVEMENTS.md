@@ -1924,3 +1924,76 @@ v1.0 ship-readiness was never gated on them.
   submission. Cloud-mediated `print.project_file` is the realistic ship
   target; LAN-direct `print.*` likely requires the full Zygisk extraction
   effort or remains a known limitation.
+
+  **Update — 2026-04-30 session** (commits 27d26fa, 51123b6). Layer 4
+  (seccomp + agent-channel block) ultimately bypassed via **ZygiskFrida
+  in script-mode**: gadget loads `init.js` synchronously at dlopen
+  before `.init_array` runs, so anti-anti-debug hooks land before
+  seccomp installs. Combined with **Shamiko 1.2.5 whitelist mode**
+  (Magisk hidden from Bambu) and **OSOM-signed microG 26.16.31** from
+  Saga MR5 firmware (replaces the 22.49.15 that crashes
+  libperfetto_hprof on Android 14 ART). End-to-end Bambu Handy now
+  runs cleanly to MakerWorld For You feed with real content cards
+  rendering — see screenshots/{run8_welcome.png, runA_post_detach.png,
+  bambu_now.png}. Five hook bugs that gated this session:
+
+    a. PC+=4 exception handler walked unmapped magic pages
+       (0xdead5019, 0xdead*) byte-by-byte — single run produced 256 MB
+       capture log of skipped exceptions and never recovered.
+       Replaced with `PC := lr` (return-to-LR) so each tamper-die
+       jump becomes a no-op call. Logging rate-limited to first 16
+       events.
+    b. Frida ARM64 CpuContext field is `ctx.lr` not `ctx.x30` on this
+       17.x build (older builds aliased x30; new ones don't).
+       First-cut implementation read x30 only, fell through to PC+=4
+       and reproduced (a).
+    c. `_fcap` UTF-8 byte-length: `fwriteF(buf, 1, t.length+1, fp)`
+       used JS String.length (UTF-16 units) as byte count. Every
+       message containing an em-dash (— = 3 bytes UTF-8 / 1 char JS)
+       wrote one fewer byte than the buffer held — silently
+       truncating the trailing newline so log lines concatenated.
+       Hand-rolled `utf8ByteLength()` walks chars and counts proper
+       byte width.
+    d. Hook-detach window only covered the read/openat status hooks;
+       ptrace/prctl/syscall stayed armed indefinitely with a JS-bridge
+       crossing per call. Bambu's 100+ worker threads ANR'd waiting
+       on the JS-VM lock. Now ALL shield-bypass hooks detach in one
+       sweep at t=12s (anti-anti-debug check is one-shot at startup).
+       `Process.setExceptionHandler` stays installed.
+    e. `[anti]` log helper send()'d only — silent in script-mode where
+       no host listener consumes events. Now dual-emits to send() AND
+       _fcap().
+
+  **Where we stopped**: Bambu reaches MakerWorld home but **0 crypto
+  events** fire on the 4 system-libcrypto/libssl hooks during home
+  feed load and (presumably) login attempts. Conclusion: Bambu's
+  Dart HTTP client (dart:io / dio) uses Flutter's bundled BoringSSL
+  inside libflutter.so (11 MB) and libapp.so (43 MB Dart AOT),
+  bypassing system libcrypto entirely. libflutter.so is heavily
+  stripped (50 dynamic exports, all `InternalFlutterGpu_*` engine
+  API; no BoringSSL exports). Login flow uses Chrome Custom Tab for
+  OAuth (so OAuth-side crypto is in Chrome's process, out of reach)
+  and the cert-mint HTTPS call after the deep-link callback is
+  presumably the moment we want to capture — but it goes through
+  the same bundled BoringSSL.
+
+  **Next steps**: two paths, ranked.
+    1. **HTTP Toolkit (most likely to win)**. The device already has
+       `tech.httptoolkit.android.v1` installed and the system trust
+       store has 129 CA certs. With the system CA installed
+       (rooted-device flow) and Bambu pointed at HTTP Toolkit as a
+       VPN/iptables-redirected proxy, the cert-mint endpoint's HTTPS
+       response body is plaintext to HTTP Toolkit — IF Bambu doesn't
+       certificate-pin. If it does pin, our existing Frida hooks can
+       neutralise pinning at SSL_set_verify / X509_verify_cert
+       inside libflutter.so (still needs the pattern-scan, but for
+       a much narrower target — pinning paths only, not the entire
+       BoringSSL surface).
+    2. **libflutter.so pattern-scan**. Strip-the-strip: locate
+       BoringSSL function prologues by xref'ing the .rodata
+       source-path strings (`boringssl/src/crypto/evp/p_rsa.cc`)
+       which CHECK macros embed for assertion failure messages. ARM64
+       ADRP+ADD pairs targeting those strings give us
+       inside-the-function PCs; walk back to the nearest
+       `stp x29, x30, [sp, #-N]!` to find the function entry. Hook
+       there with the same handlers we use on system libcrypto.
