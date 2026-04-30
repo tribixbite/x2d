@@ -86,3 +86,9 @@ _mobile_daemon.py
 # Local dev convenience symlink to dist tree
 bin
 runtime/handy_extract/cache/
+
+# Zygisk Frida Gadget — large binary outputs rebuildable via build.sh
+runtime/handy_extract/zygisk/gadget-zygisk.zip
+runtime/handy_extract/zygisk/ZygiskFrida-v*-release.zip
+runtime/handy_extract/zygisk/frida-gadget-*-android-*.so.xz
+runtime/handy_extract/zygisk/_work/
