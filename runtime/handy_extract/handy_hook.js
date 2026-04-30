@@ -311,52 +311,85 @@ function installAntiAntiDebug() {
   // single-instruction tamper traps embedded inline in code (e.g.
   // `BRK` or junk bytes the shield jumped to). Skipping them keeps
   // us on the original execution path.
-  // Return-to-LR exception handler. Original strategy of advancing PC by
-  // 4 per fault walks the unmapped page byte-by-byte and pegs the JS
-  // thread at >100% emitting log lines for each step (a 256MB capture
-  // log was observed in one 5-second run). Worse, the PC eventually
-  // crosses page boundaries into more unmapped regions or the stack,
-  // generating an ever-growing fault loop.
+  // Return-to-LR exception handler. The shield's tamper-die does
+  // `BLR Xn` / `BR Xn` where Xn ∈ {0xdead*, 0, junk-stack-region}; the
+  // CPU faults on the unmapped target. Original strategy of advancing
+  // PC by 4 walked the unmapped page byte-by-byte (256 MB capture log
+  // observed in one run). Return-to-LR works for the BLR variant where
+  // lr was just-set to "instruction after BLR" — a valid address.
   //
-  // New strategy: when ANY non-resolvable fault hits, treat the call
-  // as a no-op and return to the link register (x30). This is what
-  // would happen if the shield had jumped to a real `RET`-ending
-  // function. The caller's stack frame is intact so execution
-  // continues at the instruction-after-BLR.
+  // CRITICAL CORRECTNESS BUG FIXED: `ctx.lr` is a NativePointer object,
+  // so `if (lr)` is ALWAYS truthy — even when the pointer value is 0
+  // (caller used BR not BLR, lr never set). The previous code happily
+  // assigned `ctx.pc = NativePointer(0)`, causing an immediate SIGSEGV
+  // at PC=0, which re-entered THIS HANDLER, which set PC=0 again, ...
+  // infinite recursion inside the gadget's signal-handling thread,
+  // holding gum-js-loop. The Dart UI thread's next call into hooked
+  // crypto then futex-waited on that lock indefinitely, freezing
+  // Bambu Handy on the home spinner.
   //
-  // Exception logging is rate-limited to the first N events to avoid
-  // amplifying the shield's cost into our own log volume.
+  // New strategy:
+  //   1. Validate lr — must be non-null AND >= 0x10000 (any address
+  //      below the first user-space page is invalid).
+  //   2. If lr is invalid, fall back to PC+=4 (will likely also fault,
+  //      but won't recurse on the same address).
+  //   3. Hard cap at HARD_LIMIT total exceptions; once exceeded,
+  //      uninstall the handler and let the next signal propagate to
+  //      the OS for a clean crash + tombstone (better than a hang).
   let _excCount = 0;
   const _excLogMax = 16;
+  const _excHardLimit = 256;
+  let _excListener = null;
   try {
-    Process.setExceptionHandler(function (details) {
+    _excListener = Process.setExceptionHandler(function (details) {
       _excCount++;
       const t = details.type;
       const addr = details.address;
       const ctx = details.context;
       const addrStr = addr ? addr.toString() : '';
-      if (ctx) {
-        // Frida ARM64 CpuContext exposes the link register as `lr`.
-        // Some older builds also accept `x30` as an alias; try both.
-        const lr = ctx.lr || ctx.x30;
-        if (lr) {
-          if (_excCount <= _excLogMax) {
-            A(`!! exception #${_excCount} ${t} @ ${addrStr} — RET via lr=${lr}`);
-            if (_excCount === _excLogMax)
-              A(`(further exceptions silenced to avoid log amplification)`);
-          }
-          ctx.pc = lr;
-        } else if (ctx.pc) {
-          // No LR available (shouldn't happen on ARM64 user-space) —
-          // fall back to PC+=4 with a hard break after the cap.
-          if (_excCount <= _excLogMax)
-            A(`!! exception #${_excCount} ${t} @ ${addrStr} — no LR, PC+=4`);
-          ctx.pc = ctx.pc.add(4);
+
+      // Hard limit hit — uninstall ourselves, let signal propagate.
+      // The process will SIGSEGV and produce a clean tombstone.
+      if (_excCount > _excHardLimit) {
+        try {
+          if (typeof _fcap === 'function')
+            _fcap(`[anti] !! exception #${_excCount} — HARD LIMIT, uninstalling exception handler`);
+        } catch (e) {}
+        // There is no Frida API to uninstall the exception handler in
+        // place; returning false lets the signal propagate for THIS
+        // event, but on the next fault the handler runs again. The
+        // hard-limit log line + return false combination is a clean
+        // diagnostic that we've hit a recursion case.
+        return false;
+      }
+
+      if (!ctx) return false;
+
+      // Frida ARM64 CpuContext exposes the link register as `lr`.
+      // Some older builds also accept `x30` as an alias; try both.
+      // CRITICAL: NativePointer(0) is truthy (it's an object), so we
+      // must use isNull() to detect a 0 value.
+      const lr = ctx.lr || ctx.x30;
+      const lrValid = lr && !lr.isNull() && (parseInt(lr.toString(), 16) >= 0x10000);
+
+      if (lrValid) {
+        if (_excCount <= _excLogMax) {
+          A(`!! exception #${_excCount} ${t} @ ${addrStr} — RET via lr=${lr}`);
+          if (_excCount === _excLogMax)
+            A(`(further exceptions silenced to avoid log amplification)`);
         }
+        ctx.pc = lr;
+      } else if (ctx.pc) {
+        // LR is null/zero/clearly invalid. PC+=4 is unlikely to recover
+        // (caller is probably in unmapped space), but at least it
+        // doesn't infinite-recurse on the same address.
+        if (_excCount <= _excLogMax)
+          A(`!! exception #${_excCount} ${t} @ ${addrStr} — invalid lr=${lr}, PC+=4`);
+        ctx.pc = ctx.pc.add(4);
       }
       return true; // we handled it
     });
-    A('installed exception handler (return-to-LR strategy)');
+    A('installed exception handler (return-to-LR with NativePointer-isNull fix)');
   } catch (e) { A(`exception handler install failed: ${e}`); }
 
   A('anti-anti-debug installed');
