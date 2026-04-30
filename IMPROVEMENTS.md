@@ -1997,3 +1997,93 @@ v1.0 ship-readiness was never gated on them.
        inside-the-function PCs; walk back to the nearest
        `stp x29, x30, [sp, #-N]!` to find the function entry. Hook
        there with the same handlers we use on system libcrypto.
+
+  **Update — 2026-04-30 session pt.2** (commits 312d82e, 2f77e41,
+  7959c85, plus IMPROVEMENTS.md docs). Pattern-scan path partially
+  realised: `runtime/handy_extract/find_boringssl.py` extracts 11
+  rodata source-path strings from libflutter.so, scans .text for
+  ADRP+ADD/LDR pairs and PC-relative literal-pool LDRs that reach
+  them, walks back to the nearest STP X29,X30 prologue. Required
+  one critical Capstone fix: `md.skipdata = True` — without it the
+  iterator stalled at the first jump-table island, covering only
+  2,646 of 1.5 M instructions in .text. With the fix, 26 xrefs map
+  to 5 unique function entries:
+
+    * `pkey_rsa_sign`         @ libflutter.so + 0x6ed024
+    * `ASN1_item_verify`      @ libflutter.so + 0x6f4794   (cert verify)
+    * `ssl_private_key_sign`  @ libflutter.so + 0x70f378   (HOLY GRAIL —
+                                                           fires on every
+                                                           TLS / signed-MQTT
+                                                           publish using the
+                                                           per-installation
+                                                           key)
+    * `ssl_lib (ambiguous)`   @ libflutter.so + 0x84b55c   (SSL_read /
+                                                           SSL_write /
+                                                           SSL_get_error —
+                                                           hook with
+                                                           buffer-size sniff)
+    * `ssl_private_key_sign_2`@ libflutter.so + 0x8537a0   (alt entry,
+                                                           tls13 path)
+
+  All five are hooked from `hookFlutterBoringSSL()` — adds 5 to the
+  installed-hooks count, log shows `hooked libflutter.so!ssl_private_key_sign
+  @ 0x7030823378` etc. on every fresh launch.
+
+  Drift-resistance: offsets are tied to Bambu Handy v3.19.0's
+  libflutter.so build (BuildID `0a7fde9baaf490ad50a8480ebc422ea4ee862a2e`).
+  Flutter Engine version bumps will likely shift these — re-run
+  find_boringssl.py against the new lib to refresh the
+  `LIBFLUTTER_BORINGSSL_OFFSETS` map.
+
+  **Exception-handler deadlock root-caused** (subagent diagnosis):
+  the previous return-to-LR exception handler had a NativePointer truthy
+  bug — `if (lr) { ctx.pc = lr; }` evaluated truthy even when the pointer
+  value was 0 because NativePointer is a JS object with `.isNull()`
+  rather than a bare scalar. So when the shield's tamper-die left lr=0
+  (caller used BR not BLR, lr never set), the handler set PC=0,
+  triggering SIGSEGV at PC=0, re-entering the SAME handler, setting
+  PC=0 again — infinite recursion holding the gum-js-loop forever.
+  Bambu's Dart UI thread futex-blocked on that lock indefinitely; the
+  visible symptom was a clean spinner with 0 % CPU, no logs, eventually
+  a 5 s "Input dispatching timed out" ANR.
+
+  Fix: validate `lr && !lr.isNull() && lr.toInt() >= 0x10000`, fall
+  back to PC+=4 on invalid lr, hard-cap at 256 total exceptions then
+  uninstall the handler to let the next signal propagate as a clean
+  tombstone. This unblocks the gum-js-loop deadlock — but does NOT
+  solve the underlying problem that the shield's tamper-die fires
+  AFTER our shield-bypass hooks auto-detach at t=12 s (the read
+  filter for /proc/self/maps was the only thing keeping the gadget
+  hidden), so Bambu still walks unmapped pages and hits the hard
+  cap quickly.
+
+  **Termux mitmproxy network-isolation wall** (mitm_ca Magisk
+  module already at /data/adb/modules/mitmproxy_ca, c8750f0d.0
+  installed in /system/etc/security/cacerts/ post-reboot, system
+  trust store recognises it). mitmdump runs in this Termux session
+  on the S25 (the host I'm running from) and listens on 0.0.0.0:18080
+  per the CLI; but Termux's per-UID network namespace on Android
+  binds the listener only on Termux's own loopback view — Saga's
+  network stack at 192.168.0.81 → 192.168.0.190:18080 (S25 Termux IP)
+  gets connection-refused even though ICMP ping succeeds 8 ms RTT.
+  Curling `curl -x http://192.168.0.190:18080` from the S25's own
+  Termux (the host running mitmdump) ALSO fails — confirming the
+  bind is namespaced out of the wifi interface. Without root on the
+  S25 (verified absent — `tsu`, `sudo`, `su -c` all report no su)
+  there is no in-Termux iptables remedy.
+
+  **Three viable paths forward** (ranked by likely-effort):
+
+    1. **HTTP Toolkit desktop**, run on any computer with adb access
+       to the Saga. The Saga's HTTP Toolkit Android app shows a
+       "Disconnected — start HTTP Toolkit on your computer, activate
+       Android interception via QR code or ADB". ~5 min. Best path.
+    2. **Install Termux on the Saga itself** (push apk, install,
+       configure, install mitmproxy). Run mitmdump from inside the
+       Saga's Termux as root via Magisk-allowlisted su. Then iptables
+       NAT redirect Bambu's UID's traffic to localhost:18080 inside
+       the Saga's namespace — Termux's per-UID isolation doesn't
+       apply when both endpoints are in the same UID's view.
+       ~30-60 min.
+    3. **proot + Alpine + mitmproxy bundle on Saga**, runs as root
+       via Magisk. Bypasses all UID-namespace issues. ~1 h first time.
