@@ -32,36 +32,66 @@
     } catch (e) {}
   }
 
+  // DER patterns we're looking for in app memory:
+  //   PKCS#8 RSA-2048 priv:  30 82 04 BD..C4   02 01 00 30 0D 06 09 2A 86 48 86 F7 0D 01 01 01
+  //   PKCS#1 RSA-2048 priv:  30 82 04 A0..A9   02 01 00 02 82 01 01 00
+  //   PKCS#8 RSA-4096 priv:  30 82 09 3D..43   02 01 00 30 0D 06 09 2A 86 48 86 F7 0D 01 01 01
+  //   X.509 cert (DER):      30 82 LL LL       30 82 LL LL A0 03 02 01 02 02
+  // We scan for the static prefix "30 82 ?? ?? 02 01 00 30 0D 06 09 2A 86 48 86 F7 0D 01 01 01" (PKCS#8)
+  // and "30 82 ?? ?? 02 01 00 02 82 01 01 00" (PKCS#1 RSA-2048).
+  const PATTERNS = [
+    {label:'PEM_BEGIN',     bytes:'2D 2D 2D 2D 2D 42 45 47 49 4E 20', dump_text: true},
+    {label:'PKCS8_DER',     bytes:'30 82 ?? ?? 02 01 00 30 0D 06 09 2A 86 48 86 F7 0D 01 01 01', dump_text: false, dump_len: 1216},
+    {label:'PKCS1_RSA_DER', bytes:'30 82 ?? ?? 02 01 00 02 82 01 01 00', dump_text: false, dump_len: 1192},
+  ];
+
   function scanOnce() {
     let total_hits = 0;
     Process.enumerateRanges('rw-').forEach(range => {
-      try {
-        const matches = Memory.scanSync(range.base, range.size, "2D 2D 2D 2D 2D 42 45 47 49 4E 20"); // "----- BEGIN "
-        for (const m of matches) {
-          // Read 64 bytes to identify the marker
-          let header;
-          try { header = Memory.readUtf8String(m.address, 64); } catch (e) { continue; }
-          if (!header) continue;
-          let label = '?';
-          if (header.startsWith(PEM_PRIV)) label = 'PKCS8_PRIV';
-          else if (header.startsWith(PEM_RSA)) label = 'PKCS1_RSA';
-          else if (header.startsWith(PEM_CERT)) label = 'X509_CERT';
-          else continue; // some other PEM marker, skip
-          // Try to read up to 8KB to capture the full PEM body
-          let body;
-          try { body = Memory.readUtf8String(m.address, 8192); } catch (e) { continue; }
-          if (!body) continue;
-          // Trim at the END marker
-          const endIdx = body.indexOf('-----END ');
-          if (endIdx > 0) {
-            // extend to include the line ending
-            const tailIdx = body.indexOf('-----', endIdx + 9);
-            if (tailIdx > 0) body = body.substring(0, tailIdx + 5);
+      for (const pat of PATTERNS) {
+        try {
+          const matches = Memory.scanSync(range.base, range.size, pat.bytes);
+          for (const m of matches) {
+            if (pat.dump_text) {
+              // PEM marker — read string
+              let header;
+              try { header = Memory.readUtf8String(m.address, 64); } catch (e) { continue; }
+              if (!header) continue;
+              let label;
+              if (header.startsWith(PEM_PRIV)) label = 'PKCS8_PRIV';
+              else if (header.startsWith(PEM_RSA)) label = 'PKCS1_RSA';
+              else if (header.startsWith(PEM_CERT)) label = 'X509_CERT';
+              else continue;
+              let body;
+              try { body = Memory.readUtf8String(m.address, 8192); } catch (e) { continue; }
+              if (!body) continue;
+              const endIdx = body.indexOf('-----END ');
+              if (endIdx > 0) {
+                const tailIdx = body.indexOf('-----', endIdx + 9);
+                if (tailIdx > 0) body = body.substring(0, tailIdx + 5);
+              }
+              dump(label, m.address, body.length);
+              total_hits++;
+            } else {
+              // DER blob — read raw bytes, hex-encode
+              let bytes;
+              try { bytes = Memory.readByteArray(m.address, pat.dump_len); }
+              catch (e) { continue; }
+              const hex = Array.from(new Uint8Array(bytes))
+                .map(b => b.toString(16).padStart(2,'0')).join('');
+              if (typeof _fcap === 'function') {
+                const sig = m.address.toString();
+                if (!dumped.has(sig + ':' + pat.label)) {
+                  dumped.add(sig + ':' + pat.label);
+                  _fcap('DER_FOUND ' + pat.label + ' @ ' + m.address +
+                        ' (' + pat.dump_len + 'B): ' + hex);
+                  total_hits++;
+                }
+              }
+            }
           }
-          dump(label, m.address, body.length);
-          total_hits++;
-        }
-      } catch (e) {}
+        } catch (e) {}
+      }
     });
     return total_hits;
   }
