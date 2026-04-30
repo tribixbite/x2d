@@ -34,6 +34,162 @@
 const PRINT = (m) => send({ type: 'log', msg: '' + m });
 const EMIT  = (kind, payload) => send({ type: kind, ...payload });
 
+// =====================================================================
+// Anti-anti-debug — runs IMMEDIATELY at script load, before our 250ms
+// setTimeout-delayed crypto hooks. Defeats the shield's three layers:
+//   - self-ptrace (return success without ptracing)
+//   - seccomp filter install (return success without applying)
+//   - PR_SET_DUMPABLE / PR_SET_PTRACER (return success without applying)
+//   - /proc/self/status reads (rewrite TracerPid → 0)
+//
+// Spawn-mode entry pauses the process before .init_array constructors
+// run, so installing these hooks here means the shield's anti-debug
+// constructors run AGAINST stubs and never actually apply.
+// =====================================================================
+function installAntiAntiDebug() {
+  const A = (m) => send({type:'log', msg:'[anti] ' + m});
+
+  // Re-enumerate modules so libc.so etc. are visible. At very-early
+  // spawn time the loader may not have populated Frida's module list
+  // even though libc is mapped — call this defensively.
+  try { Module.load('/system/lib64/libc.so'); } catch (e) {}
+  // List visible candidates so we can debug if libc still isn't here
+  const cands = Process.enumerateModules().filter(m => /libc\.so|libssl|libcrypto/.test(m.name));
+  A(`module enum: ${cands.length} candidates - ${cands.map(m=>m.name).join(',')}`);
+
+  function hook(name, mod, sym, mkHandler) {
+    let p = null;
+    try { p = Module.findExportByName(mod, sym); } catch (e) {}
+    if (!p) {
+      // Try each loaded module by name
+      for (const m of Process.enumerateModules()) {
+        try {
+          const a = m.findExportByName(sym);
+          if (a) { p = a; break; }
+        } catch (e) {}
+      }
+    }
+    if (!p) { A(`hook ${sym}: export not found`); return; }
+    try {
+      Interceptor.attach(p, mkHandler());
+      A(`hooked ${sym} @ ${p}`);
+    } catch (e) { A(`hook ${sym} failed: ${e}`); }
+  }
+
+  // ptrace — return 0 (success) for every call, so self-ptrace fails
+  // silently and TracerPid stays 0.
+  hook('ptrace', null, 'ptrace', () => ({
+    onEnter(args) { this.req = args[0].toInt32(); this.pid = args[1].toInt32(); },
+    onLeave(retval) {
+      retval.replace(0);
+      A(`ptrace(req=${this.req},pid=${this.pid}) faked 0`);
+    }
+  }));
+
+  // prctl — block PR_SET_SECCOMP / PR_SET_DUMPABLE(0) / PR_SET_PTRACER
+  hook('prctl', null, 'prctl', () => ({
+    onEnter(args) { this.opt = args[0].toInt32(); this.arg2 = args[1]; },
+    onLeave(retval) {
+      if (this.opt === 22) { retval.replace(0); A('prctl(PR_SET_SECCOMP) blocked'); }
+      else if (this.opt === 4 && this.arg2.toInt32() === 0) {
+        retval.replace(0); A('prctl(PR_SET_DUMPABLE,0) blocked');
+      }
+      else if (this.opt === 0x59616D61) { retval.replace(0); A('prctl(PR_SET_PTRACER) blocked'); }
+    }
+  }));
+
+  // raw syscall() — block SYS_seccomp(277) / SYS_ptrace(117) on arm64
+  hook('syscall', null, 'syscall', () => ({
+    onEnter(args) { this.nr = args[0].toInt32(); },
+    onLeave(retval) {
+      if (this.nr === 277 || this.nr === 117) {
+        retval.replace(0); A(`syscall(${this.nr}) blocked`);
+      }
+    }
+  }));
+
+  // /proc/self/status read patch — defensive belt-and-suspenders so
+  // any reader of TracerPid sees 0.
+  const procStatusFds = new Set();
+  function watchOpen(symName) {
+    hook(symName, null, symName, () => ({
+      onEnter(args) {
+        const pathArg = (symName === 'openat') ? args[1] : args[0];
+        try {
+          const path = pathArg.readCString() || '';
+          this.statusFd = path.includes('status');
+        } catch (e) { this.statusFd = false; }
+      },
+      onLeave(retval) {
+        if (this.statusFd && retval.toInt32() >= 0)
+          procStatusFds.add(retval.toInt32());
+      }
+    }));
+  }
+  watchOpen('open');
+  watchOpen('openat');
+  hook('read', null, 'read', () => ({
+    onEnter(args) {
+      this.fd = args[0].toInt32(); this.buf = args[1];
+      this.patch = procStatusFds.has(this.fd);
+    },
+    onLeave(retval) {
+      if (!this.patch) return;
+      const n = retval.toInt32();
+      if (n <= 0) return;
+      try {
+        const text = this.buf.readUtf8String(n);
+        if (text && /TracerPid:\s*[1-9]/.test(text)) {
+          const patched = text.replace(/TracerPid:\s*\d+/g, 'TracerPid:\t0');
+          this.buf.writeUtf8String(patched);
+          A('TracerPid in /proc/self/status patched to 0');
+        }
+      } catch (e) {}
+    }
+  }));
+
+  // Refuse-to-die: hook every plausible self-kill so the shield's
+  // tamper-response can't take the process down. abort, _exit, exit,
+  // pthread_exit, raise. NOPing these means the shield's "I detected
+  // something, kill the process" handlers do nothing.
+  for (const sym of ['abort', '_exit', 'exit', 'pthread_exit', 'raise', 'kill', 'tgkill']) {
+    hook(sym, null, sym, () => ({
+      onEnter(args) {
+        A(`!! self-kill ${sym}() blocked (caller=${this.returnAddress})`);
+        // For functions that take args (raise/kill/tgkill), return early
+        // by overwriting the return value would be ideal but Frida's
+        // onEnter can't replace a function entirely. Use NativeFunction
+        // replacement instead.
+      }
+    }));
+  }
+  // Replace abort/_exit/exit/pthread_exit with no-op stubs that just
+  // return immediately without doing anything. This is more aggressive
+  // than Interceptor.attach onEnter which still runs the original.
+  for (const sym of ['abort', '_exit', 'exit', 'pthread_exit']) {
+    let p = null;
+    try { p = Module.findExportByName(null, sym); } catch (e) {}
+    if (!p) continue;
+    try {
+      Interceptor.replace(p, new NativeCallback(function() {
+        send({type:'log', msg:`[anti] !! ${sym}() called — silently returning`});
+        // Don't actually exit. Returning from the NativeCallback returns
+        // from the libc function, which lets the app continue.
+        return;
+      }, 'void', []));
+      A(`replaced ${sym} with no-op stub`);
+    } catch (e) { A(`replace ${sym} failed: ${e}`); }
+  }
+
+  A('anti-anti-debug installed');
+}
+
+// Delay so the loader has time to map libc/etc. into the process. At
+// pure spawn-mode entry the dynamic linker has only just started; by
+// the time setTimeout fires libc is fully linked and findExportByName
+// can resolve symbols.
+setTimeout(installAntiAntiDebug, 50);
+
 // ---------- helpers ---------------------------------------------------------
 
 // Walk a BoringSSL/OpenSSL BIGNUM* into a hex string. Layout (BoringSSL,
