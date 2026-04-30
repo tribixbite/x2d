@@ -93,3 +93,11 @@ runtime/handy_extract/zygisk/ZygiskFrida-v*-release.zip
 runtime/handy_extract/zygisk/frida-gadget-*-android-*.so.xz
 runtime/handy_extract/zygisk/_work/
 runtime/handy_extract/zygisk/shamiko/
+
+# OSOM Solana Saga MR5 firmware — 3 GB fastboot zip + extracted super.img.
+# We extract OSOM-signed GmsCore + Phonesky for the microG Magisk overlay.
+# Reproducible by re-downloading and re-running setup_microg_module.sh.
+runtime/handy_extract/saga_firmware/
+
+# Per-run screenshots from the Frida hook live tests (binary, ephemeral).
+runtime/handy_extract/screenshots/

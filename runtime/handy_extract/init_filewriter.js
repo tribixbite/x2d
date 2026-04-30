@@ -19,11 +19,27 @@
   const fp = fopenF(path, mode);
   if (fp.isNull()) return;
 
+  // Compute UTF-8 byte length without allocating an intermediate Buffer.
+  // JS String.length counts UTF-16 code units, not bytes; using it as the
+  // fwrite count truncates the trailing '\n' whenever the message contains
+  // any non-ASCII character (e.g. em-dash), leading to log lines that
+  // concatenate without separator.
+  function utf8ByteLength(s) {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 0x80) n += 1;
+      else if (c < 0x800) n += 2;
+      else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; } // surrogate pair
+      else n += 3;
+    }
+    return n;
+  }
   globalThis._fcap = function(s) {
     try {
-      const t = String(s);
-      const buf = Memory.allocUtf8String(t + '\n');
-      fwriteF(buf, 1, t.length + 1, fp);
+      const t = String(s) + '\n';
+      const buf = Memory.allocUtf8String(t);
+      fwriteF(buf, 1, utf8ByteLength(t), fp);
       if (fflushF) fflushF(fp);
     } catch (e) {}
   };

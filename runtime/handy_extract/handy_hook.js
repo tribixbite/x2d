@@ -58,7 +58,10 @@ const PRINT2 = (m) => { try { send({type:'log', msg:''+m}); } catch(e){} try { i
 // constructors run AGAINST stubs and never actually apply.
 // =====================================================================
 function installAntiAntiDebug() {
-  const A = (m) => send({type:'log', msg:'[anti] ' + m});
+  const A = (m) => {
+    try { send({type:'log', msg:'[anti] ' + m}); } catch (e) {}
+    try { if (typeof _fcap === 'function') _fcap('[anti] ' + m); } catch (e) {}
+  };
 
   // findSymNF: locate a libc symbol and wrap as NativeFunction. Useful
   // for the magic-page mmap below.
@@ -136,43 +139,97 @@ function installAntiAntiDebug() {
 
   // /proc/self/status read patch — defensive belt-and-suspenders so
   // any reader of TracerPid sees 0.
+  //
+  // CRITICAL: hooking generic read() / open() / openat() globally adds a
+  // JS-bridge crossing on every libc call. Bambu's main thread does so
+  // many of these per UI tap that the 5-second input-dispatch budget is
+  // exhausted and the activity ANRs ("Input dispatching timed out, 5005ms
+  // for MotionEvent"). Same root cause as quick_hook.js's read filter.
+  //
+  // Mitigation: detach the read/open/openat listeners after a guard
+  // window (12s). The shield's TracerPid scan happens once at startup
+  // and is over by then. ptrace/prctl/syscall hooks stay armed forever
+  // because they only fire on rare specific opcodes and have no measurable
+  // overhead.
   const procStatusFds = new Set();
+  const statusListeners = [];
   function watchOpen(symName) {
-    hook(symName, null, symName, () => ({
-      onEnter(args) {
-        const pathArg = (symName === 'openat') ? args[1] : args[0];
-        try {
-          const path = pathArg.readCString() || '';
-          this.statusFd = path.includes('status');
-        } catch (e) { this.statusFd = false; }
-      },
-      onLeave(retval) {
-        if (this.statusFd && retval.toInt32() >= 0)
-          procStatusFds.add(retval.toInt32());
+    let p = null;
+    try { p = Module.findExportByName(null, symName); } catch (e) {}
+    if (!p) {
+      for (const m of Process.enumerateModules()) {
+        try { const a = m.findExportByName(symName); if (a) { p = a; break; } } catch (e) {}
       }
-    }));
+    }
+    if (!p) { A(`watchOpen ${symName}: not found`); return; }
+    try {
+      const l = Interceptor.attach(p, {
+        onEnter(args) {
+          const pathArg = (symName === 'openat') ? args[1] : args[0];
+          try {
+            const path = pathArg.readCString() || '';
+            this.statusFd = path.includes('status');
+          } catch (e) { this.statusFd = false; }
+        },
+        onLeave(retval) {
+          if (this.statusFd && retval.toInt32() >= 0)
+            procStatusFds.add(retval.toInt32());
+        }
+      });
+      statusListeners.push(l);
+      A(`hooked ${symName}`);
+    } catch (e) { A(`hook ${symName} failed: ${e}`); }
   }
   watchOpen('open');
   watchOpen('openat');
-  hook('read', null, 'read', () => ({
-    onEnter(args) {
-      this.fd = args[0].toInt32(); this.buf = args[1];
-      this.patch = procStatusFds.has(this.fd);
-    },
-    onLeave(retval) {
-      if (!this.patch) return;
-      const n = retval.toInt32();
-      if (n <= 0) return;
-      try {
-        const text = this.buf.readUtf8String(n);
-        if (text && /TracerPid:\s*[1-9]/.test(text)) {
-          const patched = text.replace(/TracerPid:\s*\d+/g, 'TracerPid:\t0');
-          this.buf.writeUtf8String(patched);
-          A('TracerPid in /proc/self/status patched to 0');
-        }
-      } catch (e) {}
+
+  const readSym = (function() {
+    let p = null;
+    try { p = Module.findExportByName(null, 'read'); } catch (e) {}
+    if (!p) {
+      for (const m of Process.enumerateModules()) {
+        try { const a = m.findExportByName('read'); if (a) { p = a; break; } } catch (e) {}
+      }
     }
-  }));
+    return p;
+  })();
+  if (readSym) {
+    try {
+      const l = Interceptor.attach(readSym, {
+        onEnter(args) {
+          this.fd = args[0].toInt32(); this.buf = args[1];
+          this.patch = procStatusFds.has(this.fd);
+        },
+        onLeave(retval) {
+          if (!this.patch) return;
+          const n = retval.toInt32();
+          if (n <= 0) return;
+          try {
+            const text = this.buf.readUtf8String(n);
+            if (text && /TracerPid:\s*[1-9]/.test(text)) {
+              const patched = text.replace(/TracerPid:\s*\d+/g, 'TracerPid:\t0');
+              this.buf.writeUtf8String(patched);
+              A('TracerPid in /proc/self/status patched to 0');
+            }
+          } catch (e) {}
+        }
+      });
+      statusListeners.push(l);
+      A('hooked read (TracerPid filter)');
+    } catch (e) { A(`hook read failed: ${e}`); }
+  }
+
+  // Auto-detach the high-frequency hooks after the shield's checks
+  // are over. ptrace/prctl/syscall stay armed indefinitely.
+  setTimeout(() => {
+    for (const l of statusListeners) {
+      try { l.detach(); } catch (e) {}
+    }
+    statusListeners.length = 0;
+    procStatusFds.clear();
+    if (typeof _fcap === 'function')
+      _fcap('anti-anti-debug status hooks detached after 12s');
+  }, 12000);
 
   // Refuse-to-die: replace every plausible self-kill with a no-op stub.
   // Use ONLY Interceptor.replace (not attach) — they conflict and the
@@ -218,29 +275,85 @@ function installAntiAntiDebug() {
   // when Shamiko hides Magisk from the app, the shield's tamper-detect
   // doesn't fire in the first place, so no 0xdead* deref happens.)
 
-  // Catch signal-based aborts as a backup (skip offending instruction,
-  // advance PC by 4 — ARM64 fixed-width).
+  // Catch signal-based aborts as a backup. The shield's tamper-die
+  // primitive does an indirect call into a magic-PC unmapped page —
+  // typically a `BLR Xn` where Xn ∈ {0xdead3000, 0xdead5019}. The CPU
+  // faults at the first byte of the magic page; advancing PC by 4
+  // each time would just walk further into the unmapped page and
+  // generate another SIGSEGV → infinite skip loop, megabytes of log
+  // spam, and no actual recovery.
+  //
+  // Correct fix: when the fault address is in 0xdead* magic range,
+  // simulate "return from the function that was never there" by
+  // restoring PC from LR (x30 on ARM64). This is exactly what `RET`
+  // would do at the end of a real function. The caller's stack frame
+  // is intact so execution resumes at the instruction-after-BLR.
+  //
+  // For non-magic faults we do still advance PC by 4 — those are
+  // single-instruction tamper traps embedded inline in code (e.g.
+  // `BRK` or junk bytes the shield jumped to). Skipping them keeps
+  // us on the original execution path.
+  // Return-to-LR exception handler. Original strategy of advancing PC by
+  // 4 per fault walks the unmapped page byte-by-byte and pegs the JS
+  // thread at >100% emitting log lines for each step (a 256MB capture
+  // log was observed in one 5-second run). Worse, the PC eventually
+  // crosses page boundaries into more unmapped regions or the stack,
+  // generating an ever-growing fault loop.
+  //
+  // New strategy: when ANY non-resolvable fault hits, treat the call
+  // as a no-op and return to the link register (x30). This is what
+  // would happen if the shield had jumped to a real `RET`-ending
+  // function. The caller's stack frame is intact so execution
+  // continues at the instruction-after-BLR.
+  //
+  // Exception logging is rate-limited to the first N events to avoid
+  // amplifying the shield's cost into our own log volume.
+  let _excCount = 0;
+  const _excLogMax = 16;
   try {
     Process.setExceptionHandler(function (details) {
+      _excCount++;
       const t = details.type;
       const addr = details.address;
-      A(`!! exception ${t} @ ${addr} — skipping instruction`);
-      // ARM64 instructions are 4 bytes wide. Advance PC.
-      if (details.context && details.context.pc) {
-        details.context.pc = details.context.pc.add(4);
+      const ctx = details.context;
+      const addrStr = addr ? addr.toString() : '';
+      if (ctx) {
+        // Frida ARM64 CpuContext exposes the link register as `lr`.
+        // Some older builds also accept `x30` as an alias; try both.
+        const lr = ctx.lr || ctx.x30;
+        if (lr) {
+          if (_excCount <= _excLogMax) {
+            A(`!! exception #${_excCount} ${t} @ ${addrStr} — RET via lr=${lr}`);
+            if (_excCount === _excLogMax)
+              A(`(further exceptions silenced to avoid log amplification)`);
+          }
+          ctx.pc = lr;
+        } else if (ctx.pc) {
+          // No LR available (shouldn't happen on ARM64 user-space) —
+          // fall back to PC+=4 with a hard break after the cap.
+          if (_excCount <= _excLogMax)
+            A(`!! exception #${_excCount} ${t} @ ${addrStr} — no LR, PC+=4`);
+          ctx.pc = ctx.pc.add(4);
+        }
       }
       return true; // we handled it
     });
-    A('installed exception handler (signal interceptor)');
+    A('installed exception handler (return-to-LR strategy)');
   } catch (e) { A(`exception handler install failed: ${e}`); }
 
   A('anti-anti-debug installed');
 }
 
-// Delay so the loader has time to map libc/etc. into the process. At
-// pure spawn-mode entry the dynamic linker has only just started; by
-// the time setTimeout fires libc is fully linked and findExportByName
-// can resolve symbols.
+// Synchronous install at gadget dlopen time blocks Bambu's dynamic
+// linker from advancing past dlopen() — the loader stalls before
+// .init_array, so the app never starts. Defer to setTimeout(50): the
+// linker resumes immediately, and our hooks land before the shield's
+// ptrace-daemon thread is up.
+//
+// Even at 50ms there is a window in which the shield could ptrace
+// successfully — but the return-to-LR exception handler (installed
+// inside installAntiAntiDebug) covers the tamper-die path that fires
+// when we later interfere. So an early ptrace race is non-fatal.
 setTimeout(installAntiAntiDebug, 50);
 
 // ---------- helpers ---------------------------------------------------------
