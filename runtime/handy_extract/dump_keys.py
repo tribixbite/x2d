@@ -228,14 +228,32 @@ def main():
     ap.add_argument("--attach", action="store_true",
                     help="Attach instead of spawn (use if Handy is already running)")
     ap.add_argument("--device", help="Frida device id (USB serial or ip:port)")
+    ap.add_argument("--host", help="Remote frida-server host:port "
+                                   "(e.g. '127.0.0.1:27042' after `adb forward`)")
     ap.add_argument("--package", default=PKG)
     ap.add_argument("--timeout", type=int, default=0,
                     help="Auto-detach after N seconds (0 = run forever)")
     args = ap.parse_args()
 
     if args.device:
-        dev = frida.get_device(args.device)
+        # Allow either a frida device id or "host:port" remote.
+        if ":" in args.device and "@" not in args.device:
+            mgr = frida.get_device_manager()
+            try:
+                dev = mgr.add_remote_device(args.device)
+            except frida.InvalidArgumentError:
+                # already added — find it
+                dev = next((d for d in mgr.enumerate_devices()
+                            if d.id == f"socket@{args.device}" or d.id == args.device),
+                           None)
+                if dev is None:
+                    raise
+        else:
+            dev = frida.get_device(args.device)
+    elif args.host:
+        dev = frida.get_device_manager().add_remote_device(args.host)
     else:
+        # Default to USB-attached if nothing specified.
         dev = frida.get_usb_device(timeout=10)
     print(f"device: {dev.name} ({dev.id})")
 
@@ -251,10 +269,15 @@ def main():
         session = dev.attach(pid)
     else:
         sess.log(f"spawning {args.package}")
-        pid = dev.spawn([args.package])
+        # Android spawn API takes a single string, NOT a list — passing a
+        # list raises "the 'argv' option is not supported when spawning
+        # Android apps". Confirmed against frida 17.2.x.
+        pid = dev.spawn(args.package)
         session = dev.attach(pid)
 
-    script = session.create_script(HOOK_JS.read_text())
+    # V8 runtime gives us the Java bridge for okhttp/Conscrypt logging;
+    # QuickJS is leaner but Java-less. Default to V8.
+    script = session.create_script(HOOK_JS.read_text(), runtime="v8")
     script.on("message", lambda m, d: on_message(sess, m, d))
     script.load()
     if not args.attach:

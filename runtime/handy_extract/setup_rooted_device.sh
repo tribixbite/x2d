@@ -50,20 +50,32 @@ fi
 echo "  root: ok (uid=0 via su)"
 
 # ------------------------------------------------------------------- 4. frida-server
-# We use the StrongR anti-detect fork because Bambu Handy is wrapped by what
-# appears to be Promon SHIELD ≥7.0 + Tencent Tinker hot-patch, both of which
-# scan for vanilla frida-server's process name + symbol fingerprints.
-step "4/7 — install StrongR-Frida server (anti-detect)"
-FRIDA_VER="${FRIDA_VER:-16.5.6}"   # bump if hzzheyang releases a newer build
-FRIDA_BIN="hluda-server-${FRIDA_VER}-${FRIDA_ARCH}"
-FRIDA_URL="https://github.com/hzzheyang/strongR-frida-android/releases/download/${FRIDA_VER}/${FRIDA_BIN}.xz"
+# Try mainline frida-server first — most Android apps don't actually trigger
+# the Promon-class detection that StrongR / hluda are built to evade. If
+# Bambu Handy crashes on launch under mainline Frida, switch to a forked
+# anti-detect build by setting FRIDA_FORK=strongr (StrongR no longer ships
+# prebuilts as of 2026; build yourself or use a community mirror).
+step "4/7 — install frida-server"
+FRIDA_VER="${FRIDA_VER:-17.9.3}"
+FRIDA_FORK="${FRIDA_FORK:-mainline}"
+case "$FRIDA_FORK" in
+  mainline)
+    FRIDA_BIN="frida-server-${FRIDA_VER}-${FRIDA_ARCH}"
+    FRIDA_URL="https://github.com/frida/frida/releases/download/${FRIDA_VER}/${FRIDA_BIN}.xz"
+    ;;
+  strongr|hluda)
+    FRIDA_BIN="hluda-server-${FRIDA_VER}-${FRIDA_ARCH}"
+    FRIDA_URL="https://github.com/hzzheyang/strongR-frida-android/releases/download/${FRIDA_VER}/${FRIDA_BIN}.xz"
+    ;;
+  *) fatal "unknown FRIDA_FORK: $FRIDA_FORK (use mainline or strongr)" ;;
+esac
 LOCAL_DIR="$(dirname "$(realpath "$0")")/cache"
 mkdir -p "$LOCAL_DIR"
 LOCAL_XZ="$LOCAL_DIR/${FRIDA_BIN}.xz"
 LOCAL_BIN="$LOCAL_DIR/${FRIDA_BIN}"
 if [ ! -f "$LOCAL_BIN" ]; then
   echo "  downloading $FRIDA_URL"
-  curl -fsSL "$FRIDA_URL" -o "$LOCAL_XZ" || fatal "download failed — check FRIDA_VER (try a newer release)"
+  curl -fsSL "$FRIDA_URL" -o "$LOCAL_XZ" || fatal "download failed for $FRIDA_FORK $FRIDA_VER — try a different FRIDA_VER or FRIDA_FORK"
   xz -d -f "$LOCAL_XZ"
 fi
 chmod +x "$LOCAL_BIN"

@@ -82,7 +82,7 @@ function mpi2hex(p) {
 }
 
 // Hexdump a small region for log messages.
-function hexdump(p, n) {
+function hexstr(p, n) {
   if (p.isNull()) return '<null>';
   const buf = p.readByteArray(Math.min(n, 256));
   return Array.from(new Uint8Array(buf))
@@ -117,32 +117,38 @@ function sniffBuffer(label, buf, len) {
   PRINT(`[sniff] ${label} → ${kind}, ${len} bytes`);
   EMIT('blob', {
     label, kind, len,
-    bytes_hex: hexdump(buf, len)
+    bytes_hex: hexstr(buf, len)
   });
 }
 
 // ---------- crypto hooks ----------------------------------------------------
 
 function hookOpenSSL() {
-  const candidates = ['libcrypto.so', 'libssl.so', 'libflutter.so', 'libapp.so'];
+  const candidateNames = ['libcrypto.so', 'libssl.so', 'libflutter.so', 'libapp.so'];
+  // Multiple libcrypto.so instances are loaded into Bambu Handy (system,
+  // bundled, possibly Conscrypt's). Enumerate all modules whose name matches
+  // any candidate, not just the first via findExportByName.
+  const allModules = Process.enumerateModules();
+  const candidateMods = allModules.filter(m =>
+    candidateNames.some(n => m.name === n || m.name.startsWith(n + '.')));
   let hooks = 0;
 
-  function tryHook(modName, sym, mkHandler) {
+  function tryHook(mod, sym, mkHandler) {
     let addr = null;
-    try { addr = Module.findExportByName(modName, sym); } catch (e) {}
+    try { addr = mod.findExportByName(sym); } catch (e) {}
     if (!addr) return false;
     try {
-      Interceptor.attach(addr, mkHandler(modName, sym));
-      PRINT(`hooked ${modName}!${sym} @ ${addr}`);
+      Interceptor.attach(addr, mkHandler(mod.name, sym));
+      PRINT(`hooked ${mod.name}@${mod.base}!${sym} @ ${addr}`);
       hooks++;
       return true;
     } catch (e) {
-      PRINT(`failed to hook ${modName}!${sym}: ${e}`);
+      PRINT(`failed to hook ${mod.name}!${sym}: ${e}`);
       return false;
     }
   }
 
-  candidates.forEach(mod => {
+  candidateMods.forEach(mod => {
     // EVP_PKEY_sign(ctx, sig, *siglen, tbs, tbslen)
     tryHook(mod, 'EVP_PKEY_sign', (m, s) => ({
       onEnter(args) {
@@ -313,7 +319,13 @@ function hookMbedTLS() {
 }
 
 function hookHTTPS() {
-  // Java side: log every Bambu cloud HTTPS request via okhttp3 Interceptor.
+  // Java runtime is only available when Frida runs the V8 runtime AND the
+  // app has loaded ART. QuickJS doesn't expose Java at all. Treat as
+  // best-effort.
+  if (typeof Java === 'undefined' || !Java.available) {
+    PRINT('  Java bridge unavailable (likely QuickJS runtime); skipping HTTPS hooks');
+    return;
+  }
   Java.perform(() => {
     try {
       const Url = Java.use('java.net.URL');
