@@ -115,3 +115,63 @@ In rough order, things that could go wrong and how to diagnose them:
 
 Each of these has a documented workaround; the README in the parent dir
 captures any updates we make as we run this against your actual device.
+
+## Path #4 — process-memory dump of unpacked shield (2026-04-30)
+
+Goal: capture the unpacked Promon SHIELD code from anonymous executable
+mappings so we can statically locate the conditional branch that gates the
+0xdead5019 tamper-die `BR x0`, then patch it.
+
+### Pipeline
+
+| File | Purpose |
+|---|---|
+| `dump_unpacker.sh` | Force-stops Bambu, optionally flips `enabled:false` in `/data/local/tmp/re.zyg.fri/config.json` to disable Frida targeting (no Magisk module mutation, no reboot), launches via monkey, polls `/proc/PID/maps` every 200 ms for `r-xp 00000000 00:00 0` mappings tagged `[anon:.bss]`, then `dd if=/proc/PID/mem` each region to `/data/local/tmp/handy_anon_*.bin` and pulls to `cache/anon_dumps/`. |
+| `analyze_shield.py` | Capstone-disassembles each dump and scans for (a) MOVZ+MOVK pairs producing 0xdead5019 across all 31 GP regs and both half orderings, (b) raw 32-bit and 64-bit literal occurrences of 0xdead5019, (c) every LDR-literal that references such a literal. For each hit: prints the function prologue offset, the conditional-branch gate, and the patch byte to write. |
+| `find_brx0.py` | Lists every `BR x0` (`0xd61f0000`) site in the shield region with 16-instruction context — used to confirm Promon obfuscation pattern. |
+| `scan_xor_keys.py` | Scans for XOR-encoded representations of 0xdead5019 and the rev/rbit/~/- variants in the shield's data section. |
+| `shield_patch.js` | Frida shim that locates the shield region by BR-x0 density, then installs a `Process.setExceptionHandler` to absorb the SIGBUS at 0xdead5019. **TODO**: replace the absorb-only handler with a `pthread_exit`-on-Thread-2 jump to keep the process running. |
+
+### Findings
+
+1. **Three anonymous executable mappings appear in the running process**:
+   - `[anon:.bss] 0x705e482000 size 0x2e4000` (3.03 MB) — **the shield**, BR-x0 count 141
+   - `[anon:.bss] 0x7030179000 size 0x9f2000` (10.4 MB) — Flutter VM JIT, 0 BR-x0
+   - `[anon:.bss] 0x7030b78000 size 0x142f000` (20.5 MB) — Flutter VM heap, 0 BR-x0
+2. **Static analysis cannot find a patch site.** Across all dumps:
+   - 0 MOVZ+MOVK pairs that materialize 0xdead5019 (any reg, any order).
+   - 0 raw 32-bit literal `0xdead5019` occurrences.
+   - 0 raw 64-bit literal occurrences.
+   - 0 hits for rev/rbit/~/- transformations.
+   - Only 1 non-trivial XOR pair (a XOR b == 0xdead5019), 1.4 MB apart in
+     the dump → almost certainly coincidental.
+3. **The shield is fully Promon-obfuscated.** Every BR x0 site is preceded
+   by an XOR-swap-style identity sequence
+   (`add Xn,Xn,Xm; sub Xm,Xn,Xm; sub Xn,Xn,Xm`) that reduces to a no-op,
+   plus stack loads and small-immediate sub/adds. The magic value
+   0xdead5019 is **constructed at runtime** through arithmetic over
+   register values whose origins are themselves obfuscated stack loads.
+   There is **no static instruction byte sequence that always produces
+   0xdead5019** — meaning there is no static patch-the-decision target.
+
+### Implication
+
+Path #4 (memory dump → static patch) does not yield a clean fix. The shield
+must be defeated either:
+
+a. **Dynamically** by intercepting all 141 BR x0 sites with Frida + Stalker
+   and overwriting x0 just before the BR — but the shield CRCs its own
+   pages once per second (typical Promon design), so any patched
+   instruction triggers a re-tamper-detection.
+
+b. **By absorbing SIGBUS** at 0xdead5019 and re-routing the dying thread to
+   `pthread_exit` so only the tamper-detection thread dies (the rest of the
+   process keeps running). This is what `shield_patch.js` sets up.
+
+c. **By disabling the unpacker entirely** — patch `assets/l6a18f19c_a64.so`'s
+   loader stub in `libapp.so` so the shield never gets mapped. This is
+   path #2 and lives in the parent `runtime/handy_extract/` discussion.
+
+The dumps themselves remain valuable for offline analysis of the shield's
+syscall set and for any future signature-based detection of the shield
+across other Bambu app versions.
