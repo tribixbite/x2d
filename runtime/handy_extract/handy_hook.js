@@ -238,6 +238,16 @@ function installAntiAntiDebug() {
   // every prctl/syscall via the JS VM). The exception handler stays
   // installed because `Process.setExceptionHandler` is process-wide
   // and not a per-call hook.
+  // 5-minute detach window to keep shield-bypass active during the full
+  // OAuth login flow (user opens app → "Me" tab → Chrome custom tab →
+  // credentials → deep-link callback → cert mint). Earlier 12 s window
+  // stranded Bambu after the deep-link return because the shield's
+  // tamper-die saw our gadget once the read filter detached, infinite-
+  // looped through PC+=4 across unmapped pages, and starved the Dart
+  // UI thread. 5 min covers a comfortable login walkthrough; raise to
+  // `Number.MAX_SAFE_INTEGER` for indefinite filtering if the user
+  // takes longer.
+  const SHIELD_DETACH_MS = 300000;
   setTimeout(() => {
     let n = 0;
     for (const l of statusListeners) { try { l.detach(); n++; } catch (e) {} }
@@ -246,8 +256,9 @@ function installAntiAntiDebug() {
     for (const l of shieldListeners) { try { l.detach(); n++; } catch (e) {} }
     shieldListeners.length = 0;
     if (typeof _fcap === 'function')
-      _fcap('[anti] all shield-bypass hooks detached (' + n + ' listeners) after 12s');
-  }, 12000);
+      _fcap('[anti] all shield-bypass hooks detached (' + n + ' listeners) after '
+            + (SHIELD_DETACH_MS / 1000) + 's');
+  }, SHIELD_DETACH_MS);
 
   // Refuse-to-die: replace every plausible self-kill with a no-op stub.
   // Use ONLY Interceptor.replace (not attach) — they conflict and the
@@ -379,15 +390,17 @@ function installAntiAntiDebug() {
             A(`(further exceptions silenced to avoid log amplification)`);
         }
         ctx.pc = lr;
-      } else if (ctx.pc) {
-        // LR is null/zero/clearly invalid. PC+=4 is unlikely to recover
-        // (caller is probably in unmapped space), but at least it
-        // doesn't infinite-recurse on the same address.
-        if (_excCount <= _excLogMax)
-          A(`!! exception #${_excCount} ${t} @ ${addrStr} — invalid lr=${lr}, PC+=4`);
-        ctx.pc = ctx.pc.add(4);
+        return true;
       }
-      return true; // we handled it
+      // LR is null/zero/clearly invalid. PC+=4 walks the unmapped page
+      // 4 bytes at a time and produces 64+ further faults before reaching
+      // anything meaningful (which it never does — magic-PC pages are
+      // never mapped). Don't bother. Bail on the first invalid-lr
+      // exception and let the kernel deliver SIGSEGV — the process will
+      // die with a clean tombstone, far better diagnosis than a long
+      // PC-walk leading to the same outcome.
+      A(`!! exception #${_excCount} ${t} @ ${addrStr} — invalid lr=${lr}, propagating signal (process will be killed)`);
+      return false; // not handled — let kernel kill the process
     });
     A('installed exception handler (return-to-LR with NativePointer-isNull fix)');
   } catch (e) { A(`exception handler install failed: ${e}`); }

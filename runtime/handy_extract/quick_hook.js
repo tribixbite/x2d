@@ -18,7 +18,13 @@
 'use strict';
 const A = (m) => send({type:'log', msg:'[q] ' + m});
 
-const FILTER_WINDOW_MS = 12000;  // detach interceptors after this many ms
+// Earlier 12 s default was too short — the shield's tamper-die fires on
+// every /proc/self/maps re-read, including during user-driven flows like
+// "tap Me → OAuth deep-link comes back → cert fetch". 5 min covers a full
+// realistic login + first-printer-bind walkthrough; can be raised to
+// `Infinity` for indefinite filtering at the cost of ~5 µs JS-bridge
+// overhead per libc read() across the entire process lifetime.
+const FILTER_WINDOW_MS = 300000;  // detach interceptors after this many ms
 
 // 1. Find symbols
 function findSym(name) {
