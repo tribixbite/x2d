@@ -148,38 +148,60 @@ function installAntiAntiDebug() {
     }
   }));
 
-  // Refuse-to-die: hook every plausible self-kill so the shield's
-  // tamper-response can't take the process down. abort, _exit, exit,
-  // pthread_exit, raise. NOPing these means the shield's "I detected
-  // something, kill the process" handlers do nothing.
-  for (const sym of ['abort', '_exit', 'exit', 'pthread_exit', 'raise', 'kill', 'tgkill']) {
-    hook(sym, null, sym, () => ({
-      onEnter(args) {
-        A(`!! self-kill ${sym}() blocked (caller=${this.returnAddress})`);
-        // For functions that take args (raise/kill/tgkill), return early
-        // by overwriting the return value would be ideal but Frida's
-        // onEnter can't replace a function entirely. Use NativeFunction
-        // replacement instead.
-      }
-    }));
-  }
-  // Replace abort/_exit/exit/pthread_exit with no-op stubs that just
-  // return immediately without doing anything. This is more aggressive
-  // than Interceptor.attach onEnter which still runs the original.
-  for (const sym of ['abort', '_exit', 'exit', 'pthread_exit']) {
+  // Refuse-to-die: replace every plausible self-kill with a no-op stub.
+  // Use ONLY Interceptor.replace (not attach) — they conflict and the
+  // attach version doesn't actually skip the original call. raise/kill/
+  // tgkill take args but we replace with a stub that returns 0 (success)
+  // without actually doing anything. abort/_exit/exit/pthread_exit are
+  // [[noreturn]] but our stub just returns, which the caller's prolog
+  // didn't expect — they assume the call doesn't return — but in
+  // practice the caller's stack is intact and it just continues past
+  // the call site.
+  function replaceNoop(sym, retType, argTypes) {
     let p = null;
     try { p = Module.findExportByName(null, sym); } catch (e) {}
-    if (!p) continue;
+    if (!p) {
+      // Same per-module fallback as hook(): early in process, the global
+      // export table may not be populated yet, so iterate modules manually.
+      for (const m of Process.enumerateModules()) {
+        try { const a = m.findExportByName(sym); if (a) { p = a; break; } } catch (e) {}
+      }
+    }
+    if (!p) { A(`no-op replace ${sym}: not found`); return; }
     try {
-      Interceptor.replace(p, new NativeCallback(function() {
-        send({type:'log', msg:`[anti] !! ${sym}() called — silently returning`});
-        // Don't actually exit. Returning from the NativeCallback returns
-        // from the libc function, which lets the app continue.
-        return;
-      }, 'void', []));
-      A(`replaced ${sym} with no-op stub`);
+      const stub = new NativeCallback(function() {
+        send({type:'log', msg:`[anti] !! ${sym}() suppressed`});
+        // Return 0 (or void). For abort etc., callers don't read retval.
+      }, retType, argTypes);
+      Interceptor.replace(p, stub);
+      A(`replaced ${sym} with no-op stub @ ${p}`);
     } catch (e) { A(`replace ${sym} failed: ${e}`); }
   }
+  replaceNoop('abort',         'void', []);
+  replaceNoop('_exit',         'void', ['int']);
+  replaceNoop('exit',          'void', ['int']);
+  replaceNoop('pthread_exit',  'void', ['pointer']);
+  replaceNoop('raise',         'int',  ['int']);
+  replaceNoop('kill',          'int',  ['int', 'int']);
+  replaceNoop('tgkill',        'int',  ['int', 'int', 'int']);
+
+  // Catch signal-based aborts (SIGSEGV from shield-deliberate null deref,
+  // SIGBUS, SIGILL etc.). When a signal hits, skip the offending
+  // instruction (advance PC by 4 bytes — ARM64 instructions are
+  // fixed-width) and resume execution.
+  try {
+    Process.setExceptionHandler(function (details) {
+      const t = details.type;
+      const addr = details.address;
+      A(`!! exception ${t} @ ${addr} — skipping instruction`);
+      // ARM64 instructions are 4 bytes wide. Advance PC.
+      if (details.context && details.context.pc) {
+        details.context.pc = details.context.pc.add(4);
+      }
+      return true; // we handled it
+    });
+    A('installed exception handler (signal interceptor)');
+  } catch (e) { A(`exception handler install failed: ${e}`); }
 
   A('anti-anti-debug installed');
 }
