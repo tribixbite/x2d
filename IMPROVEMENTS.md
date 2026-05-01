@@ -2087,3 +2087,58 @@ v1.0 ship-readiness was never gated on them.
        ~30-60 min.
     3. **proot + Alpine + mitmproxy bundle on Saga**, runs as root
        via Magisk. Bypasses all UID-namespace issues. ~1 h first time.
+
+  **Update — 2026-04-30 session pt.3** (commits 3896472, 913a67d, f626d2a,
+  f588c64). Major progress on cert-pinning bypass via APK binary patching.
+
+  **Path: APK binary patch** — works but partial. Discovered & implemented:
+
+    1. `runtime/handy_extract/patch_libflutter_apk.py` — reproducible binary
+       patcher for `split_config.arm64_v8a.apk`'s libflutter.so.
+    2. Two patches landed:
+         a. `ASN1_item_verify` (libflutter VA 0x6f4794) → returns 1
+         b. `SecurityContext_SetTrustedCertificatesBytes` (libflutter VA
+            0x85672c) → branches directly to `SecurityContext_TrustBuiltinRoots`
+            (VA 0x859234), so Bambu's "set custom CA bytes" call silently
+            becomes "trust system roots".
+    3. Function addresses discovered by parsing `.rela.dyn` for
+       R_AARCH64_RELATIVE entries pointing at the `SecurityContext_*`
+       binding-name strings — each binding-table entry is two consecutive
+       RELATIVE relocations. Same trick locates ANY Flutter-Dart native
+       binding without symbols.
+    4. Shield does NOT detect the patch — APK signature is install-time
+       only, in-place mutation of `.so` bytes inside the APK is not
+       re-verified by PackageManager. Bambu launches with 102 threads,
+       MainActivity active, X2D online with live cam + temps.
+    5. iptables NAT redirect (UID 10217 → mitmproxy on 0.0.0.0:18080
+       via Termux-on-Saga, Path #2) now captures 73 redirected TLS
+       connections.
+
+  **Result — partial:** `ip-api.com/json` (third-party GeoIP) returns 200 OK
+  through mitmproxy with full cleartext capture, proving the trust-roots
+  patch is functional. ALL of Bambu's own domains
+  (`api.bambulab.com`, `ab.bblmw.com`, `api.lunkuocorp.com`,
+  `event.bblmw.com`, `event.lunkuocorp.com`) still TLS-handshake-fail
+  with `"client does not trust the proxy's certificate"`.
+
+  **Conclusion:** Bambu has SHA-256 fingerprint pinning at the Dart layer
+  in libapp.so on top of SecurityContext. We have the actual cert-chain
+  fingerprints (leaf, intermediate, root cert + pubkey SHA-256s for
+  api.bambulab.com via openssl s_client), but NONE of them appear in
+  libapp.so or libflutter.so as plaintext bytes, base64, or hex strings —
+  Dart AOT string-obfuscation is fully active. libapp.so has zero
+  plaintext "pinning"/"certificate"/"bambulab.com" strings.
+
+  **What's needed for full bypass** (multi-day work):
+    - RE the obfuscated string pool in libapp.so to find decrypted form of
+      pinning fingerprint list, OR
+    - Locate BoringSSL's `verify_callback` registration site in libflutter.so
+      and patch the callback installer to no-op, OR
+    - Hook BoringSSL's SHA-256 finalization path with a Frida script ONLY
+      run during cert-fingerprint computation (Frida triggers shield, so
+      this requires shield bypass which is its own multi-day project).
+
+  **Realistic ship target:** OAuth cloud-mediated bridge (item #67) — uses
+  the Bambu account JWT to send print jobs through Bambu's cloud to the
+  printer. Sidesteps the cert-pinning problem entirely since cert is
+  implicitly used by Bambu's cloud, never needs to leave the app.
