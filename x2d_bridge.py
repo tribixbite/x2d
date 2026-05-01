@@ -1239,6 +1239,21 @@ def _serve_http(bind: str,
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            # Cloud-side routes (item #67) — sidestep the LAN credentials
+            # check because the cloud session is keyed on the user's Bambu
+            # account, not on a specific printer in ~/.x2d/credentials.
+            # Each cloud route returns 401 if cloud-login hasn't been run.
+            if path == "/cloud/status":
+                self._send_json(_http_cloud_status()); return
+            if path == "/cloud/printers":
+                code, payload = _http_cloud_printers()
+                self._send_json(payload, status=code); return
+            if path == "/cloud/state":
+                qs = urllib.parse.parse_qs(url.query)
+                serial  = (qs.get("serial") or [""])[0] or None
+                timeout = float((qs.get("timeout") or ["15"])[0])
+                code, payload = _http_cloud_state(serial, timeout)
+                self._send_json(payload, status=code); return
             printer = self._parse_printer()
             self._x2d_printer = printer
             if printer not in names:
@@ -1364,6 +1379,18 @@ def _serve_http(bind: str,
                 result = timelapse_rec.stitch(printer, job_id, fps=fps)
                 self._send_json(result, status=200 if result["ok"] else 500)
                 return
+            # Cloud-side POST routes (item #67).
+            if path == "/cloud/publish":
+                body = self._read_body_json() or {}
+                serial = body.get("serial") or ""
+                payload = body.get("payload")
+                timeout = float(body.get("timeout", 10.0))
+                if not serial or not isinstance(payload, dict):
+                    self._send_json({"error":
+                        "expected {serial: str, payload: dict, timeout?: float}"},
+                        status=400); return
+                code, resp = _http_cloud_publish(serial, payload, timeout)
+                self._send_json(resp, status=code); return
             if not (path.startswith("/control/")
                      or path.startswith("/queue/")
                      or path == "/assistant/chat"):
@@ -3596,6 +3623,127 @@ def cmd_cloud_state(args: argparse.Namespace) -> int:
         c.loop_stop()
         c.disconnect()
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Cloud HTTP helpers — same logic as the cloud-* CLI commands but returning
+# (status_code, JSON-able dict) so the serve HTTP handler can wire them in.
+# Each helper is independently importable / testable.
+# ---------------------------------------------------------------------------
+
+def _http_cloud_status() -> dict:
+    try:
+        import cloud_client
+    except ImportError as e:
+        return {"error": f"cloud_client unavailable: {e}", "logged_in": False}
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        return {"logged_in": False}
+    return {
+        "logged_in":    True,
+        "user_id":      cli.session.user_id,
+        "region":       cli.session.region,
+        "expired":      cli.session.expired,
+        "expires_at":   cli.session.expires_at,
+        "expires_in_s": int(max(0, cli.session.expires_at - time.time())),
+    }
+
+
+def _http_cloud_printers() -> tuple[int, dict]:
+    try:
+        import cloud_client
+    except ImportError as e:
+        return 500, {"error": f"cloud_client unavailable: {e}"}
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        return 401, {"error": "not logged in",
+                     "hint": "POST /cloud/login or run cloud-login first"}
+    try:
+        return 200, {"printers": cli.get_bound_devices()}
+    except cloud_client.CloudError as e:
+        return 502, {"error": f"cloud API failed: {e}",
+                     "status": e.status, "body": e.body}
+
+
+def _http_cloud_state(serial: str | None, timeout: float = 15.0) -> tuple[int, dict]:
+    try:
+        import cloud_client
+    except ImportError as e:
+        return 500, {"error": f"cloud_client unavailable: {e}"}
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        return 401, {"error": "not logged in"}
+    if not serial:
+        try:
+            devs = cli.get_bound_devices()
+        except Exception as e:
+            return 502, {"error": f"can't list bound devices: {e}"}
+        if len(devs) == 1:
+            serial = devs[0].get("dev_id") or devs[0].get("device_id")
+    if not serial:
+        return 400, {"error": "serial required (?serial=XXX) — multiple printers bound"}
+    topic_report  = f"device/{serial}/report"
+    topic_request = f"device/{serial}/request"
+    state_seen: dict = {}
+    pushall_done = _threading.Event()
+
+    def on_connect(c, userdata, flags, rc, properties=None):
+        if rc != 0:
+            return
+        c.subscribe(topic_report, qos=0)
+        c.publish(topic_request, json.dumps({
+            "pushing": {"command": "pushall", "sequence_id": _next_seq(),
+                        "version": 1, "push_target": 1}
+        }))
+
+    def on_message(c, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+        except Exception:
+            payload = {"_raw": msg.payload.decode("utf-8", errors="replace")}
+        state_seen.update(payload)
+        if any(k in payload for k in ("print", "system", "info")):
+            pushall_done.set()
+
+    c = _cloud_mqtt_connect(serial, cli)
+    c.on_connect = on_connect
+    c.on_message = on_message
+    c.loop_start()
+    try:
+        if not pushall_done.wait(timeout=timeout):
+            return 504, {"error": f"timeout after {timeout}s",
+                         "partial": state_seen, "serial": serial}
+        return 200, {"serial": serial, "state": state_seen}
+    finally:
+        c.loop_stop()
+        c.disconnect()
+
+
+def _http_cloud_publish(serial: str, payload: dict,
+                        timeout: float = 10.0) -> tuple[int, dict]:
+    try:
+        import cloud_client
+    except ImportError as e:
+        return 500, {"error": f"cloud_client unavailable: {e}"}
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        return 401, {"error": "not logged in"}
+    topic_request = f"device/{serial}/request"
+    c = _cloud_mqtt_connect(serial, cli)
+    published = _threading.Event()
+    def on_publish(client, userdata, mid, reason_code=None, properties=None):
+        published.set()
+    c.on_publish = on_publish
+    c.loop_start()
+    try:
+        info = c.publish(topic_request, json.dumps(payload), qos=1)
+        info.wait_for_publish(timeout=timeout)
+        if not published.wait(timeout=timeout):
+            return 504, {"error": f"no broker ack in {timeout}s"}
+        return 200, {"published": True, "topic": topic_request, "payload": payload}
+    finally:
+        c.loop_stop()
+        c.disconnect()
 
 
 def _cloud_publish_payload(serial: str, payload: dict, timeout: float = 10.0) -> int:
