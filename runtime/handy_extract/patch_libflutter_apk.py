@@ -147,6 +147,9 @@ PATCHES = [
      'SSL_CTX_set_cert_verify_callback -> NULL out cert_verify_callback'),
     (0x8525e0, b'\xff\x03\x01\xd1\xfe\x0b\x00\xf9', b'\x20\x00\x80\x52\xc0\x03\x5f\xd6',
      'BadCertificateCallback dispatcher -> mov w0,#1; ret'),
+    (0x85748c, b'\xff\xc3\x02\xd1', b'\x6a\x07\x00\x14',
+     'SetClientAuthoritiesBytes -> b TrustBuiltinRoots(+0x1da8) [residual fix attempt]'),
+
 ]
 
 def main():
