@@ -582,18 +582,143 @@ class CloudClient:
 
     def cloud_get_upload_token(self, count: int = 1) -> dict:
         """Get a one-shot OSS upload credential the printer can pull from.
-        Response (paraphrased):
+
+        Two response shapes have been observed in the wild (Bambu's API
+        versioning is murky; pybambu / openhab-addons handle both):
+
+          shape A (presigned PUT URL — easier path):
             {
-              accessKeyId, accessKeySecret, securityToken, expiration,
-              bucket, region, fileSavePath
+              "url":      "https://<bucket>.oss-<region>.aliyuncs.com/<path>?<sig>",
+              "fileName": "<fileSavePath>",
+              "size":     <bytes>,                 # optional max
+              "expireAt": <unix_seconds>
             }
-        Use these to PUT the .3mf via OSS, then send the printer the
-        `cloud://<bucket>/<fileSavePath>` URL inside `print.project_file`.
-        Bambu's printer firmware downloads via cloud channel + verifies
-        the OSS-side signature, sidestepping the LAN-direct
-        verify-failure entirely."""
-        # The exact endpoint name has shifted across Bambu's API versions;
-        # current observed (Apr 2026) is /v1/iot-service/api/user/file/oss/upload-token.
+          shape B (STS-style — caller must HMAC-SHA1 sign):
+            {
+              "accessKeyId":     "<sts_key>",
+              "accessKeySecret": "<sts_secret>",
+              "securityToken":   "<sts_token>",
+              "expiration":      "<iso8601>",
+              "bucket":          "<bucket>",
+              "region":          "<region>",
+              "fileSavePath":    "<dest_path>"
+            }
+
+        Caller can dispatch on `"url" in r` to pick the upload method.
+
+        Once uploaded, send the printer `print.project_file` with
+        `print_type=cloud` and `url=cloud://<bucket>/<fileSavePath>`.
+        Bambu's firmware then pulls via the cloud channel — sidesteps
+        the LAN-direct verify-failure entirely."""
         return self._authed_get(
             f"/v1/iot-service/api/user/file/oss/upload-token?count={int(count)}"
         )
+
+    def cloud_upload_file(self, file_path: str | Path, *,
+                          token: dict | None = None) -> dict:
+        """End-to-end: get an OSS upload token, PUT the local file to OSS,
+        return the cloud://<bucket>/<path> URL the printer will pull from
+        plus MD5 + size for the print.project_file payload.
+
+        Returns a dict ready to merge into the MQTT payload:
+            {
+              "url":  "cloud://<bucket>/<file_save_path>",
+              "md5":  "<hex>",
+              "size": <bytes>,
+              "remote_name": "<basename>"
+            }
+        """
+        import hashlib
+        path = Path(str(file_path))
+        if not path.is_file():
+            raise CloudError(f"file not found: {path}")
+        body = path.read_bytes()
+        md5 = hashlib.md5(body).hexdigest()
+
+        if token is None:
+            token = self.cloud_get_upload_token(count=1)
+
+        # Shape A — presigned URL. Just PUT to it.
+        if isinstance(token, dict) and token.get("url") and "Signature" in token.get("url", ""):
+            put_url = token["url"]
+            file_save_path = token.get("fileName") or token.get("fileSavePath") or path.name
+            req = urllib.request.Request(
+                put_url, data=body, method="PUT",
+                headers={"Content-Type": "application/octet-stream",
+                         "Content-Length": str(len(body))},
+            )
+            try:
+                resp = urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT * 4)
+                if resp.status not in (200, 201, 204):
+                    raise CloudError(f"OSS PUT returned {resp.status}",
+                                     status=resp.status)
+            except urllib.error.HTTPError as e:
+                raise CloudError(f"OSS PUT failed: {e}", status=e.code,
+                                 body=e.read().decode("utf-8", errors="replace")) from None
+
+            # Bucket is embedded in the URL host: <bucket>.oss-<region>.aliyuncs.com
+            bucket = ""
+            try:
+                host = urllib.parse.urlparse(put_url).hostname or ""
+                if host.endswith(".aliyuncs.com"):
+                    bucket = host.split(".", 1)[0]
+            except Exception:
+                pass
+            return {
+                "url":          f"cloud://{bucket}/{file_save_path}" if bucket else put_url,
+                "md5":          md5,
+                "size":         len(body),
+                "remote_name":  path.name,
+            }
+
+        # Shape B — STS credentials. Need HMAC-SHA1 signed Authorization.
+        # Aliyun OSS V1 signing: per the Aliyun docs, the canonical string is:
+        #   VERB + "\n" + Content-MD5 + "\n" + Content-Type + "\n" +
+        #   Date + "\n" + CanonicalizedOSSHeaders + CanonicalizedResource
+        # where CanonicalizedOSSHeaders includes lowercase x-oss-* headers
+        # sorted by header name; for STS, x-oss-security-token is required.
+        import hmac as _hmac, hashlib as _hashlib, base64 as _base64
+        from email.utils import formatdate as _formatdate
+        if not all(k in token for k in ("accessKeyId", "accessKeySecret",
+                                        "bucket", "fileSavePath")):
+            raise CloudError(f"upload-token shape unrecognised: {sorted(token.keys())}")
+        ak    = token["accessKeyId"]
+        sk    = token["accessKeySecret"]
+        sts   = token.get("securityToken", "")
+        bucket = token["bucket"]
+        region = token.get("region", "cn-shanghai")
+        file_save_path = token["fileSavePath"]
+        date  = _formatdate(usegmt=True)
+        ctype = "application/octet-stream"
+        cmd5  = _base64.b64encode(_hashlib.md5(body).digest()).decode()
+        oss_hdrs = ""
+        if sts:
+            oss_hdrs = f"x-oss-security-token:{sts}\n"
+        canon = (f"PUT\n{cmd5}\n{ctype}\n{date}\n{oss_hdrs}"
+                 f"/{bucket}/{file_save_path}")
+        sig = _base64.b64encode(_hmac.new(sk.encode(), canon.encode(),
+                                          _hashlib.sha1).digest()).decode()
+        host = f"{bucket}.oss-{region}.aliyuncs.com"
+        url  = f"https://{host}/{file_save_path}"
+        headers = {
+            "Date":          date,
+            "Content-Type":  ctype,
+            "Content-MD5":   cmd5,
+            "Authorization": f"OSS {ak}:{sig}",
+        }
+        if sts:
+            headers["x-oss-security-token"] = sts
+        req = urllib.request.Request(url, data=body, method="PUT", headers=headers)
+        try:
+            resp = urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT * 4)
+            if resp.status not in (200, 201, 204):
+                raise CloudError(f"OSS PUT returned {resp.status}", status=resp.status)
+        except urllib.error.HTTPError as e:
+            raise CloudError(f"OSS PUT failed: {e}", status=e.code,
+                             body=e.read().decode("utf-8", errors="replace")) from None
+        return {
+            "url":          f"cloud://{bucket}/{file_save_path}",
+            "md5":          md5,
+            "size":         len(body),
+            "remote_name":  path.name,
+        }

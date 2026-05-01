@@ -3598,6 +3598,127 @@ def cmd_cloud_state(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cloud_print(args: argparse.Namespace) -> int:
+    """Submit a complete cloud-mediated print job:
+       1. Upload the .gcode.3mf to Bambu's OSS via the upload-token API.
+       2. Publish print.project_file with print_type=cloud + the OSS URL
+          to the printer's cloud request topic.
+       3. Bambu cloud relays to the bound printer; printer pulls from OSS.
+    Sidesteps the LAN-direct verify-failure (#65/#66) entirely."""
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        print("not logged in — run `x2d_bridge.py cloud-login` first",
+              file=sys.stderr)
+        return 1
+
+    serial = args.serial or os.environ.get("X2D_SERIAL")
+    if not serial:
+        try:
+            devs = cli.get_bound_devices()
+            if len(devs) == 1:
+                serial = devs[0].get("dev_id") or devs[0].get("device_id")
+        except Exception:
+            pass
+    if not serial:
+        print("--serial required (or set X2D_SERIAL, or have a single bound printer)",
+              file=sys.stderr)
+        return 1
+
+    src = Path(args.file)
+    if not src.is_file():
+        print(f"file not found: {src}", file=sys.stderr)
+        return 1
+
+    # 1. Upload to OSS
+    try:
+        print(f"[cloud-print] uploading {src.name} ({src.stat().st_size} B) "
+              f"to Bambu OSS…", file=sys.stderr)
+        upload = cli.cloud_upload_file(src)
+        print(f"[cloud-print] uploaded → {upload['url']} (md5={upload['md5']})",
+              file=sys.stderr)
+    except cloud_client.CloudError as e:
+        print(f"[cloud-print] upload failed: {e}", file=sys.stderr)
+        return 1
+
+    # 2. Compose the print.project_file payload (cloud variant)
+    job_id_int = int(time.time()) * 10
+    job_id_str = str(job_id_int)
+    name = upload["remote_name"]
+    name_no_3mf = name
+    if name_no_3mf.endswith(".gcode.3mf"):
+        name_no_3mf = name_no_3mf[: -len(".3mf")]
+    elif name_no_3mf.endswith(".3mf"):
+        name_no_3mf = name_no_3mf[: -len(".3mf")] + ".gcode"
+    use_ams = not args.no_ams
+    ams_slot = int(args.slot)
+    payload = {
+        "print": {
+            "sequence_id":              str(int(time.time())),
+            "command":                  "project_file",
+            "param":                    "Metadata/plate_1.gcode",
+            "file":                     name,
+            "url":                      upload["url"],
+            "md5":                      upload["md5"],
+            "task_id":                  job_id_str,
+            "subtask_id":               job_id_str,
+            "subtask_name":             name_no_3mf,
+            "job_id":                   job_id_int,
+            "project_id":               job_id_str,
+            "profile_id":               "0",
+            "design_id":                "0",
+            "model_id":                 "0",
+            "plate_idx":                int(args.plate),
+            "dev_id":                   serial,
+            "job_type":                 1,                 # 1 = CLOUD (vs 0 LAN)
+            "timestamp":                int(time.time()),
+            "bed_type":                 args.bed_type,
+            "bed_temp":                 int(args.bed_temp),
+            "auto_bed_leveling":        1 if not args.no_level else 0,
+            "extrude_cali_flag":        1 if args.flow_cali else 0,
+            "nozzle_offset_cali":       0,
+            "extrude_cali_manual_mode": 0,
+            "flow_cali":                bool(args.flow_cali),
+            "bed_leveling":             not args.no_level,
+            "vibration_cali":           bool(args.vibration_cali),
+            "timelapse":                bool(args.timelapse),
+            "layer_inspect":            False,
+            "use_ams":                  use_ams,
+            "ams_mapping":              [ams_slot] if use_ams else [],
+            "ams_mapping2":             [{"ams_id": ams_slot // 4,
+                                          "slot_id": ams_slot %  4}] if use_ams else [],
+            "skip_objects":             None,
+            "cfg":                      "0",
+        }
+    }
+    if args.dry_run:
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    # 3. Publish via cloud broker
+    topic_request = f"device/{serial}/request"
+    c = _cloud_mqtt_connect(serial, cli)
+    published = _threading.Event()
+    def on_publish(client, userdata, mid, reason_code=None, properties=None):
+        published.set()
+    c.on_publish = on_publish
+    c.loop_start()
+    try:
+        info = c.publish(topic_request, json.dumps(payload), qos=1)
+        info.wait_for_publish(timeout=args.timeout)
+        if not published.wait(timeout=args.timeout):
+            print(f"[cloud-print] no broker ack in {args.timeout}s",
+                  file=sys.stderr)
+            return 1
+        print(json.dumps({"published": True, "topic": topic_request,
+                          "url": upload["url"], "md5": upload["md5"],
+                          "subtask_name": name_no_3mf}, indent=2))
+    finally:
+        c.loop_stop()
+        c.disconnect()
+    return 0
+
+
 def cmd_cloud_publish(args: argparse.Namespace) -> int:
     """Publish a raw JSON payload to a printer via Bambu's cloud broker.
     Useful for one-shot commands when not on the printer's LAN. Schema
@@ -3857,6 +3978,37 @@ def main() -> int:
                            help="Seconds to wait for the first state message "
                                 "(default 15). Ignored with --follow.")
     cli_state.set_defaults(fn=cmd_cloud_state)
+
+    cli_print = sub.add_parser(
+        "cloud-print",
+        help="Submit a cloud-mediated print: upload .gcode.3mf to Bambu's "
+             "OSS, then publish print.project_file (print_type=cloud) via "
+             "the cloud MQTT broker. Printer downloads from OSS via the "
+             "cloud channel — sidesteps LAN-direct verify-failure (#65). "
+             "Requires `cloud-login` first.",
+    )
+    cli_print.add_argument("file", help="Local .gcode.3mf to upload + print")
+    cli_print.add_argument("--serial", help="Printer serial (auto-picks if "
+                                            "exactly one printer is bound)")
+    cli_print.add_argument("--slot", type=int, default=0,
+                           help="AMS global slot (AMS_idx*4 + tray, 0..15)")
+    cli_print.add_argument("--no-ams", action="store_true",
+                           help="External spool / direct feed; AMS off")
+    cli_print.add_argument("--plate", type=int, default=1, help="Plate index")
+    cli_print.add_argument("--bed-type", default="textured_plate",
+                           help="textured_plate / cool_plate / engineering / hot")
+    cli_print.add_argument("--bed-temp", type=int, default=65)
+    cli_print.add_argument("--no-level", action="store_true",
+                           help="Skip auto bed leveling")
+    cli_print.add_argument("--flow-cali", action="store_true")
+    cli_print.add_argument("--vibration-cali", action="store_true")
+    cli_print.add_argument("--timelapse", action="store_true")
+    cli_print.add_argument("--dry-run", action="store_true",
+                           help="Print the MQTT payload but don't upload "
+                                "or publish anything")
+    cli_print.add_argument("--timeout", type=float, default=30.0,
+                           help="Seconds to wait for broker ack (default 30).")
+    cli_print.set_defaults(fn=cmd_cloud_print)
 
     cli_pub = sub.add_parser(
         "cloud-publish",
