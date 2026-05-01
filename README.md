@@ -491,6 +491,24 @@ documented (`pybambu`, `bambu-farm-manager`, `OrcaSlicer`). Bambu has
 no published SDK — if they rotate URLs, this module needs to rotate
 in lockstep with the upstream consumers.
 
+### Cloud-mediated print + remote control
+
+Once `cloud-login` has succeeded, twelve cloud-* CLIs work off-LAN by
+routing through Bambu's cloud MQTT broker. Useful when the X2D's
+LAN-direct `print.*` is blocked by the per-installation-cert wall
+(items #65 / #66 / #68): the cloud broker uses standard TLS, no per-
+installation cert needed.
+
+```
+x2d_bridge.py cloud-state                          # remote monitoring
+x2d_bridge.py cloud-pause                          # remote control
+x2d_bridge.py cloud-print rumi_frame.gcode.3mf     # full upload + print
+```
+
+Same `--http :8765` daemon also exposes `/cloud/{status,printers,state,publish}`
+HTTP routes for the web UI / Home Assistant. Full surface +
+implementation details: [`docs/CLOUD_BRIDGE.md`](docs/CLOUD_BRIDGE.md).
+
 ## Thin web UI (`http://<phone>:8765/`)
 
 The bridge daemon serves a mobile-friendly remote-control surface at
