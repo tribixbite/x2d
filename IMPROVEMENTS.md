@@ -2142,3 +2142,31 @@ v1.0 ship-readiness was never gated on them.
   the Bambu account JWT to send print jobs through Bambu's cloud to the
   printer. Sidesteps the cert-pinning problem entirely since cert is
   implicitly used by Bambu's cloud, never needs to leave the app.
+
+  **Update — 2026-05-01 session: #67 cloud bridge end-to-end** (commits
+  ea7c401, 1ea17c2). Realistic ship path now landed:
+
+    1. `cloud_client.py` extended with `mqtt_broker()`, `mqtt_credentials()`,
+       `cloud_get_upload_token()`, `cloud_upload_file()`. Cloud broker
+       endpoints (us/cn).mqtt.bambulab.com:8883 with auth `(u_<user_id>,
+       <jwt>)`. OSS upload helper handles both presigned-URL and
+       STS-credentials response shapes (HMAC-SHA1 signing for the latter).
+    2. `x2d_bridge.py cloud-state` — subscribe to a printer's report
+       topic via cloud MQTT, fire pushall, dump first state. `--follow`
+       streams indefinitely. Auto-picks serial when one printer bound.
+    3. `x2d_bridge.py cloud-publish --payload <json>` — publish raw JSON
+       to device/<SN>/request via cloud broker. Same schema as LAN
+       (`pause`/`resume`/`stop`/`gcode_line`/`ledctrl` work remotely).
+    4. `x2d_bridge.py cloud-print FILE` — full end-to-end: upload .3mf
+       to Bambu's OSS, publish print.project_file with
+       print_type=cloud + cloud://<bucket>/<path> URL. Args mirror LAN
+       `print` (--slot/--no-ams/--plate/--bed-type/--bed-temp/--no-level/
+       --flow-cali/--vibration-cali/--timelapse/--dry-run).
+
+  Why this works where LAN-direct doesn't: Bambu's cloud broker uses
+  standard Let's-Encrypt-rooted TLS, no per-installation cert needed.
+  The cert that blocks LAN-direct `print.*` (#65/#66/#68) is
+  printer-specific and fetched dynamically — irrelevant when the
+  printer pulls the file from OSS via Bambu's own cloud channel.
+
+  Live test pending: needs `cloud-login --email --password` first.
