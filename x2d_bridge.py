@@ -3598,6 +3598,97 @@ def cmd_cloud_state(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cloud_publish_payload(serial: str, payload: dict, timeout: float = 10.0) -> int:
+    """Internal helper used by every cloud-side print-control CLI.
+    Connects to Bambu's cloud broker, publishes one message, exits.
+    Returns 0 on broker ack, 1 on error."""
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        print("not logged in — run `x2d_bridge.py cloud-login` first",
+              file=sys.stderr)
+        return 1
+    topic_request = f"device/{serial}/request"
+    c = _cloud_mqtt_connect(serial, cli)
+    published = _threading.Event()
+    def on_publish(client, userdata, mid, reason_code=None, properties=None):
+        published.set()
+    c.on_publish = on_publish
+    c.loop_start()
+    try:
+        info = c.publish(topic_request, json.dumps(payload), qos=1)
+        info.wait_for_publish(timeout=timeout)
+        if not published.wait(timeout=timeout):
+            print(f"[cloud] no broker ack in {timeout}s", file=sys.stderr)
+            return 1
+        print(json.dumps({"published": True, "topic": topic_request,
+                          "payload": payload}, indent=2))
+    finally:
+        c.loop_stop()
+        c.disconnect()
+    return 0
+
+
+def _resolve_cloud_serial(args: argparse.Namespace) -> str | None:
+    """Mirror of cmd_cloud_state's auto-discovery: --serial wins, else
+    X2D_SERIAL env, else if exactly one printer is bound to the
+    account use that; else None."""
+    serial = getattr(args, "serial", None) or os.environ.get("X2D_SERIAL")
+    if serial:
+        return serial
+    try:
+        import cloud_client
+        cli = cloud_client.CloudClient.load_or_anonymous()
+        if cli.session.empty:
+            return None
+        devs = cli.get_bound_devices()
+        if len(devs) == 1:
+            return devs[0].get("dev_id") or devs[0].get("device_id")
+    except Exception:
+        pass
+    return None
+
+
+def cmd_cloud_pause(args: argparse.Namespace) -> int:
+    serial = _resolve_cloud_serial(args) or sys.exit("--serial required")
+    return _cloud_publish_payload(serial, _print_cmd("pause", param=""), args.timeout)
+
+
+def cmd_cloud_resume(args: argparse.Namespace) -> int:
+    serial = _resolve_cloud_serial(args) or sys.exit("--serial required")
+    return _cloud_publish_payload(serial, _print_cmd("resume", param=""), args.timeout)
+
+
+def cmd_cloud_stop(args: argparse.Namespace) -> int:
+    serial = _resolve_cloud_serial(args) or sys.exit("--serial required")
+    return _cloud_publish_payload(serial, _print_cmd("stop", param=""), args.timeout)
+
+
+def cmd_cloud_gcode(args: argparse.Namespace) -> int:
+    serial = _resolve_cloud_serial(args) or sys.exit("--serial required")
+    gcode = args.gcode if args.gcode.endswith("\n") else args.gcode + "\n"
+    return _cloud_publish_payload(serial, _print_cmd("gcode_line", param=gcode),
+                                  args.timeout)
+
+
+def cmd_cloud_chamber_light(args: argparse.Namespace) -> int:
+    """Cloud equivalent of cmd_chamber_light. Same payload shape."""
+    serial = _resolve_cloud_serial(args) or sys.exit("--serial required")
+    state = args.state.lower()
+    if state not in ("on", "off", "flashing"):
+        sys.exit(f"chamber-light state must be on/off/flashing, got: {state}")
+    payload = _system_cmd(
+        "ledctrl",
+        led_node="chamber_light",
+        led_mode=state,
+        led_on_time=int(args.on_time),
+        led_off_time=int(args.off_time),
+        loop_times=int(args.loops),
+        interval_time=int(args.interval),
+    )
+    return _cloud_publish_payload(serial, payload, args.timeout)
+
+
 def cmd_cloud_print(args: argparse.Namespace) -> int:
     """Submit a complete cloud-mediated print job:
        1. Upload the .gcode.3mf to Bambu's OSS via the upload-token API.
@@ -4009,6 +4100,42 @@ def main() -> int:
     cli_print.add_argument("--timeout", type=float, default=30.0,
                            help="Seconds to wait for broker ack (default 30).")
     cli_print.set_defaults(fn=cmd_cloud_print)
+
+    # Cloud convenience commands — same flag style as the LAN versions
+    # (pause/resume/stop/gcode/chamber-light) but route through the
+    # cloud MQTT broker so they work off-LAN.
+    def _add_cloud_cmd(name: str, helptext: str, fn):
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("--serial",
+                        help="Printer serial (auto-picks if exactly one is bound).")
+        sp.add_argument("--timeout", type=float, default=10.0,
+                        help="Seconds to wait for broker ack (default 10).")
+        sp.set_defaults(fn=fn)
+        return sp
+    _add_cloud_cmd("cloud-pause",
+                   "Pause the active print remotely via cloud MQTT.",
+                   cmd_cloud_pause)
+    _add_cloud_cmd("cloud-resume",
+                   "Resume a paused print remotely via cloud MQTT.",
+                   cmd_cloud_resume)
+    _add_cloud_cmd("cloud-stop",
+                   "Stop / abort the active print remotely via cloud MQTT.",
+                   cmd_cloud_stop)
+    cli_cgcode = _add_cloud_cmd(
+        "cloud-gcode",
+        "Run a single gcode line on the printer via cloud MQTT (e.g. G28 / M141).",
+        cmd_cloud_gcode)
+    cli_cgcode.add_argument("gcode", help='gcode line, e.g. "G28" or "M141 S30"')
+    cli_clamp = _add_cloud_cmd(
+        "cloud-chamber-light",
+        "Chamber-light remote control via cloud MQTT (on/off/flashing).",
+        cmd_cloud_chamber_light)
+    cli_clamp.add_argument("state", help="on / off / flashing")
+    cli_clamp.add_argument("--on-time",  type=int, default=500)
+    cli_clamp.add_argument("--off-time", type=int, default=500)
+    cli_clamp.add_argument("--loops",    type=int, default=0,
+                           help="0 = forever for `flashing`")
+    cli_clamp.add_argument("--interval", type=int, default=0)
 
     cli_pub = sub.add_parser(
         "cloud-publish",
