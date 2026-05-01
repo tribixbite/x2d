@@ -114,7 +114,15 @@ external tools:
 | GET    | `/cloud/status`                   | login state + token expiry |
 | GET    | `/cloud/printers`                 | list bound printers |
 | GET    | `/cloud/state?serial=&timeout=`   | first state snapshot |
+| POST   | `/cloud/login`                    | body `{email,password,region?,email_code?,tfa_code?}` |
+| POST   | `/cloud/logout`                   | wipes the cached session |
 | POST   | `/cloud/publish`                  | body `{serial,payload,timeout?}` |
+
+`POST /cloud/login` does not prompt — if the account requires an email
+verification code or 2FA TOTP, the first response carries
+`{"requires_email_code": true}` or `{"requires_tfa": true}` and the
+client re-POSTs with the same `email`/`password` plus
+`email_code`/`tfa_code`.
 
 All gated on the daemon's existing bearer-token auth when the bind is
 non-loopback. 401 returned cleanly when no cloud session exists.

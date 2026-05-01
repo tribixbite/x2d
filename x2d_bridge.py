@@ -1380,6 +1380,18 @@ def _serve_http(bind: str,
                 self._send_json(result, status=200 if result["ok"] else 500)
                 return
             # Cloud-side POST routes (item #67).
+            if path == "/cloud/login":
+                body = self._read_body_json() or {}
+                code, resp = _http_cloud_login(
+                    email=body.get("email") or "",
+                    password=body.get("password") or "",
+                    region=body.get("region") or None,
+                    email_code=body.get("email_code") or None,
+                    tfa_code=body.get("tfa_code") or None)
+                self._send_json(resp, status=code); return
+            if path == "/cloud/logout":
+                code, resp = _http_cloud_logout()
+                self._send_json(resp, status=code); return
             if path == "/cloud/publish":
                 body = self._read_body_json() or {}
                 serial = body.get("serial") or ""
@@ -3630,6 +3642,75 @@ def cmd_cloud_state(args: argparse.Namespace) -> int:
 # (status_code, JSON-able dict) so the serve HTTP handler can wire them in.
 # Each helper is independently importable / testable.
 # ---------------------------------------------------------------------------
+
+def _http_cloud_login(*, email: str, password: str,
+                      region: str | None = None,
+                      email_code: str | None = None,
+                      tfa_code: str | None = None) -> tuple[int, dict]:
+    """HTTP-driven cloud-login. Returns the same status fields as
+    /cloud/status on success, or a structured error.
+
+    Two-step flows (verifyCode / tfa) are NOT interactive over HTTP —
+    the caller passes `email_code` / `tfa_code` in a follow-up POST
+    after seeing the corresponding `requires_*` flag in the first
+    response. The cloud_client.login() callback uses the supplied
+    fixed value rather than prompting via stdin."""
+    try:
+        import cloud_client
+    except ImportError as e:
+        return 500, {"error": f"cloud_client unavailable: {e}"}
+    if not email or not password:
+        return 400, {"error": "expected {email: str, password: str, region?: str, "
+                              "email_code?: str, tfa_code?: str}"}
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    requires_email_code = False
+    requires_tfa = False
+    def _email_resolver(_email: str) -> str:
+        nonlocal requires_email_code
+        if email_code is None:
+            requires_email_code = True
+            raise cloud_client.CloudError("email-code required (re-POST with email_code)")
+        return email_code
+    def _tfa_resolver(_key: str) -> str:
+        nonlocal requires_tfa
+        if tfa_code is None:
+            requires_tfa = True
+            raise cloud_client.CloudError("tfa code required (re-POST with tfa_code)")
+        return tfa_code
+    try:
+        cli.login(email, password, region=region,
+                  email_code_resolver=_email_resolver,
+                  two_factor_resolver=_tfa_resolver)
+    except cloud_client.CloudError as e:
+        if requires_email_code:
+            return 200, {"requires_email_code": True,
+                         "hint": "Bambu sent a verification code to "
+                                 "your email; re-POST with email_code"}
+        if requires_tfa:
+            return 200, {"requires_tfa": True,
+                         "hint": "TOTP required; re-POST with tfa_code"}
+        return 401, {"error": f"login failed: {e}",
+                     "status": e.status, "body": e.body}
+    except Exception as e:
+        return 500, {"error": f"login crashed: {e}"}
+    return 200, {
+        "logged_in":    True,
+        "user_id":      cli.session.user_id,
+        "region":       cli.session.region,
+        "expires_at":   cli.session.expires_at,
+        "expires_in_s": int(max(0, cli.session.expires_at - time.time())),
+    }
+
+
+def _http_cloud_logout() -> tuple[int, dict]:
+    try:
+        import cloud_client
+    except ImportError as e:
+        return 500, {"error": f"cloud_client unavailable: {e}"}
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    cli.logout()
+    return 200, {"logged_out": True}
+
 
 def _http_cloud_status() -> dict:
     try:
