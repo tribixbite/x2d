@@ -42,16 +42,28 @@ from typing import Any, Callable
 
 # Bambu has two regional clouds. The login endpoint disambiguates from
 # the email's TLD; users can also force one via X2D_REGION=us|cn.
+#
+# `mqtt` is the cloud-side MQTT broker (TLS on 8883). It accepts
+# username `u_<user_id>` + password `<access_token>` (the JWT). Topic
+# layout matches the LAN-side broker: `device/<SN>/report` (printer →
+# server, subscribe to read state) and `device/<SN>/request` (server →
+# printer, publish print/pause/resume/etc commands). Brokers serve
+# Let's-Encrypt-rooted TLS certs, so any client with a normal trust
+# store works — no per-installation cert needed (which is what blocks
+# us on the LAN-direct `print.*` path; #65/#66/#68).
 REGIONS: dict[str, dict[str, str]] = {
     "us": {
         "api":  "https://api.bambulab.com",
         "iot":  "https://api.bambulab.com",
+        "mqtt": "us.mqtt.bambulab.com",
     },
     "cn": {
         "api":  "https://api.bambulab.cn",
         "iot":  "https://api.bambulab.cn",
+        "mqtt": "cn.mqtt.bambulab.com",
     },
 }
+MQTT_PORT = 8883
 
 SESSION_PATH = Path.home() / ".x2d" / "cloud_session.json"
 DEFAULT_TIMEOUT = 15
@@ -535,3 +547,53 @@ class CloudClient:
         path = f"/v1/iot-service/api/user/print?limit={int(limit)}"
         r = self._authed_get(path)
         return r.get("tasks") or r.get("hits") or r.get("data") or []
+
+    # ------------------------------------------------------------------
+    # Cloud-side MQTT broker — for cloud-mediated print control + state
+    # streaming. Uses the same JWT we got from login().
+    #
+    # Auth scheme (verified against pybambu / openhab-addons / OrcaSlicer):
+    #   broker:    {us,cn}.mqtt.bambulab.com:8883
+    #   tls:       standard (Let's-Encrypt root chain — no per-installation
+    #              cert needed, which is what blocks LAN-direct `print.*`)
+    #   username:  "u_<numeric_user_id>"
+    #   password:  "<access_token>" (the JWT, sent in cleartext over TLS)
+    #   topics:    device/<SN>/report (subscribe — printer state)
+    #              device/<SN>/request (publish — control commands)
+    #
+    # The cloud broker accepts `print.project_file` with `print_type=cloud`,
+    # which the LAN-direct path rejects with `mqtt message verify failed`
+    # (#65). Cloud uploads via OSS first (separate endpoint, see
+    # cloud_get_upload_token below) and the printer pulls from there.
+    # ------------------------------------------------------------------
+
+    def mqtt_broker(self) -> str:
+        """Hostname of the cloud-side MQTT broker for this session's region."""
+        return REGIONS[self.session.region]["mqtt"]
+
+    def mqtt_credentials(self) -> tuple[str, str]:
+        """Returns (username, password) suitable for the cloud broker.
+        Auto-refreshes the access_token if it's about to expire."""
+        self._ensure_fresh()
+        uid = self.get_user_id() or self.session.user_id
+        if not uid:
+            raise CloudError("cannot derive MQTT username — user_id missing")
+        return f"u_{uid}", self.session.access_token
+
+    def cloud_get_upload_token(self, count: int = 1) -> dict:
+        """Get a one-shot OSS upload credential the printer can pull from.
+        Response (paraphrased):
+            {
+              accessKeyId, accessKeySecret, securityToken, expiration,
+              bucket, region, fileSavePath
+            }
+        Use these to PUT the .3mf via OSS, then send the printer the
+        `cloud://<bucket>/<fileSavePath>` URL inside `print.project_file`.
+        Bambu's printer firmware downloads via cloud channel + verifies
+        the OSS-side signature, sidestepping the LAN-direct
+        verify-failure entirely."""
+        # The exact endpoint name has shifted across Bambu's API versions;
+        # current observed (Apr 2026) is /v1/iot-service/api/user/file/oss/upload-token.
+        return self._authed_get(
+            f"/v1/iot-service/api/user/file/oss/upload-token?count={int(count)}"
+        )
