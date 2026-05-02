@@ -3442,11 +3442,15 @@ def cmd_cloud_login(args: argparse.Namespace) -> int:
         return 2
 
     def prompt_tfa(_email: str) -> str:
+        if getattr(args, "tfa_code", None):
+            return args.tfa_code.strip()
         print(f"\nThis account requires 2FA. Open your authenticator "
               f"app, then enter the 6-digit code:")
         return input("2FA code: ").strip()
 
     def prompt_email_code(_email: str) -> str:
+        if getattr(args, "email_code", None):
+            return args.email_code.strip()
         print(f"\nA verification code was emailed to {_email}. Enter it:")
         return input("Email code: ").strip()
 
@@ -4254,6 +4258,13 @@ def main() -> int:
                            help="Don't send credentials. Just verify the cloud "
                                 "endpoint is reachable (DNS + TLS + HTTP). "
                                 "Returns ok/status/region/endpoint JSON.")
+    cli_login.add_argument("--email-code",
+                           help="Pre-supply the email-verification code. "
+                                "Skips the interactive prompt — useful for "
+                                "non-interactive shells / piped input.")
+    cli_login.add_argument("--tfa-code",
+                           help="Pre-supply the 6-digit TOTP. "
+                                "Skips the interactive prompt.")
     cli_login.set_defaults(fn=cmd_cloud_login)
 
     cli_status = sub.add_parser(
