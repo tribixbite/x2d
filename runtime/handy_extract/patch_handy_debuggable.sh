@@ -59,9 +59,15 @@ done <<< "${APK_PATHS}"
 echo "[+] pulled: ${ORIG[*]}"
 
 # 2. Decode base.apk, edit AndroidManifest.xml + network_security_config.
-echo "[+] decoding base.apk"
+echo "[+] decoding base.apk (no-src — keep DEX bytes intact)"
 rm -rf base_decoded
-apktool d -f -o base_decoded base.apk >/dev/null
+# CRITICAL: --no-src skips dex→smali→dex round-trip. apktool's smali
+# encoder produces DEX bytes that the ART verifier hangs on at first
+# launch (process stuck in futex_wait_queue_me with libflutter never
+# loaded — no logs, no crash, just frozen on splash). With --no-src,
+# apktool copies the original classes*.dex untouched on rebuild and
+# the verifier accepts them.
+apktool d -f --no-src -o base_decoded base.apk >/dev/null
 
 MANIFEST="base_decoded/AndroidManifest.xml"
 NSC="base_decoded/res/xml/network_security_config.xml"
