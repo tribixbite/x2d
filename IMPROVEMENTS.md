@@ -2170,3 +2170,59 @@ v1.0 ship-readiness was never gated on them.
   printer pulls the file from OSS via Bambu's own cloud channel.
 
   Live test pending: needs `cloud-login --email --password` first.
+
+---
+
+## Future enhancements (parked, not blocking)
+
+- [ ] **70. In-GUI camera live preview — replace wxMediaCtrl3 with libcurl
+  JPEG poller.** Companion to commits 93cb8a2 + the run_gui.sh
+  X2D_CAMERA_URL wire-up. wxMediaCtrl3 → gstreamer playbin can't render
+  the local MJPEG endpoint because Termux's gst-plugins-good ships
+  libgstsoup with **0 features registered** (libsoup3 vs libsoup2 ABI
+  mismatch in packaging) and gst-libav needs `libavcodec.so.62` which
+  isn't present. The X2D_CAMERA_URL short-circuit lands the override
+  cleanly into Play() — instrumentation confirmed `[x2d-cam] short-circuit
+  via X2D_CAMERA_URL=...` runs, but `m_media_ctrl->Load()` then no-ops
+  because playbin can't construct the source element.
+  - **Sub-tasks**:
+    - [ ] In `bs-bionic/src/slic3r/GUI/MediaPlayCtrl.cpp`: when
+      `X2D_CAMERA_URL` is set, do NOT call `m_media_ctrl->Load(url)`.
+      Instead overlay a `wxStaticBitmap` and start a `wxTimer` (~100 ms)
+      that pulls `/cam.jpg` via libcurl into a `wxImage` → `wxBitmap`
+      → `m_static_bitmap->SetBitmap()`. libcurl is already linked.
+    - [ ] Hide `m_media_ctrl` while X2D_CAMERA_URL is active, so the
+      controls (play/pause/etc.) still render against the bitmap.
+    - [ ] Pause the timer when `IsShownOnScreen()` returns false
+      (Device tab inactive) to avoid burning bandwidth + CPU.
+  - **Done when**: clicking Play in the Device tab → live JPEG-poll
+    feed renders inside MediaPlayCtrl widget at ~10 fps. Verified
+    against the live X2D camera over LAN (already proven via
+    `~/x2d/runtime/network_shim/lvl_local.py` + `x2d_bridge.py camera`
+    daemon at 127.0.0.1:8767 — that daemon is what feeds /cam.jpg).
+  - **Effort**: ~half day. Pure C++/wx, no native deps.
+
+- [ ] **71. Rebuild gst-plugins-good + gst-libav against current Termux
+  libs (alternative to #70).** Fixes the underlying gstreamer breakage
+  for ALL apps on this Termux install, not just BS:
+  - `libgstsoup.so` registers 0 features → `souphttpsrc` missing →
+    no HTTP source for any gst pipeline (HLS, DASH, MJPEG-over-HTTP).
+    Root cause: built against libsoup-2.4 but only libsoup-3.0 present
+    in current Termux pkg set.
+  - `libgstlibav.so` needs `libavcodec.so.62` → packaged ffmpeg in
+    Termux is at .61. Either need to rebuild gst-libav against the
+    available ffmpeg, or force-install a newer ffmpeg side-by-side.
+  - **Sub-tasks**:
+    - [ ] Pull gst-plugins-good source (`pkg source gst-plugins-good`).
+    - [ ] Rebuild `ext/soup/Makefile.am` linking against `libsoup-3.0`
+      (the Meson option is `-Dsoup-version=3`). Reinstall.
+    - [ ] Pull gst-libav source. Rebuild against the ffmpeg actually
+      packaged on this device (`pkg-config --modversion libavcodec`).
+    - [ ] Rebuild `~/.cache/gstreamer-1.0/registry.aarch64.bin` and
+      verify `gst-inspect-1.0 souphttpsrc` registers a valid factory
+      with non-zero features.
+  - **Done when**: `gst-launch-1.0 playbin uri=http://.../cam.mjpeg
+    video-sink=fakesink` reaches PLAYING state and emits buffers.
+  - **Effort**: 1-2 days. Benefits every gstreamer-using app on the
+    device. But fragile: future Termux libsoup/ffmpeg updates may
+    re-break it. Prefer #70 for the BS-specific use-case.
