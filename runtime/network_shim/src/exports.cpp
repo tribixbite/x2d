@@ -14,6 +14,7 @@
 #include "shim_internal.hpp"
 
 #include <cstring>
+#include <cstdlib>
 
 using namespace x2d_shim;
 using namespace BBL;
@@ -264,7 +265,15 @@ int bambu_network_bind(void* /*agent*/, std::string /*dev_ip*/, std::string /*de
     return BAMBU_NETWORK_SUCCESS;
 }
 int bambu_network_unbind(void* /*agent*/, std::string /*dev_id*/) { return BAMBU_NETWORK_SUCCESS; }
-std::string bambu_network_get_bambulab_host(void* /*agent*/) { return ""; }
+std::string bambu_network_get_bambulab_host(void* /*agent*/) {
+    // BambuStudio's WebUserLoginDialog loads "<host>/sign-in" — empty host
+    // makes the WebView fail and the 8s timer trips into ShowErrorPage()
+    // (the "no internet connection" page in resources/web/login/error.html).
+    // Returning the real host lets the dialog reach Bambu's actual login UI.
+    // Region override via X2D_BAMBU_HOST for cn.bambulab.com etc.
+    if (const char* env = std::getenv("X2D_BAMBU_HOST")) return env;
+    return "https://bambulab.com";
+}
 std::string bambu_network_get_user_selected_machine(void* /*agent*/) { return ""; }
 int bambu_network_set_user_selected_machine(void* /*agent*/, std::string /*dev_id*/) { return BAMBU_NETWORK_SUCCESS; }
 
