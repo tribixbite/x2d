@@ -2271,18 +2271,21 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
 
 ## Print path
 
-- [ ] **72. AMS slot match by color or info_idx fallback.** X2D's MQTT
-    report omits `tray_sub_brands` / `tray_id_name` (live-confirmed: all 8
-    slots came back with empty strings). `lan_print.py --filament-match Silk`
-    can never match. Add `--filament-color #057748FF` (hex tray_color) and
-    `--filament-info-idx GFL95` (Bambu's catalog ID) modes; auto-fall-back
-    to color when sub_brand is empty.
+- [x] **72. AMS slot match by color or info_idx fallback.** Done in
+    a594488. `lan_print.py` now accepts `--filament-color "#057748"`
+    (RGBA exact), `--filament-color-fuzzy MAX` (nearest within Manhattan
+    distance), and `--filament-info-idx GFL95` (Bambu catalog ID). All
+    four modes including legacy `--filament-match` substring live-verified
+    against 192.168.0.138 with 8 trays loaded.
 
-- [ ] **73. ams_mapping_v2 multi-extruder verify.** X2D has 2 nozzles
-    (`extruder_type="0 1"`). `start_print` currently sends a single-slot
-    `ams_mapping`; multi-color X2D prints with per-extruder spool
-    assignment have not been exercised. Need a multi-color slice and
-    a live verification run.
+- [x] **73. ams_mapping_v2 multi-extruder verify.** Done. start_print
+    now accepts `ams_slot` as int OR list[int]; per-filament global
+    slot ordinals expand into `ams_mapping`/`ams_mapping2` correctly.
+    `lan_print.py --slot 1,5` and `--filament-color "#057748,#FFFFFF"`
+    take a comma-separated list, with arity vs. 3MF filament_count
+    enforced. 6 unit tests in tests/test_ams_mapping.py pin the wire
+    shape (single int, multi-AMS, no-AMS empty, programmer error,
+    envelope key set).
 
 - [ ] **74. Cert rotation monitoring.** If Bambu ever rotates the
     publicly-leaked Bambu Connect cert (cert_id GLOF3813734089-…),

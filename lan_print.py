@@ -270,8 +270,11 @@ def main() -> int:
                          "often doesn't — prefer --filament-color or --filament-info-idx.")
     ap.add_argument("--filament-color", default="",
                     help='RGBA hex of the AMS slot color, e.g. "#057748" or '
-                         '"057748FF". Compares against the tray\'s tray_color '
-                         '(the firmware reports it upper-case with alpha=FF).')
+                         '"057748FF". For multi-color prints, comma-separate '
+                         'one color per filament index in the 3MF, e.g. '
+                         '"--filament-color #057748,#FFFFFF". Compares against '
+                         "the tray's tray_color (the firmware reports it "
+                         'upper-case with alpha=FF).')
     ap.add_argument("--filament-color-fuzzy", type=int, default=None,
                     metavar="MAX",
                     help="With --filament-color, if no exact match falls back to "
@@ -282,8 +285,10 @@ def main() -> int:
                          'PLA Bambu Green) or "GFA05" (Bambu Generic PLA). '
                          'Inspect AMS state with --query-only to see what '
                          'each loaded tray reports.')
-    ap.add_argument("--slot", type=int, default=None,
-                    help="Force a specific global AMS slot index (skips auto-match)")
+    ap.add_argument("--slot", default="",
+                    help="Force a specific AMS slot (skips auto-match). For "
+                         "multi-color prints, comma-separate one slot per "
+                         "filament index in the 3MF, e.g. '--slot 1,5'.")
     ap.add_argument("--no-flow-cali", action="store_true",
                     help="Disable per-print flow calibration (faster start, tiny risk)")
     ap.add_argument("--bed-type", default="",
@@ -349,41 +354,77 @@ def main() -> int:
                  t["slot_index"], t["ams"], t["tray"],
                  t.get("type"), t.get("sub_brand"), t.get("color"))
 
-    def _do_match() -> dict:
+    n_filaments = max(len(fil_types), 1)
+    forced_slots: list[int] = []
+    if args.slot:
+        try:
+            forced_slots = [int(s.strip()) for s in args.slot.split(",") if s.strip()]
+        except ValueError:
+            client.disconnect()
+            raise SystemExit(f"--slot expects comma-separated ints, got {args.slot!r}")
+        if len(forced_slots) != n_filaments:
+            client.disconnect()
+            raise SystemExit(
+                f"--slot has {len(forced_slots)} values but the 3MF needs "
+                f"{n_filaments} filament(s). Pass one slot per filament."
+            )
+
+    color_list: list[str] = []
+    if args.filament_color:
+        color_list = [c.strip() for c in args.filament_color.split(",") if c.strip()]
+        if color_list and len(color_list) != n_filaments:
+            client.disconnect()
+            raise SystemExit(
+                f"--filament-color has {len(color_list)} entries but the 3MF "
+                f"needs {n_filaments} filament(s). Pass one color per filament."
+            )
+
+    def _do_match_one(filament_idx: int) -> dict:
+        # Per-filament expected type — multi-color 3MFs may have different
+        # types per filament index (rare but possible: PLA + PETG support).
+        per_type = fil_types[filament_idx] if filament_idx < len(fil_types) else expected_type
+        per_color = color_list[filament_idx] if color_list else args.filament_color
         return match_slot(
             trays,
             match_substr=args.filament_match,
-            match_color=args.filament_color,
+            match_color=per_color,
             match_info_idx=args.filament_info_idx,
             color_fuzzy_max=args.filament_color_fuzzy,
-            expected_type=expected_type,
+            expected_type=per_type,
         )
 
     if args.query_only:
         log.info("--query-only set; not uploading or printing. Exiting.")
-        if args.slot is None:
+        if not forced_slots:
             try:
-                chosen = _do_match()
-                log.info("Would auto-match slot %d (type=%s color=%s info_idx=%s)",
-                         chosen["slot_index"], chosen.get("type"),
-                         chosen.get("color"), chosen.get("info_idx"))
+                for fi in range(n_filaments):
+                    chosen = _do_match_one(fi)
+                    log.info("filament %d would auto-match slot %d "
+                             "(type=%s color=%s info_idx=%s)",
+                             fi, chosen["slot_index"], chosen.get("type"),
+                             chosen.get("color"), chosen.get("info_idx"))
             except SystemExit as e:
                 log.warning("Auto-match would fail: %s", e)
         client.disconnect()
         return 0
 
-    if args.slot is not None:
-        forced = next((t for t in trays if t["slot_index"] == args.slot), None)
-        if forced is None:
-            client.disconnect()
-            raise SystemExit(f"--slot {args.slot} not found in AMS state")
-        chosen = forced
-        log.info("Using forced slot %d", args.slot)
+    if forced_slots:
+        chosen_slots: list[int] = []
+        for s in forced_slots:
+            tray = next((t for t in trays if t["slot_index"] == s), None)
+            if tray is None:
+                client.disconnect()
+                raise SystemExit(f"--slot {s} not found in AMS state")
+            chosen_slots.append(s)
+        log.info("Using forced slots %s", chosen_slots)
     else:
-        chosen = _do_match()
-        log.info("Auto-matched slot %d (type=%s color=%s info_idx=%s)",
-                 chosen["slot_index"], chosen.get("type"),
-                 chosen.get("color"), chosen.get("info_idx"))
+        chosen_slots = []
+        for fi in range(n_filaments):
+            chosen = _do_match_one(fi)
+            chosen_slots.append(chosen["slot_index"])
+            log.info("Auto-matched filament %d -> slot %d (type=%s color=%s info_idx=%s)",
+                     fi, chosen["slot_index"], chosen.get("type"),
+                     chosen.get("color"), chosen.get("info_idx"))
 
     # Resolve bed_type: explicit --bed-type wins; else read from
     # Metadata/plate_<N>.json (the per-plate truth); else textured.
@@ -398,13 +439,13 @@ def main() -> int:
     x2d_bridge.upload_file(creds, args.file, remote_name=fname)
     log.info("Upload complete")
 
-    log.info("Sending signed start_print(plate=%d, ams_slot=%d, bed=%s, flow_cali=%s)",
-             args.plate, chosen["slot_index"], bed_type, not args.no_flow_cali)
+    log.info("Sending signed start_print(plate=%d, ams_slots=%s, bed=%s, flow_cali=%s)",
+             args.plate, chosen_slots, bed_type, not args.no_flow_cali)
     try:
         x2d_bridge.start_print(
             client, fname,
             use_ams=True,
-            ams_slot=chosen["slot_index"],
+            ams_slot=chosen_slots if len(chosen_slots) > 1 else chosen_slots[0],
             flow_cali=not args.no_flow_cali,
             bed_type=bed_type,
             local_path=args.file,

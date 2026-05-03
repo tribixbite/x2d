@@ -591,7 +591,8 @@ def _md5_of(local_path: Path) -> str:
 
 
 def start_print(client: X2DClient, gcode_filename: str, *,
-                use_ams: bool = True, ams_slot: int = 0,
+                use_ams: bool = True,
+                ams_slot: int | list[int] = 0,
                 bed_levelling: bool = True, flow_cali: bool = False,
                 timelapse: bool = False, vibration_cali: bool = False,
                 bed_type: str = "textured_plate",
@@ -627,13 +628,26 @@ def start_print(client: X2DClient, gcode_filename: str, *,
     if local_path is None:
         local_path = Path.cwd() / gcode_filename
     md5_hex = _md5_of(local_path) if local_path.is_file() else ""
-    # ams_mapping2: newer ams_id/slot_id form (vs the legacy flat int list).
-    # When use_ams is false, both lists must be empty.
+    # ams_mapping (legacy flat int list) + ams_mapping2 (newer ams_id/slot_id
+    # form) together cover every firmware path. When use_ams is false both
+    # must be empty.
+    #
+    # Multi-color / multi-extruder support: ams_slot can be a single int
+    # (single-filament print, one mapping) OR a list of ints — one per
+    # filament index in the 3MF (e.g. [1, 5] = filament 0 -> AMS0 slot 1
+    # green, filament 1 -> AMS1 slot 1 white). The slot ordinal is the
+    # global one (ams_id*4 + slot_id) so it works on multi-AMS setups
+    # transparently. Verified payload shape against captured BS-Windows
+    # multi-color X2D run (2-filament) by exporting a 2-color 3MF and
+    # comparing dry-run output to the wire capture.
     if use_ams:
-        ams_mapping_legacy = [ams_slot]
-        # Treat ams_slot as a global index: 0..3 = ams_id 0; 4..7 = ams_id 1;
-        # etc. Most LAN setups have one AMS so ams_id stays 0.
-        ams_mapping_v2 = [{"ams_id": ams_slot // 4, "slot_id": ams_slot % 4}]
+        slots = [ams_slot] if isinstance(ams_slot, int) else list(ams_slot)
+        if not slots:
+            raise ValueError("use_ams=True requires at least one ams_slot")
+        ams_mapping_legacy = list(slots)
+        ams_mapping_v2 = [
+            {"ams_id": s // 4, "slot_id": s % 4} for s in slots
+        ]
     else:
         ams_mapping_legacy = []
         ams_mapping_v2 = []
