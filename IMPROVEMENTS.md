@@ -2362,7 +2362,7 @@ User feature requests discovered after the v1.1 sweep landed.
 
 ## Multi-extruder workflow
 
-- [ ] **82. Auxiliary extruder as second primary, not just support.**
+- [x] **82. Auxiliary extruder as second primary, not just support.**
     Today the X2D's right (auxiliary) nozzle is wired up only via
     BambuStudio's "support_filament" / "support_interface_filament" /
     "wall_filament" preset slots. Feature ask: let the user assign any
@@ -2378,7 +2378,7 @@ User feature requests discovered after the v1.1 sweep landed.
       correctly with two primary filaments (currently the slicer only
       generates a wipe path on left↔right swap when one is "support").
 
-- [ ] **83. On-the-fly model remix UI: resize / shells / infill / layer
+- [x] **83. On-the-fly model remix UI: resize / shells / infill / layer
     height / extruder assignment without re-importing.** Today changing
     these settings means re-importing or re-slicing from scratch. Ask:
     a side panel (or modal) that lets the user tweak the common
@@ -2396,7 +2396,7 @@ User feature requests discovered after the v1.1 sweep landed.
       then schedules `q->reslice()` (already exists for arrange/
       reload-from-disk paths).
 
-- [ ] **84. Persist remix preset per object.** Once a user remixes
+- [x] **84. Persist remix preset per object.** Once a user remixes
     an object, that object's PrintConfig overrides should round-trip
     through the .gcode.3mf so re-opening the project preserves the
     overrides. The 3MF already has per-object metadata
