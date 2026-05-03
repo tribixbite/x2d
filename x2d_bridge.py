@@ -370,11 +370,65 @@ class X2DClient:
             raise TimeoutError("no state report received from printer")
         return self._latest_state
 
-    def publish(self, payload: dict, qos: int = 1) -> None:
+    def publish(self, payload: dict, qos: int = 1, *,
+                max_attempts: int = 3,
+                backoff_base: float = 0.5) -> None:
+        """Publish `payload` (signed) on the printer's request topic with
+        retry-on-disconnect.
+
+        One-shot CLIs (lan_print, x2d_bridge.py print/gcode/etc.) used to
+        treat any MQTT hiccup between publish-call and broker-ack as a
+        hard failure — the user got a stack trace and had to re-run.
+        Now the client transparently retries up to `max_attempts` times
+        with exponential backoff (base * 2**i seconds), reconnecting if
+        the underlying paho client says the broker dropped us. The
+        `serve` daemon's watchdog already handled this for long-lived
+        sessions; this brings parity to one-shots.
+        """
+        import paho.mqtt.client as _mqtt  # for ERR_NO_CONN constant
+
         signed = sign_payload(payload)
         topic = f"device/{self.creds.serial}/request"
-        info = self.client.publish(topic, json.dumps(signed, separators=(",", ":")), qos=qos)
-        info.wait_for_publish(timeout=5)
+        body = json.dumps(signed, separators=(",", ":"))
+        last_err: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                if not self.client.is_connected():
+                    # Reconnect before publishing; reuses the same
+                    # paho.Client (keeps subscriptions, callbacks, IDs).
+                    self._connected.clear()
+                    try:
+                        self.client.reconnect()
+                    except Exception as e:
+                        last_err = e
+                        # Fall through to back-off-and-retry.
+                        time.sleep(backoff_base * (2 ** attempt))
+                        continue
+                    if not self._connected.wait(timeout=5.0):
+                        last_err = TimeoutError("reconnect timed out")
+                        time.sleep(backoff_base * (2 ** attempt))
+                        continue
+                    _metric_inc(self.creds.serial, "mqtt_reconnects_total")
+                info = self.client.publish(topic, body, qos=qos)
+                # rc==MQTT_ERR_NO_CONN means the broker isn't ready yet.
+                if info.rc == _mqtt.MQTT_ERR_NO_CONN:
+                    last_err = ConnectionError("MQTT_ERR_NO_CONN")
+                    time.sleep(backoff_base * (2 ** attempt))
+                    continue
+                info.wait_for_publish(timeout=5)
+                if attempt > 0:
+                    _metric_inc(self.creds.serial, "mqtt_publish_retries_total",
+                                attempt)
+                return
+            except (RuntimeError, ConnectionError, OSError) as e:
+                # paho raises RuntimeError("The client is not currently connected.")
+                # if the loop thread spotted a disconnect before our publish
+                # made it to the wire.
+                last_err = e
+                time.sleep(backoff_base * (2 ** attempt))
+        raise ConnectionError(
+            f"MQTT publish failed after {max_attempts} attempts: {last_err}"
+        )
 
     def disconnect(self) -> None:
         self.client.loop_stop()

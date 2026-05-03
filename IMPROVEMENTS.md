@@ -2301,11 +2301,14 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
     warnings log; `--preflight-strict` treats warnings as blocking.
     Skipped in `--query-only` so the AMS-inspector path stays light.
 
-- [ ] **76. MQTT reconnect on transient drop in one-shot CLIs.**
-    `x2d_bridge.py serve` watchdog reconnects automatically;
-    `lan_print.py` / one-shot `x2d_bridge.py print` do not. Wrap the
-    `client.publish` + `wait_for_publish` in a 3-attempt retry with
-    exponential backoff.
+- [x] **76. MQTT reconnect on transient drop in one-shot CLIs.**
+    Done. `X2DClient.publish` now does 3 attempts with exponential
+    backoff (0.5/1.0/2.0 s) and reconnects (preserving subscriptions
+    + IDs) when the underlying paho client signals disconnect.
+    `mqtt_reconnects_total` + `mqtt_publish_retries_total` Prometheus
+    counters are incremented on retry. Happy path (no drop) still
+    publishes on first attempt — verified live + 6 ams_mapping tests
+    + signing roundtrip still pass.
 
 - [ ] **77. cloud-login auto-bootstrap.** After successful cloud
     login, automatically run `cloud-get-access-code --persist` for
