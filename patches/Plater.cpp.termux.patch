@@ -74,20 +74,34 @@ index c9f7ee4..8ae84a3 100644
  
      auto *panel_sizer = new wxBoxSizer(wxHORIZONTAL);
      panel_sizer->Add(view3D, 1, wxEXPAND | wxALL, 0);
-@@ -7019,6 +7060,13 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
-
-         // Hide sidebar initially, will re-show it after initialization when we got proper window size
+@@ -7022,6 +7063,28 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
          //sidebar.Hide();
-+        // x2d/termux #80 — on portrait phone displays, auto-collapse the
-+        // sidebar at startup so the viewport gets the full screen width.
-+        // User can re-show via Ctrl+Shift+L (#79).
-+        if (x2d_should_auto_collapse_sidebar_for_portrait()) {
-+            sidebar.Hide();
-+            sidebar_layout.is_collapsed = true;
-+        }
          m_aui_mgr.Update();
      }
-@@ -18327,7 +18375,7 @@ wxBoxSizer *ProjectDropDialog::create_item_checkbox(wxString title, wxWindow *pa
++
++    // x2d/termux #80 — on portrait displays, auto-collapse the sidebar
++    // ONCE the main frame is fully built. Doing this at the end of the
++    // priv ctor (above) blocked the wxAuiNotebook tab pages (Prepare,
++    // Preview) from completing their initial Layout — they appeared
++    // empty until window resize. Defer to wxEVT_SHOW so the AUI manager
++    // has finished its first Update + the tab pages have rendered.
++    // User can also re-toggle at any time via Ctrl+Shift+L (#79).
++    if (x2d_should_auto_collapse_sidebar_for_portrait() && main_frame) {
++        main_frame->Bind(wxEVT_SHOW, [this](wxShowEvent& e) {
++            e.Skip();
++            if (!e.IsShown()) return;
++            static bool done = false;
++            if (done) return;
++            done = true;
++            wxAuiPaneInfo& pane = m_aui_mgr.GetPane(this->sidebar);
++            if (pane.IsOk()) {
++                pane.Hide();
++                sidebar_layout.is_collapsed = true;
++                m_aui_mgr.Update();
++            }
++        });
++    }
+@@ -18327,7 +18390,7 @@ wxBoxSizer *ProjectDropDialog::create_item_checkbox(wxString title, wxWindow *pa
  void ProjectDropDialog::select_radio(int index)
  {
      m_action                         = index;
@@ -96,7 +110,7 @@ index c9f7ee4..8ae84a3 100644
      auto                     groupid = 0;
  
      while (node) {
-@@ -18347,7 +18395,7 @@ void ProjectDropDialog::select_radio(int index)
+@@ -18347,7 +18410,7 @@ void ProjectDropDialog::select_radio(int index)
  
  int ProjectDropDialog::get_select_radio(int groupid)
  {
@@ -105,7 +119,7 @@ index c9f7ee4..8ae84a3 100644
      while (node) {
          RadioSelector *rs = node->GetData();
          if (rs->m_groupid == groupid && rs->m_radiobox->GetValue()) { return rs->m_select_id; }
-@@ -18358,7 +18406,7 @@ int ProjectDropDialog::get_select_radio(int groupid)
+@@ -18358,7 +18421,7 @@ int ProjectDropDialog::get_select_radio(int groupid)
  }
  void ProjectDropDialog::on_select_radio(wxMouseEvent &event)
  {
