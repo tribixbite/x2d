@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 """End-to-end Bambu LAN print — query AMS state, upload .gcode.3mf via FTPS,
-then issue the MQTT start_print command with an ams_mapping that points at
-the AMS slot whose filament matches what the 3MF was sliced for.
-
-This is the auto-print companion to lan_upload.py. Use lan_upload.py when
-you only want the file to land on the printer's Files screen and pick it
-from the touchscreen yourself; use this script when you want unattended
-print kickoff matching a specific filament loaded in the AMS.
+then issue a *signed* MQTT start_print command with an ams_mapping that
+points at the AMS slot whose filament matches what the 3MF was sliced for.
 
 Workflow:
-  1. Connect to the printer (FTPS for upload + MQTT for state/control). The
-     MQTT connection takes a few seconds to receive the first `pushall`
-     state report, after which we read AMS contents.
+  1. Connect to the printer (FTPS for upload + signed-MQTT for state/control)
+     using x2d_bridge's X2DClient. The MQTT connection takes a few seconds
+     to receive the first `pushall` state report, after which we read AMS
+     contents.
   2. Walk every AMS tray on the printer. Match by --filament-match (default
      "Silk", case-insensitive substring against tray_sub_brands and
      tray_id_name). Refuse to proceed if zero or >1 matching trays are
@@ -20,20 +16,34 @@ Workflow:
      filament_type baked into the 3MF's project_settings.config (e.g. PLA
      in 3MF must match PLA in the slot, otherwise the printer would refuse
      anyway after the file load).
-  4. Upload the file via implicit-FTPS (re-uses the bambulabs_api FTP
-     client which speaks the right protocol).
-  5. Call Printer.start_print with use_ams=True and ams_mapping=[slot]
-     where slot is the global tray index (AMS#·4 + tray_in_ams).
+  4. Upload the file via x2d_bridge's implicit-FTPS uploader.
+  5. Submit the full Jan-2025+ firmware-required project_file payload via
+     x2d_bridge.start_print, which handles RSA-SHA256 signing with the
+     publicly-leaked Bambu Connect cert (X2D / H2D / refreshed P1+X1
+     firmwares reject unsigned publishes with err_code 84033543).
+
+Why this used to use bambulabs_api and doesn't anymore:
+  bambulabs_api 2.6.6 ships unsigned MQTT and a minimal start_print payload
+  shape that the X2D's command handler validates against and silently
+  drops. We share x2d_bridge.py's mature Creds / X2DClient / start_print /
+  upload_file helpers instead, so this CLI uses the same code paths as the
+  GUI shim's bridge.
 
 Usage:
-    python3 lan_print.py --ip <printer-ip> --access-code <8-digit-code> \\
-        --serial <printer-sn> --file rumi_frame.gcode.3mf
+    python3 lan_print.py --file rumi_frame.gcode.3mf
+        # Reads ip/code/serial from ~/.x2d/credentials [printer] section.
+
+    python3 lan_print.py --ip 192.168.x.y --code 12345678 --serial 03ABC... \\
+        --file rumi_frame.gcode.3mf
 
     # Force a specific slot, skip auto-match:
     python3 lan_print.py ... --slot 3
 
     # Match by a different keyword:
     python3 lan_print.py ... --filament-match "PETG-CF"
+
+    # Dry-run: print AMS state + the auto-matched slot, then exit.
+    python3 lan_print.py ... --query-only
 """
 from __future__ import annotations
 
@@ -45,7 +55,10 @@ import time
 import zipfile
 from pathlib import Path
 
-import bambulabs_api as bba
+# Reuse x2d_bridge's signing/connection/upload/start_print path. This
+# requires bambu_cert.py (publicly-leaked Bambu Connect signing key) to
+# be importable next to x2d_bridge.py.
+import x2d_bridge
 
 log = logging.getLogger("lan_print")
 
@@ -58,19 +71,19 @@ def read_3mf_filament_types(path: Path) -> list[str]:
     return cfg.get("filament_type") or []
 
 
-def collect_trays(printer: bba.Printer) -> list[dict]:
-    """Flatten the AMS hub into a single list of {slot_index, type, sub_brand, color}.
+def collect_trays(state: dict | None) -> list[dict]:
+    """Flatten the printer's AMS hub into a list of {slot_index, type, sub_brand, color}.
 
     `slot_index` is the global ams_mapping index Bambu firmware expects:
     AMS unit U with tray index T (both 0-indexed) becomes U*4 + T. So slot
     A4 of the first AMS == 3 in the firmware's wire format.
 
-    Parses the raw MQTT report directly because bambulabs_api 2.6.6's
-    `process_ams()` requires a tray["n"] field that the X2D doesn't emit;
-    the AMSHub object it returns is empty. Walking `mqtt_dump()['print']
-    ['ams']['ams']` gives us every loaded tray reliably.
+    `state` is the raw printer report (the JSON dict X2DClient.request_state
+    returns). Walks `state["print"]["ams"]["ams"]` directly because the
+    X2D's tray records omit some fields older library helpers expect.
     """
-    state = printer.mqtt_dump() or {}
+    if not state:
+        return []
     ams_block = (state.get("print") or {}).get("ams") or {}
     ams_units = ams_block.get("ams") or []
     trays: list[dict] = []
@@ -124,9 +137,15 @@ def match_slot(trays: list[dict], match: str, expected_type: str | None) -> dict
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ip", required=True)
-    ap.add_argument("--access-code", required=True)
-    ap.add_argument("--serial", required=True)
+    # Printer credentials — match x2d_bridge's flag names so Creds.resolve() works.
+    ap.add_argument("--ip", default="", help="Printer IP. Defaults to ~/.x2d/credentials.")
+    ap.add_argument("--code", default="",
+                    help="Printer LAN access code (8 hex chars). "
+                         "Defaults to ~/.x2d/credentials.")
+    ap.add_argument("--serial", default="",
+                    help="Printer serial. Defaults to ~/.x2d/credentials.")
+    ap.add_argument("--printer", default="",
+                    help="Named [printer:NAME] section in ~/.x2d/credentials.")
     ap.add_argument("--file", required=True, type=Path,
                     help="Path to the .gcode.3mf to upload+print")
     ap.add_argument("--plate", type=int, default=1, help="Plate number in the 3MF (default 1)")
@@ -137,6 +156,8 @@ def main() -> int:
                     help="Force a specific global AMS slot index (skips auto-match)")
     ap.add_argument("--no-flow-cali", action="store_true",
                     help="Disable per-print flow calibration (faster start, tiny risk)")
+    ap.add_argument("--bed-type", default="textured_plate",
+                    help="textured_plate | cool_plate | high_temp_plate (default textured)")
     ap.add_argument("--query-only", action="store_true",
                     help="Connect, dump AMS contents + matched slot, then exit "
                          "without uploading or starting a print. Use this to verify "
@@ -162,21 +183,32 @@ def main() -> int:
                     len(fil_types), len(fil_types))
     expected_type = fil_types[0] if fil_types else None
 
-    printer = bba.Printer(args.ip, args.access_code, args.serial)
-    log.info("Connecting MQTT…")
-    printer.connect()
-    printer.mqtt_start()
+    creds = x2d_bridge.Creds.resolve(args)
+    log.info("Connecting (signed MQTT) to %s [%s]…", creds.ip, creds.serial)
+    client = x2d_bridge.X2DClient(creds)
+    client.connect()
 
-    # MQTT pushall report can take a few seconds to arrive; poll for AMS data.
-    for _ in range(40):  # ~12 s budget
-        trays = collect_trays(printer)
+    # request_state sends a signed `pushall` and waits for the next report.
+    # The X2D usually replies within a second; AMS comes in either the same
+    # message or the immediately-following push. Poll a few times so we
+    # don't race the second push.
+    state = None
+    trays: list[dict] = []
+    for i in range(8):  # ~8 s budget total
+        try:
+            state = client.request_state(timeout=1.5)
+        except TimeoutError:
+            continue
+        trays = collect_trays(state)
         if trays:
             break
-        time.sleep(0.3)
-    else:
-        printer.mqtt_stop()
-        printer.disconnect()
-        raise SystemExit("Timed out waiting for AMS state report. Is the AMS attached and powered?")
+        time.sleep(0.5)
+    if not trays:
+        client.disconnect()
+        raise SystemExit(
+            "Timed out waiting for AMS state report. Is the AMS attached and "
+            "powered? (The X2D will sometimes report no AMS if a tray is mid-load.)"
+        )
 
     log.info("AMS contents (%d slot(s)):", len(trays))
     for t in trays:
@@ -193,15 +225,13 @@ def main() -> int:
                          chosen["slot_index"], chosen.get("type"), chosen.get("sub_brand"))
             except SystemExit as e:
                 log.warning("Auto-match would fail: %s", e)
-        printer.mqtt_stop()
-        printer.disconnect()
+        client.disconnect()
         return 0
 
     if args.slot is not None:
         forced = next((t for t in trays if t["slot_index"] == args.slot), None)
         if forced is None:
-            printer.mqtt_stop()
-            printer.disconnect()
+            client.disconnect()
             raise SystemExit(f"--slot {args.slot} not found in AMS state")
         chosen = forced
         log.info("Using forced slot %d", args.slot)
@@ -211,27 +241,30 @@ def main() -> int:
                  chosen["slot_index"], chosen.get("type"),
                  chosen.get("sub_brand"), args.filament_match)
 
-    # Upload via the package's FTPS client (implicit-TLS, same as lan_upload.py).
     fname = args.file.name
-    log.info("Uploading %s (%d B)…", fname, args.file.stat().st_size)
-    with args.file.open("rb") as f:
-        result = printer.upload_file(f, fname)
-    log.info("Upload result: %s", result)
+    log.info("Uploading %s (%d B) via implicit-FTPS…", fname, args.file.stat().st_size)
+    x2d_bridge.upload_file(creds, args.file, remote_name=fname)
+    log.info("Upload complete")
 
-    log.info("Sending start_print(plate=%d, ams_mapping=[%d], use_ams=True, flow_cali=%s)",
+    log.info("Sending signed start_print(plate=%d, ams_slot=%d, flow_cali=%s)",
              args.plate, chosen["slot_index"], not args.no_flow_cali)
-    ok = printer.start_print(
-        filename=fname,
-        plate_number=args.plate,
-        use_ams=True,
-        ams_mapping=[chosen["slot_index"]] * max(len(fil_types), 1),
-        flow_calibration=not args.no_flow_cali,
-    )
-    log.info("start_print returned: %s", ok)
+    try:
+        x2d_bridge.start_print(
+            client, fname,
+            use_ams=True,
+            ams_slot=chosen["slot_index"],
+            flow_cali=not args.no_flow_cali,
+            bed_type=args.bed_type,
+            local_path=args.file,
+        )
+        log.info("start_print signed-published — printer accepted the command")
+        rc = 0
+    except Exception as e:
+        log.error("start_print failed: %s", e)
+        rc = 2
 
-    printer.mqtt_stop()
-    printer.disconnect()
-    return 0 if ok else 2
+    client.disconnect()
+    return rc
 
 
 if __name__ == "__main__":
