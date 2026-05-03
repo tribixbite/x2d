@@ -88,7 +88,27 @@ index c9f7ee4..8ae84a3 100644
 +    // can pick it up. Today the sidebar starts visible on every aspect;
 +    // user collapses on-demand via Ctrl+Shift+L (#79).
 +    (void)&x2d_should_auto_collapse_sidebar_for_portrait;
-@@ -18327,7 +18377,7 @@ wxBoxSizer *ProjectDropDialog::create_item_checkbox(wxString title, wxWindow *pa
+@@ -10994,8 +11044,18 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
+     if (!old_panel) {
+         //BBS: only switch to the first panel when visible
+         panel->Show();
+         //dynamic_cast<View3D *>(panel)->get_canvas3d()->render();
+-        if (!panel->IsShownOnScreen())
++        // x2d/termux: IsShownOnScreen() requires an EWMH-aware window
++        // manager to report ancestor visibility correctly. termux-x11
++        // ships no WM by default, so this check returns false on first
++        // tab activation under our build — and the early return left
++        // current_panel = nullptr, every subsequent set_current_panel
++        // call entered the same path, and view3D / preview never
++        // became visible. Result: Prepare + Preview tabs render an
++        // empty grey body. Falling back to IsShown() (local widget
++        // visibility flag, no WM dependency) restores correct
++        // behaviour on termux-x11; on a real WM both calls return
++        // the same value.
++        if (!panel->IsShown())
+             return;
+     }
+@@ -18327,7 +18387,7 @@ wxBoxSizer *ProjectDropDialog::create_item_checkbox(wxString title, wxWindow *pa
  void ProjectDropDialog::select_radio(int index)
  {
      m_action                         = index;
