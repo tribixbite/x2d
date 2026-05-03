@@ -71,6 +71,23 @@ def read_3mf_filament_types(path: Path) -> list[str]:
     return cfg.get("filament_type") or []
 
 
+def read_3mf_bed_type(path: Path, plate: int = 1) -> str | None:
+    """Pull bed_type from Metadata/plate_<N>.json — the per-plate truth.
+
+    project_settings.config doesn't carry bed_type; only the plate JSON
+    does. Mismatching bed_type at start_print time triggers a printer
+    warning (sometimes refusal). Auto-reading this avoids relying on the
+    user remembering --bed-type for every print.
+    """
+    try:
+        with zipfile.ZipFile(path, "r") as z:
+            with z.open(f"Metadata/plate_{plate}.json") as f:
+                pj = json.load(f)
+        return pj.get("bed_type")
+    except (KeyError, zipfile.BadZipFile, json.JSONDecodeError):
+        return None
+
+
 def collect_trays(state: dict | None) -> list[dict]:
     """Flatten the printer's AMS hub into a list of {slot_index, type, sub_brand, color}.
 
@@ -156,8 +173,11 @@ def main() -> int:
                     help="Force a specific global AMS slot index (skips auto-match)")
     ap.add_argument("--no-flow-cali", action="store_true",
                     help="Disable per-print flow calibration (faster start, tiny risk)")
-    ap.add_argument("--bed-type", default="textured_plate",
-                    help="textured_plate | cool_plate | high_temp_plate (default textured)")
+    ap.add_argument("--bed-type", default="",
+                    help="textured_plate | cool_plate | engineering_plate | "
+                         "high_temp_plate. If unset, read from the 3MF's "
+                         "Metadata/plate_<N>.json (the per-plate truth) and "
+                         "fall back to textured_plate only if that's missing.")
     ap.add_argument("--query-only", action="store_true",
                     help="Connect, dump AMS contents + matched slot, then exit "
                          "without uploading or starting a print. Use this to verify "
@@ -241,20 +261,28 @@ def main() -> int:
                  chosen["slot_index"], chosen.get("type"),
                  chosen.get("sub_brand"), args.filament_match)
 
+    # Resolve bed_type: explicit --bed-type wins; else read from
+    # Metadata/plate_<N>.json (the per-plate truth); else textured.
+    bed_type = args.bed_type
+    if not bed_type:
+        bed_type = read_3mf_bed_type(args.file, args.plate) or "textured_plate"
+        if bed_type != "textured_plate":
+            log.info("Using bed_type=%r from plate_%d.json", bed_type, args.plate)
+
     fname = args.file.name
     log.info("Uploading %s (%d B) via implicit-FTPS…", fname, args.file.stat().st_size)
     x2d_bridge.upload_file(creds, args.file, remote_name=fname)
     log.info("Upload complete")
 
-    log.info("Sending signed start_print(plate=%d, ams_slot=%d, flow_cali=%s)",
-             args.plate, chosen["slot_index"], not args.no_flow_cali)
+    log.info("Sending signed start_print(plate=%d, ams_slot=%d, bed=%s, flow_cali=%s)",
+             args.plate, chosen["slot_index"], bed_type, not args.no_flow_cali)
     try:
         x2d_bridge.start_print(
             client, fname,
             use_ams=True,
             ams_slot=chosen["slot_index"],
             flow_cali=not args.no_flow_cali,
-            bed_type=args.bed_type,
+            bed_type=bed_type,
             local_path=args.file,
         )
         log.info("start_print signed-published — printer accepted the command")
