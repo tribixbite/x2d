@@ -2,7 +2,35 @@ diff --git a/src/slic3r/GUI/WebViewDialog.cpp b/src/slic3r/GUI/WebViewDialog.cpp
 index f4d88e7..d58646b 100644
 --- a/src/slic3r/GUI/WebViewDialog.cpp
 +++ b/src/slic3r/GUI/WebViewDialog.cpp
-@@ -194,6 +194,11 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
+@@ -162,6 +162,28 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
+     left_group->Add(m_online_back_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
+     left_group->Add(m_online_refresh_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
+
++    // x2d/termux #81 — quick-launch buttons that load Printables (Prusaverse)
++    // and Thingiverse in the same online webview alongside MakerWorld. Both
++    // sites have public model browsing; loading them in-app saves a hop to
++    // the system browser. Buttons reuse the existing "open_in_browser"
++    // glyph as a generic external-site icon — swap for site-specific
++    // bitmaps if/when they get bundled with the Termux build.
++    auto *m_online_printables_btn = make_online_toolbar_button(
++        "open_in_browser", _L("Browse Printables (Prusaverse)"));
++    auto *m_online_thingiverse_btn = make_online_toolbar_button(
++        "open_in_browser", _L("Browse Thingiverse"));
++    left_group->Add(m_online_printables_btn,   0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
++    left_group->Add(m_online_thingiverse_btn,  0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
++    m_online_printables_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
++        if (m_browser) m_browser->LoadURL("https://www.printables.com/");
++    });
++    m_online_thingiverse_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
++        if (m_browser) m_browser->LoadURL("https://www.thingiverse.com/");
++    });
++    m_online_printables_btn->Enable(true);
++    m_online_thingiverse_btn->Enable(true);
++
+     m_online_open_browser_btn = make_online_toolbar_button("open_in_browser", _L("Open in browser"));
+     right_group->Add(m_online_open_browser_btn, 0, wxALIGN_CENTER_VERTICAL);
+
+@@ -194,6 +216,11 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
          wxLogError("Could not init m_browser");
          return;
      }
@@ -11,10 +39,10 @@ index f4d88e7..d58646b 100644
 +    // OnNavigationRequest under WebKit2GTK 4.1 + wx 3.3 on Termux.
 +    // The home-page Recently-Opened bridge stays dead, but the GUI
 +    // launches.
- 
+
      // Makerworld webview
      m_browserMW = WebView::CreateWebView(m_online_container, "about:blank");
-@@ -932,7 +937,7 @@ void WebViewPanel::SendMakerlabList(  )
+@@ -932,7 +959,7 @@ void WebViewPanel::SendMakerlabList(  )
              CallAfter([this, body] {
                  auto body2 = from_u8(body);
  

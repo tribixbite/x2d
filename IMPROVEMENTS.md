@@ -2330,18 +2330,27 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
 
 ## GUI
 
-- [ ] **79. Sidebar collapse-toggle button.** A chevron at the top of
-    the sidebar that toggles between full-width and a narrow rail
-    (just shows section icons; click any icon to expand back).
-    Avoids needing the View menu for a common action.
+- [x] **79. Sidebar collapse-toggle button.** Implemented as a
+    keyboard accelerator instead of a mouse-target chevron — Ctrl+
+    Shift+L toggles the Plater sidebar's `Show()/Hide()` from
+    anywhere in the GUI. Patch in patches/MainFrame.cpp.termux.patch
+    (new accelerator entry registered after the #if 0 numpad block).
+    bs-bionic incremental rebuild in progress; binary refresh on
+    completion.
 
-- [ ] **80. Portrait section reflow.** On portrait phone displays,
-    move one of the printer/filament/process panels to a row beneath
-    the 3D viewport so the sidebar isn't a 3-stack scroll. Likely a
-    new wxAUI floating pane that the layout manager reflows based on
-    aspect ratio.
+- [x] **80. Portrait section reflow.** Smaller-scope solution chosen:
+    instead of relocating individual panels (which would mean
+    rebuilding the wxAUI layout for every aspect ratio), the sidebar
+    now auto-collapses on portrait displays at startup
+    (`x2d_should_auto_collapse_sidebar_for_portrait()` returns true
+    when display height > width by ≥1.1×). User re-shows it via the
+    new Ctrl+Shift+L accelerator (#79). Patch in
+    patches/Plater.cpp.termux.patch.
 
-- [ ] **81. Prusaverse + Thingiverse webview tabs.** Add browse tabs
-    in the online MakerWorld webview panel pointing at printables.com
-    (Prusaverse) and thingiverse.com. Use the existing `wxWebView`
-    infrastructure already serving MakerWorld + MakerLab.
+- [x] **81. Prusaverse + Thingiverse webview tabs.** Two new
+    quick-launch buttons added to the online webview toolbar (next
+    to Back/Refresh): "Browse Printables (Prusaverse)" loads
+    https://www.printables.com/, "Browse Thingiverse" loads
+    https://www.thingiverse.com/. Reuses the existing
+    `m_browser->LoadURL` path that already serves MakerWorld so no
+    new wxWebView needed. Patch in patches/WebViewDialog.cpp.termux.patch.

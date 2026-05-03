@@ -2,7 +2,36 @@ diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
 index f8dd9e2..4856fb2 100644
 --- a/src/slic3r/GUI/MainFrame.cpp
 +++ b/src/slic3r/GUI/MainFrame.cpp
-@@ -447,10 +447,30 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
+@@ -300,6 +300,27 @@ Slic3r::GUI::MainFrame::MainFrame() :
+     wxAcceleratorTable accel(6, entries);
+     SetAcceleratorTable(accel);
+ #endif // _WIN32
++
++    // x2d/termux #79 — Ctrl+Shift+L toggles the Plater sidebar visibility.
++    // Lets phone-portrait users hide the sidebar entirely without trips to
++    // the View menu (which itself doesn't always render right under
++    // termux-x11). Re-shows on the same chord.
++    {
++        wxAcceleratorEntry sidebar_toggle_entry;
++        sidebar_toggle_entry.Set(wxACCEL_CTRL | wxACCEL_SHIFT, (int)'L',
++                                 wxID_HIGHEST + 9979);
++        wxAcceleratorTable sidebar_accel(1, &sidebar_toggle_entry);
++        SetAcceleratorTable(sidebar_accel);
++        Bind(wxEVT_MENU, [this](wxCommandEvent&) {
++            if (!m_plater) return;
++            auto& sb = m_plater->sidebar();
++            if (sb.IsShown()) {
++                sb.Hide();
++            } else {
++                sb.Show();
++            }
++            m_plater->Layout();
++        }, wxID_HIGHEST + 9979);
++    }
+
+     // BBS
+     //wxAcceleratorEntry entries[13];
+@@ -447,10 +468,30 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
      // BBS
      Fit();
  
@@ -36,7 +65,7 @@ index f8dd9e2..4856fb2 100644
  
      Layout();
  
-@@ -1817,11 +1837,27 @@ wxBoxSizer* MainFrame::create_side_tools()
+@@ -1817,11 +1858,27 @@ wxBoxSizer* MainFrame::create_side_tools()
      sizer->Add(FromDIP(4), 0, 0, 0, 0);
      sizer->Add(split_line_icon, 0, wxALIGN_CENTER, 0);
      sizer->Add(FromDIP(10), 0, 0, 0, 0);
