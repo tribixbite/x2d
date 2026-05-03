@@ -3543,6 +3543,49 @@ def cmd_cloud_login(args: argparse.Namespace) -> int:
           f"expires_at={expires_str}, "
           f"valid for {expires_in // 86400}d {(expires_in % 86400) // 3600}h)")
     print(f"session saved to {cloud_client.SESSION_PATH}")
+
+    # Auto-bootstrap ~/.x2d/credentials with every bound printer's
+    # LAN access code unless explicitly disabled. Mirrors what
+    # BambuStudio does after first cloud-bind: pulls dev_id+ip from
+    # the bound-devices REST endpoint and the LAN code via the
+    # `system.get_access_code` cloud-MQTT roundtrip. End state:
+    # subsequent `lan_print.py` / `x2d_bridge.py print` commands
+    # work with no extra flags.
+    if getattr(args, "no_bootstrap", False):
+        return 0
+    try:
+        devices = cli.get_bound_devices() or []
+    except Exception as e:
+        print(f"[bootstrap] couldn't list bound printers: {e} "
+              "— skipping credential auto-write", file=sys.stderr)
+        return 0
+    if not devices:
+        print("[bootstrap] no printers bound to this account — nothing to write")
+        return 0
+    print(f"[bootstrap] found {len(devices)} printer(s) — pulling LAN access codes")
+    bootstrap_count = 0
+    for dev in devices:
+        serial = dev.get("dev_id") or dev.get("device_id") or ""
+        ip = dev.get("dev_ip") or dev.get("ip") or ""
+        if not serial:
+            continue
+        # Reuse cmd_cloud_get_access_code's logic by faking an args namespace.
+        class _GACArgs:
+            pass
+        gac_args = _GACArgs()
+        gac_args.serial = serial
+        gac_args.timeout = 10.0
+        gac_args.persist = True
+        gac_args.ip = ip
+        gac_args.section = ""  # default to printer:<serial>
+        try:
+            rc = cmd_cloud_get_access_code(gac_args)
+            if rc == 0:
+                bootstrap_count += 1
+        except Exception as e:
+            print(f"[bootstrap] {serial}: {e}", file=sys.stderr)
+    print(f"[bootstrap] wrote {bootstrap_count}/{len(devices)} printer "
+          f"section(s) to {Path.home() / '.x2d' / 'credentials'}")
     return 0
 
 
@@ -4437,6 +4480,13 @@ def main() -> int:
     cli_login.add_argument("--tfa-code",
                            help="Pre-supply the 6-digit TOTP. "
                                 "Skips the interactive prompt.")
+    cli_login.add_argument("--no-bootstrap", action="store_true",
+                           help="Skip the auto-write of every bound printer's "
+                                "LAN access code into ~/.x2d/credentials. "
+                                "Default: after login, fetch each printer's "
+                                "access code via cloud MQTT (system."
+                                "get_access_code) and persist as "
+                                "[printer:<serial>].")
     cli_login.set_defaults(fn=cmd_cloud_login)
 
     cli_status = sub.add_parser(

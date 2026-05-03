@@ -2310,10 +2310,14 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
     publishes on first attempt — verified live + 6 ams_mapping tests
     + signing roundtrip still pass.
 
-- [ ] **77. cloud-login auto-bootstrap.** After successful cloud
-    login, automatically run `cloud-get-access-code --persist` for
-    every bound printer (loop over `cli.get_bound_devices()`). Wipes
-    out the manual setup step entirely.
+- [x] **77. cloud-login auto-bootstrap.** Done. cloud-login now
+    iterates `cli.get_bound_devices()` and calls cloud-get-access-code
+    --persist for each one — every printer ends up as
+    `[printer:<serial>]` in `~/.x2d/credentials` with its LAN code
+    already written. Cloud doesn't expose dev_ip in the bound-devices
+    response, so the IP still needs SSDP / manual entry; the cmd
+    warns when persisting a section without an IP. `--no-bootstrap`
+    flag opts out for users who don't want the auto-write.
 
 - [ ] **78. Persist last_message_ts.tmp atomic-write race.** When
     `x2d_bridge.py serve` and a one-shot CLI run concurrently they
