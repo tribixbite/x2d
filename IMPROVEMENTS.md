@@ -2294,10 +2294,12 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
     (multi-printer accounts), `--json` (monitoring), `--silent`
     (cron). Documented cron line in the module docstring.
 
-- [ ] **75. lan_print.py folds preflight check inline.** Right now
-    `preflight_3mf.py` is a separate script; `lan_print.py` doesn't
-    invoke it. Add `lan_print --skip-preflight` flag and run the
-    validator by default before upload.
+- [x] **75. lan_print.py folds preflight check inline.** Done. After
+    the signed-MQTT connect lan_print now runs `preflight_3mf.validate`
+    by default — passes the live AMS state in for the filament
+    cross-check. Errors abort (`--skip-preflight` to override),
+    warnings log; `--preflight-strict` treats warnings as blocking.
+    Skipped in `--query-only` so the AMS-inspector path stays light.
 
 - [ ] **76. MQTT reconnect on transient drop in one-shot CLIs.**
     `x2d_bridge.py serve` watchdog reconnects automatically;

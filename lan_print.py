@@ -59,6 +59,7 @@ from pathlib import Path
 # requires bambu_cert.py (publicly-leaked Bambu Connect signing key) to
 # be importable next to x2d_bridge.py.
 import x2d_bridge
+import preflight_3mf
 
 log = logging.getLogger("lan_print")
 
@@ -300,6 +301,13 @@ def main() -> int:
                     help="Connect, dump AMS contents + matched slot, then exit "
                          "without uploading or starting a print. Use this to verify "
                          "auto-matching before committing to a real print run.")
+    ap.add_argument("--skip-preflight", action="store_true",
+                    help="Skip the 3MF preflight validator (printer-model match, "
+                         "bed_type sanity, MD5 sidecar, max-temp guards, AMS "
+                         "filament cross-check). Default is to run it inline.")
+    ap.add_argument("--preflight-strict", action="store_true",
+                    help="With preflight: refuse to print on warnings as well as "
+                         "errors (default: only errors block).")
     ap.add_argument("--verbose", "-v", action="count", default=0)
     args = ap.parse_args()
 
@@ -325,6 +333,51 @@ def main() -> int:
     log.info("Connecting (signed MQTT) to %s [%s]…", creds.ip, creds.serial)
     client = x2d_bridge.X2DClient(creds)
     client.connect()
+
+    # Pre-flight check — uses the same X2DClient connection's first
+    # state push for the AMS cross-check so we don't double-connect.
+    if not args.skip_preflight and not args.query_only:
+        try:
+            ams_state = client.request_state(timeout=8.0)
+        except TimeoutError:
+            ams_state = None
+        # Resolve the printer model from the credentials section name if
+        # we know it, else just run structural+MD5+temp checks.
+        want_model = ""
+        if "X2D" in (creds.serial or "").upper():
+            want_model = "Bambu Lab X2D"
+        # bed_type cross-check: pre-resolve what we'll send so warnings
+        # match exactly. lan_print auto-reads from plate_<N>.json by
+        # default; respecting --bed-type if explicitly set.
+        bed_for_pf = args.bed_type or read_3mf_bed_type(args.file, args.plate) or ""
+        result = preflight_3mf.validate(
+            args.file,
+            want_printer=want_model or None,
+            want_bed=bed_for_pf or None,
+            ams_state=ams_state,
+        )
+        if result.errors:
+            client.disconnect()
+            for f in result.findings:
+                log.error("preflight %s: %s", f.severity, f.message)
+            raise SystemExit("preflight rejected the 3MF — re-run with "
+                             "--skip-preflight to override")
+        if result.warnings and args.preflight_strict:
+            client.disconnect()
+            for f in result.findings:
+                log.warning("preflight %s: %s", f.severity, f.message)
+            raise SystemExit("preflight strict-mode: warnings present, refusing")
+        for f in result.findings:
+            log.warning("preflight %s [%s]: %s", f.severity, f.code, f.message)
+        if not result.findings:
+            log.info("preflight: clean (printer=%s bed=%s slicer=%s layers=%s "
+                     "weight=%sg time=%s)",
+                     result.summary.get("printer_model"),
+                     result.summary.get("bed_type_from_plate_json"),
+                     result.summary.get("slicer"),
+                     result.summary.get("total_layers"),
+                     result.summary.get("filament_weight_g"),
+                     result.summary.get("estimated_time"))
 
     # request_state sends a signed `pushall` and waits for the next report.
     # The X2D usually replies within a second; AMS comes in either the same
