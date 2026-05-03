@@ -2,29 +2,32 @@ diff --git a/src/slic3r/GUI/Plater.cpp b/src/slic3r/GUI/Plater.cpp
 index c9f7ee4..8ae84a3 100644
 --- a/src/slic3r/GUI/Plater.cpp
 +++ b/src/slic3r/GUI/Plater.cpp
-@@ -2395,8 +2395,30 @@ void Sidebar::update_sync_ams_btn_enable(wxUpdateUIEvent &e)
+@@ -2395,8 +2395,33 @@ void Sidebar::update_sync_ams_btn_enable(wxUpdateUIEvent &e)
       }
   }
  
 +// On Termux + portrait phone displays the X server reports a viewport
 +// narrower than the upstream sidebar BestSize / panel-default of
-+// 42 * em_unit (~504 px). Clamp to one-third of the display so the
-+// sidebar never eats more than 33% of the screen, leaving enough room
-+// for the 3D viewport and the Object/Plate panes. On normal landscape
-+// desktops max(disp_w/3, 42*em) == 42*em so the clamp is a no-op.
++// 42 * em_unit (~504 px). Clamp to one-quarter of the display so the
++// sidebar never eats more than 25% of the screen, leaving room for
++// the 3D viewport and the Object/Plate panes. On normal landscape
++// desktops the clamp drops the default sidebar width to 35*em
++// (~420 px) — meaningfully more compact starting state without
++// sacrificing the printer/filament/process widgets.
++//
++// The hard floor stays at 15*em (~180 px) which is the smallest the
++// upstream widgets render without overflow. Past that the user should
++// hide the sidebar entirely via View > Toggle Sidebar (Ctrl+Shift+L).
 +static int sidebar_default_width()
 +{
 +    const int em = wxGetApp().em_unit();
-+    const int upstream = 42 * em;
++    const int upstream = 35 * em;       // was 42*em — narrower default
 +    int disp_w = 0;
 +    if (auto disp_count = wxDisplay::GetCount(); disp_count > 0) {
 +        disp_w = wxDisplay(0u).GetClientArea().GetWidth();
 +    }
 +    if (disp_w <= 0) return upstream;
-+    const int clamped = std::min(upstream, disp_w / 3);
-+    // Don't shrink below upstream's MinSize floor of 15*em — the
-+    // printer/filament panel widgets need at least that much horizontal
-+    // room or they overflow.
++    const int clamped = std::min(upstream, disp_w / 4);   // was disp_w/3
 +    return std::max(15 * em, clamped);
 +}
 +
