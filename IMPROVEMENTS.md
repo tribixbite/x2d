@@ -2287,11 +2287,12 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
     shape (single int, multi-AMS, no-AMS empty, programmer error,
     envelope key set).
 
-- [ ] **74. Cert rotation monitoring.** If Bambu ever rotates the
-    publicly-leaked Bambu Connect cert (cert_id GLOF3813734089-…),
-    every signed publish silently fails with err_code 84033543. Add
-    a `bambu_cert.py validate` CLI that publishes a signed pushall to
-    a target printer and reports if the firmware acked. Cron monthly.
+- [x] **74. Cert rotation monitoring.** Done. `python3 bambu_cert.py
+    validate` publishes a signed `pushing.pushall` and reports OK
+    (exit 0) or FAIL with err_code+stage (exit 1). Live-verified
+    against 192.168.0.138 in 2.8 s. Supports `--printer NAME`
+    (multi-printer accounts), `--json` (monitoring), `--silent`
+    (cron). Documented cron line in the module docstring.
 
 - [ ] **75. lan_print.py folds preflight check inline.** Right now
     `preflight_3mf.py` is a separate script; `lan_print.py` doesn't

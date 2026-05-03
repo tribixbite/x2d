@@ -65,7 +65,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 
-BAMBU_CERT_ID = "GLOF3813734089-524a37c80000c6a6a274a47b3281"
+# Re-exported from bambu_cert.py (canonical home), with a soft-import so a
+# bare `from x2d_bridge import BAMBU_CERT_ID` still works for downstream code.
+try:
+    from bambu_cert import BAMBU_CERT_ID
+except ImportError:
+    BAMBU_CERT_ID = "GLOF3813734089-524a37c80000c6a6a274a47b3281"
 # Intentionally NOT inlined here — the signing private key is the publicly
 # leaked Bambu Connect global cert. See `bambu_cert.py` for the verbatim
 # blob. Keeping it in a sibling file makes it easier to swap for a different
