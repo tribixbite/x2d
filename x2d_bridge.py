@@ -330,16 +330,33 @@ class X2DClient:
         # Persist atomically (items #19 + #37 per-printer). Cheap — even
         # at 10 Hz this is a few hundred bytes/s of writeback. Keep the
         # parent dir mode exclusive (creds live there too).
+        #
+        # Concurrency (item #78): the tmp filename embeds PID + a random
+        # suffix so a serve daemon writing the per-printer ts file at the
+        # same time as a one-shot CLI doesn't race on `<file>.tmp`. Each
+        # writer gets its own .tmp; os.replace into the canonical path is
+        # atomic on POSIX so whichever writer's replace runs last wins
+        # (and that's fine — we just want the most recent timestamp).
+        tmp: Path | None = None
         try:
             self._ts_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._ts_path.with_suffix(self._ts_path.suffix + ".tmp")
+            tmp = self._ts_path.with_suffix(
+                self._ts_path.suffix + f".tmp.{os.getpid()}.{os.urandom(4).hex()}"
+            )
             tmp.write_text(f"{now}\n")
             os.replace(tmp, self._ts_path)
+            tmp = None  # successfully renamed; nothing to clean up
         except OSError as e:
             # Don't let a transient FS error kill the listener — log once.
             if not getattr(self, "_ts_persist_warned", False):
                 print(f"[x2d-bridge] last_msg_ts persist failed: {e}", file=sys.stderr)
                 self._ts_persist_warned = True
+            # Best-effort cleanup of any tmp we created mid-failure.
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
         self._got_state.set()
         if self.on_state:
             try:

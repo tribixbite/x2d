@@ -2319,11 +2319,14 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
     warns when persisting a section without an IP. `--no-bootstrap`
     flag opts out for users who don't want the auto-write.
 
-- [ ] **78. Persist last_message_ts.tmp atomic-write race.** When
-    `x2d_bridge.py serve` and a one-shot CLI run concurrently they
-    race on the per-printer timestamp file (`~/.x2d/last_message_ts_<sn>`).
-    Benign — only logs a warning — but should add an `flock` around
-    the rename to silence it.
+- [x] **78. Persist last_message_ts.tmp atomic-write race.** Done.
+    Tmp filename now embeds `os.getpid()` + 4 random bytes
+    (`...ts_<sn>.tmp.<pid>.<hex>`) so concurrent writers each get a
+    unique tmp; os.replace into the canonical path is POSIX-atomic so
+    last-writer-wins (correct semantics — we want the most recent
+    timestamp). Cleanup-on-error path now uses `tmp.unlink(missing_ok=True)`
+    to leave no orphan tmps. Live-tested with two concurrent CLIs:
+    the `persist failed` warning is gone.
 
 ## GUI
 
