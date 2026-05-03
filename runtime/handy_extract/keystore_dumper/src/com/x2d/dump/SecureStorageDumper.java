@@ -47,6 +47,8 @@ public class SecureStorageDumper {
         "__androidx_security_crypto_encrypted_prefs_key_keyset__";
     private static final String VALUE_KEYSET_NAME =
         "__androidx_security_crypto_encrypted_prefs_value_keyset__";
+    /** Tink AesSivKey proto field 1 = bytes key_value (the K1||K2 raw SIV key). */
+    private static final int AES_SIV_KEY_FIELD = 1;
 
     public static void main(String[] args) throws Exception {
         installKeystoreProvider();
@@ -88,6 +90,31 @@ public class SecureStorageDumper {
         System.out.println("[+] value AesGcm key recovered, " + aesGcmKey.length + " bytes");
 
         SecretKey valueKey = new javax.crypto.spec.SecretKeySpec(aesGcmKey, "AES");
+
+        // 3b. ALSO unwrap the KEY keyset (AES-SIV, deterministic) so callers can
+        //     decrypt the entry names. Names are plaintext like "userId",
+        //     "accessToken" etc — knowing them turns the value dump from
+        //     "type=0 raw=..." into a readable name->value map.
+        String keyKeysetHex = null;
+        for (int i = 0; i < strings.getLength(); i++) {
+            Element e = (Element) strings.item(i);
+            if (KEY_KEYSET_NAME.equals(e.getAttribute("name"))) {
+                keyKeysetHex = e.getTextContent().trim(); break;
+            }
+        }
+        if (keyKeysetHex != null) {
+            byte[] encKeyKeyset = parseEncryptedKeyset(hexDecode(keyKeysetHex));
+            byte[] keyKeysetProto = aesGcmDecrypt(master, encKeyKeyset, 0, encKeyKeyset.length);
+            byte[] aesSivKey = parseTinkAesSivKey(keyKeysetProto);
+            StringBuilder hex = new StringBuilder();
+            for (byte b : aesSivKey) hex.append(String.format("%02x", b));
+            System.out.println("[+] key AesSiv key recovered: " + aesSivKey.length
+                             + " bytes hex=" + hex);
+            // Also export the value AES-GCM key in hex for the offline decryptor.
+            StringBuilder vhex = new StringBuilder();
+            for (byte b : aesGcmKey) vhex.append(String.format("%02x", b));
+            System.out.println("[+] value AesGcm key hex=" + vhex);
+        }
 
         // 4. Walk every entry value, decrypt, dump.
         for (String[] entry : entries) {
@@ -245,28 +272,78 @@ public class SecureStorageDumper {
     }
 
     private static byte[] parseAesGcmKeyValue(byte[] aesGcmKey) {
+        // Tink AesGcmKey: field 1=version, field 3=bytes key_value
+        return findBytesField(aesGcmKey, 3);
+    }
+
+    /** Mirror of parseTinkAesGcmKey for AES-SIV — same proto envelope, inner type AesSivKey. */
+    private static byte[] parseTinkAesSivKey(byte[] keysetProto) {
         int pos = 0;
-        while (pos < aesGcmKey.length) {
-            int[] tag = readVarint(aesGcmKey, pos);
+        while (pos < keysetProto.length) {
+            int[] tag = readVarint(keysetProto, pos);
             int fieldNum = tag[0] >>> 3;
             int wireType = tag[0] & 0x7;
             pos = tag[1];
             if (wireType == 2) {
-                int[] len = readVarint(aesGcmKey, pos);
+                int[] len = readVarint(keysetProto, pos);
                 int payloadLen = len[0];
                 pos = len[1];
-                if (fieldNum == 3) {
+                if (fieldNum == 2) {
+                    byte[] keyEntry = java.util.Arrays.copyOfRange(keysetProto, pos, pos + payloadLen);
+                    int kp = 0;
+                    while (kp < keyEntry.length) {
+                        int[] kt = readVarint(keyEntry, kp);
+                        int kf = kt[0] >>> 3;
+                        int kw = kt[0] & 0x7;
+                        kp = kt[1];
+                        if (kw == 2) {
+                            int[] kl = readVarint(keyEntry, kp);
+                            int kpl = kl[0];
+                            kp = kl[1];
+                            if (kf == 1) {
+                                byte[] keyData = java.util.Arrays.copyOfRange(keyEntry, kp, kp + kpl);
+                                // KeyData.value (field 2) is itself an AesSivKey proto:
+                                // field 1 = version (uint32), field 2 = bytes key_value.
+                                byte[] inner = findBytesField(keyData, 2);
+                                return findBytesField(inner, 2);
+                            }
+                            kp += kpl;
+                        } else {
+                            int[] sk = readVarint(keyEntry, kp); kp = sk[1];
+                        }
+                    }
+                }
+                pos += payloadLen;
+            } else {
+                int[] skip = readVarint(keysetProto, pos); pos = skip[1];
+            }
+        }
+        throw new IllegalStateException("AesSivKey not found in Keyset");
+    }
+
+    /** Find a length-delimited field by number in a flat proto and return its bytes payload. */
+    private static byte[] findBytesField(byte[] proto, int wantedField) {
+        int pos = 0;
+        while (pos < proto.length) {
+            int[] tag = readVarint(proto, pos);
+            int fieldNum = tag[0] >>> 3;
+            int wireType = tag[0] & 0x7;
+            pos = tag[1];
+            if (wireType == 2) {
+                int[] len = readVarint(proto, pos);
+                int payloadLen = len[0];
+                pos = len[1];
+                if (fieldNum == wantedField) {
                     byte[] out = new byte[payloadLen];
-                    System.arraycopy(aesGcmKey, pos, out, 0, payloadLen);
+                    System.arraycopy(proto, pos, out, 0, payloadLen);
                     return out;
                 }
                 pos += payloadLen;
             } else {
-                int[] skip = readVarint(aesGcmKey, pos);
-                pos = skip[1];
+                int[] skip = readVarint(proto, pos); pos = skip[1];
             }
         }
-        throw new IllegalStateException("AesGcmKey.key_value not found");
+        throw new IllegalStateException("field " + wantedField + " not found");
     }
 
     /** Decode a varint at `proto[pos]`. Returns {value, newPos}. */
