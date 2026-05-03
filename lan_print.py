@@ -124,29 +124,122 @@ def collect_trays(state: dict | None) -> list[dict]:
     return trays
 
 
-def match_slot(trays: list[dict], match: str, expected_type: str | None) -> dict:
-    """Find the unique tray whose sub-brand/id-name contains `match` (case-insensitive)
-    and whose tray_type agrees with `expected_type` if given."""
-    needle = match.lower()
-    candidates = []
+def _norm_color(c: str) -> str:
+    """Normalise a color spec for comparison.
+
+    Accepts:
+      - "#RRGGBB"      -> "RRGGBBFF"
+      - "#RRGGBBAA"    -> "RRGGBBAA"
+      - "RRGGBBAA"     -> "RRGGBBAA"
+      - "RRGGBB"       -> "RRGGBBFF"
+      - "0xRRGGBBAA"   -> "RRGGBBAA"
+    All upper-case so the printer's `tray_color` (already upper, e.g.
+    "057748FF") compares directly with anything the user types.
+    """
+    if not c:
+        return ""
+    s = c.strip().upper().lstrip("#")
+    if s.startswith("0X"):
+        s = s[2:]
+    if len(s) == 6:
+        s += "FF"
+    return s
+
+
+def _color_distance(a: str, b: str) -> int | None:
+    """Manhattan distance between two normalised RGBA hex colors, or None
+    if either is malformed. Lets us pick the closest tray when an exact
+    color match isn't found (--filament-color-fuzzy)."""
+    try:
+        ra, ga, ba = int(a[0:2], 16), int(a[2:4], 16), int(a[4:6], 16)
+        rb, gb, bb = int(b[0:2], 16), int(b[2:4], 16), int(b[4:6], 16)
+    except (ValueError, IndexError):
+        return None
+    return abs(ra - rb) + abs(ga - gb) + abs(ba - bb)
+
+
+def match_slot(trays: list[dict], *,
+               match_substr: str = "",
+               match_color: str = "",
+               match_info_idx: str = "",
+               color_fuzzy_max: int | None = None,
+               expected_type: str | None = None) -> dict:
+    """Find the unique tray matching the given criteria.
+
+    Match modes (apply in this priority order — first non-empty wins):
+      1. `match_color`  exact RGBA hex match against `tray_color`. With
+         `color_fuzzy_max` set, falls back to nearest within that
+         Manhattan distance threshold (e.g. 30 ≈ visually close).
+      2. `match_info_idx` exact (case-insensitive) match against
+         `tray_info_idx` — Bambu's filament catalog ID like "GFL95".
+      3. `match_substr` case-insensitive substring against tray_sub_brands
+         and tray_id_name. The X2D omits these; on its loadouts this
+         matcher will silently match nothing.
+      4. If nothing was given, the only candidate filter is
+         `expected_type` (e.g. "PLA"); we error out if more than one
+         tray matches that alone.
+
+    `expected_type` filters every mode — mismatched filament_type trays
+    are dropped before reporting "ambiguous" or "no match".
+    """
+    candidates: list[dict] = []
     for t in trays:
-        haystacks = [t.get("sub_brand") or "", t.get("id_name") or ""]
-        if not any(needle in (h or "").lower() for h in haystacks):
-            continue
         if expected_type and (t.get("type") or "").upper() != expected_type.upper():
             continue
+        if match_color:
+            want = _norm_color(match_color)
+            have = _norm_color(t.get("color") or "")
+            if want and have == want:
+                candidates.append(t)
+            continue
+        if match_info_idx:
+            if (t.get("info_idx") or "").upper() == match_info_idx.upper():
+                candidates.append(t)
+            continue
+        if match_substr:
+            needle = match_substr.lower()
+            haystacks = [t.get("sub_brand") or "", t.get("id_name") or ""]
+            if any(needle in (h or "").lower() for h in haystacks):
+                candidates.append(t)
+            continue
+        # No criteria given: every tray of expected_type is a candidate.
         candidates.append(t)
+
+    # Color fuzzy fallback: if exact color match returned nothing, try
+    # nearest-within-threshold among the type-filtered trays.
+    if not candidates and match_color and color_fuzzy_max is not None:
+        want = _norm_color(match_color)
+        scored: list[tuple[int, dict]] = []
+        for t in trays:
+            if expected_type and (t.get("type") or "").upper() != expected_type.upper():
+                continue
+            d = _color_distance(want, _norm_color(t.get("color") or ""))
+            if d is not None and d <= color_fuzzy_max:
+                scored.append((d, t))
+        if scored:
+            scored.sort(key=lambda p: p[0])
+            return scored[0][1]
+
+    criteria_desc = (
+        f"color={match_color!r}" if match_color
+        else f"info_idx={match_info_idx!r}" if match_info_idx
+        else f"substring={match_substr!r}"
+    )
     if not candidates:
         raise SystemExit(
-            f"No AMS tray matches `{match}`"
+            f"No AMS tray matches {criteria_desc}"
             + (f" of type {expected_type}" if expected_type else "")
             + ". Available trays:\n"
-            + "\n".join(f"  slot {t['slot_index']}: {t}" for t in trays)
+            + "\n".join(f"  slot {t['slot_index']}: type={t.get('type')!r} "
+                       f"color={t.get('color')!r} info_idx={t.get('info_idx')!r}"
+                       for t in trays)
         )
     if len(candidates) > 1:
         raise SystemExit(
-            f"Multiple trays match `{match}`; pass --slot N to disambiguate:\n"
-            + "\n".join(f"  slot {t['slot_index']}: {t}" for t in candidates)
+            f"Multiple trays match {criteria_desc}; pass --slot N to disambiguate:\n"
+            + "\n".join(f"  slot {t['slot_index']}: type={t.get('type')!r} "
+                       f"color={t.get('color')!r} info_idx={t.get('info_idx')!r}"
+                       for t in candidates)
         )
     return candidates[0]
 
@@ -166,9 +259,29 @@ def main() -> int:
     ap.add_argument("--file", required=True, type=Path,
                     help="Path to the .gcode.3mf to upload+print")
     ap.add_argument("--plate", type=int, default=1, help="Plate number in the 3MF (default 1)")
-    ap.add_argument("--filament-match", default="Silk",
+    # Match modes — pick exactly one. Color is the most reliable on X2D
+    # since the firmware's MQTT report omits sub_brand/id_name strings on
+    # some loadouts (so --filament-match would match nothing). info_idx
+    # is the next-best — Bambu's catalog ID like "GFL95" — same idea but
+    # tied to the filament SKU rather than its color.
+    ap.add_argument("--filament-match", default="",
                     help="Case-insensitive substring matched against tray_sub_brands "
-                         "and tray_id_name (default 'Silk')")
+                         "and tray_id_name. Pre-X2D printers populate these; X2D "
+                         "often doesn't — prefer --filament-color or --filament-info-idx.")
+    ap.add_argument("--filament-color", default="",
+                    help='RGBA hex of the AMS slot color, e.g. "#057748" or '
+                         '"057748FF". Compares against the tray\'s tray_color '
+                         '(the firmware reports it upper-case with alpha=FF).')
+    ap.add_argument("--filament-color-fuzzy", type=int, default=None,
+                    metavar="MAX",
+                    help="With --filament-color, if no exact match falls back to "
+                         "the nearest tray within MAX Manhattan distance in RGB "
+                         "(0-765). 30 ≈ visually close, 100 = same family.")
+    ap.add_argument("--filament-info-idx", default="",
+                    help='Bambu filament catalog ID, e.g. "GFL95" (Bambu Basic '
+                         'PLA Bambu Green) or "GFA05" (Bambu Generic PLA). '
+                         'Inspect AMS state with --query-only to see what '
+                         'each loaded tray reports.')
     ap.add_argument("--slot", type=int, default=None,
                     help="Force a specific global AMS slot index (skips auto-match)")
     ap.add_argument("--no-flow-cali", action="store_true",
@@ -236,13 +349,24 @@ def main() -> int:
                  t["slot_index"], t["ams"], t["tray"],
                  t.get("type"), t.get("sub_brand"), t.get("color"))
 
+    def _do_match() -> dict:
+        return match_slot(
+            trays,
+            match_substr=args.filament_match,
+            match_color=args.filament_color,
+            match_info_idx=args.filament_info_idx,
+            color_fuzzy_max=args.filament_color_fuzzy,
+            expected_type=expected_type,
+        )
+
     if args.query_only:
         log.info("--query-only set; not uploading or printing. Exiting.")
         if args.slot is None:
             try:
-                chosen = match_slot(trays, args.filament_match, expected_type)
-                log.info("Would auto-match slot %d (%s %s)",
-                         chosen["slot_index"], chosen.get("type"), chosen.get("sub_brand"))
+                chosen = _do_match()
+                log.info("Would auto-match slot %d (type=%s color=%s info_idx=%s)",
+                         chosen["slot_index"], chosen.get("type"),
+                         chosen.get("color"), chosen.get("info_idx"))
             except SystemExit as e:
                 log.warning("Auto-match would fail: %s", e)
         client.disconnect()
@@ -256,10 +380,10 @@ def main() -> int:
         chosen = forced
         log.info("Using forced slot %d", args.slot)
     else:
-        chosen = match_slot(trays, args.filament_match, expected_type)
-        log.info("Auto-matched slot %d (%s %s) for filament `%s`",
+        chosen = _do_match()
+        log.info("Auto-matched slot %d (type=%s color=%s info_idx=%s)",
                  chosen["slot_index"], chosen.get("type"),
-                 chosen.get("sub_brand"), args.filament_match)
+                 chosen.get("color"), chosen.get("info_idx"))
 
     # Resolve bed_type: explicit --bed-type wins; else read from
     # Metadata/plate_<N>.json (the per-plate truth); else textured.
