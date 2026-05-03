@@ -2261,3 +2261,71 @@ v1.0 ship-readiness was never gated on them.
     needs re-creation after `pkg upgrade libsoup3` if the SONAME
     format changes upstream. #70 (libcurl JPEG poller) is preferred
     for the BS-specific use-case because it has zero gstreamer deps.
+
+
+# v1.1 follow-ups (raised 2026-05-03)
+
+The 71-item v1.0 ledger above is closed. These are next-tier improvements
+discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
+31f0b5e, f00c12c, 8cb623f) — most are concrete one-PR-each items.
+
+## Print path
+
+- [ ] **72. AMS slot match by color or info_idx fallback.** X2D's MQTT
+    report omits `tray_sub_brands` / `tray_id_name` (live-confirmed: all 8
+    slots came back with empty strings). `lan_print.py --filament-match Silk`
+    can never match. Add `--filament-color #057748FF` (hex tray_color) and
+    `--filament-info-idx GFL95` (Bambu's catalog ID) modes; auto-fall-back
+    to color when sub_brand is empty.
+
+- [ ] **73. ams_mapping_v2 multi-extruder verify.** X2D has 2 nozzles
+    (`extruder_type="0 1"`). `start_print` currently sends a single-slot
+    `ams_mapping`; multi-color X2D prints with per-extruder spool
+    assignment have not been exercised. Need a multi-color slice and
+    a live verification run.
+
+- [ ] **74. Cert rotation monitoring.** If Bambu ever rotates the
+    publicly-leaked Bambu Connect cert (cert_id GLOF3813734089-…),
+    every signed publish silently fails with err_code 84033543. Add
+    a `bambu_cert.py validate` CLI that publishes a signed pushall to
+    a target printer and reports if the firmware acked. Cron monthly.
+
+- [ ] **75. lan_print.py folds preflight check inline.** Right now
+    `preflight_3mf.py` is a separate script; `lan_print.py` doesn't
+    invoke it. Add `lan_print --skip-preflight` flag and run the
+    validator by default before upload.
+
+- [ ] **76. MQTT reconnect on transient drop in one-shot CLIs.**
+    `x2d_bridge.py serve` watchdog reconnects automatically;
+    `lan_print.py` / one-shot `x2d_bridge.py print` do not. Wrap the
+    `client.publish` + `wait_for_publish` in a 3-attempt retry with
+    exponential backoff.
+
+- [ ] **77. cloud-login auto-bootstrap.** After successful cloud
+    login, automatically run `cloud-get-access-code --persist` for
+    every bound printer (loop over `cli.get_bound_devices()`). Wipes
+    out the manual setup step entirely.
+
+- [ ] **78. Persist last_message_ts.tmp atomic-write race.** When
+    `x2d_bridge.py serve` and a one-shot CLI run concurrently they
+    race on the per-printer timestamp file (`~/.x2d/last_message_ts_<sn>`).
+    Benign — only logs a warning — but should add an `flock` around
+    the rename to silence it.
+
+## GUI
+
+- [ ] **79. Sidebar collapse-toggle button.** A chevron at the top of
+    the sidebar that toggles between full-width and a narrow rail
+    (just shows section icons; click any icon to expand back).
+    Avoids needing the View menu for a common action.
+
+- [ ] **80. Portrait section reflow.** On portrait phone displays,
+    move one of the printer/filament/process panels to a row beneath
+    the 3D viewport so the sidebar isn't a 3-stack scroll. Likely a
+    new wxAUI floating pane that the layout manager reflows based on
+    aspect ratio.
+
+- [ ] **81. Prusaverse + Thingiverse webview tabs.** Add browse tabs
+    in the online MakerWorld webview panel pointing at printables.com
+    (Prusaverse) and thingiverse.com. Use the existing `wxWebView`
+    infrastructure already serving MakerWorld + MakerLab.
