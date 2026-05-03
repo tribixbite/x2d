@@ -2404,7 +2404,7 @@ User feature requests discovered after the v1.1 sweep landed.
     plus an importer that knows to layer the per-object dict back on
     top of the global preset at load time.
 
-- [ ] **85. wxGLCanvasEGL realize on shared-Plater tab swap (Prepare /
+- [x] **85. wxGLCanvasEGL realize on shared-Plater tab swap (Prepare /
     Preview body blank).** MainFrame.cpp:977-978 inserts a single
     m_plater into both tpPrepare AND tpPreview slots of m_tabpanel.
     On termux-x11 the wxAuiNotebook + wxGLCanvasEGL combination
@@ -2419,3 +2419,32 @@ User feature requests discovered after the v1.1 sweep landed.
     port (see docs/bambu-craftmatic-ts-port.md). The web app path
     is recommended because it also unblocks #82-#84 with a much
     nicer UX than the wx GUI ever offered.
+
+
+- [ ] **86. wxGLCanvasEGL surface paint under termux-x11.** After #85
+    the Plater sidebar renders correctly on Prepare/Preview tabs but
+    the 3D viewport area (the wxGLCanvas inside view3D / preview)
+    remains blank — the GL surface never gets a wxEVT_PAINT under
+    termux-x11 + wx 3.3 + GTK3 + Mesa EGL/swrast. EGL itself works
+    (probe outside BS shows Mesa EGL 1.5 OpenGL+OpenGL_ES). The
+    triple-hammer in #85 (reset_window_layout + Layout + SizeEvent
+    + explicit canvas3D->render()) successfully primes everything
+    BUT the X server. The wx 3.3 GLCanvasEGL surface attached to
+    the GdkX11Window doesn't blit its render target to the visible
+    X surface. Three remediation paths, in increasing scope:
+    a. Patch `wxGLCanvasEGL::SwapBuffers()` to fall back to
+       `glReadPixels` + `XPutImage` when `eglSwapBuffers` returns
+       EGL_BAD_SURFACE / EGL_BAD_ALLOC. Requires a wxWidgets rebuild
+       (~30-60 min on Termux) and is the smallest patch that gets
+       the GUI working.
+    b. Replace the GLCanvas3D backbone in BambuStudio with a
+       custom EGL surfaceless renderer that does the offscreen→XImage
+       blit itself, keeping wx out of the GL path. ~1 week of work.
+    c. Skip the BS GUI entirely in favour of the craftmatic web app
+       port (see docs/bambu-craftmatic-ts-port.md). 5-8 weeks for
+       feature parity but a much nicer end-state UX, mobile-friendly,
+       and unblocks every other v1.x ask via Three.js.
+    Recommended path: (c) — short-term users have headless tools
+    (`x2d_bridge.py`, `lan_print.py`, `remix_3mf.py`,
+    `preflight_3mf.py`) that don't need the viewport; long-term the
+    web app supersedes the wx GUI entirely.

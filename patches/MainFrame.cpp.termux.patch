@@ -65,6 +65,55 @@ index f8dd9e2..4856fb2 100644
  
      Layout();
  
+@@ -1304,6 +1325,53 @@ MainFrame::~MainFrame()
+         if (panel == m_plater) {
+             if (sel == tp3DEditor) {
+                 wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
+                 m_param_panel->OnActivate();
+             }
+             else if (sel == tpPreview) {
+                 wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
+                 m_param_panel->OnActivate();
+             }
++            // x2d/termux #85 — m_plater is the SAME widget for both
++            // tp3DEditor and tpPreview (MainFrame.cpp:977-978 inserts
++            // it into both pages). On termux-x11 the wxAuiNotebook +
++            // wxAuiManager combination doesn't re-realize the GL
++            // surface on the share-widget tab swap, so view3D /
++            // preview render an empty grey body.
++            //
++            // Triple-hammer fix:
++            //   1. reset_window_layout() — reloads the default
++            //      perspective, makes wxAuiManager re-size every pane
++            //      (sidebar + main panel_3d) against m_plater's
++            //      CURRENT size which after the tab switch is finally
++            //      non-zero. This is what makes the sidebar appear.
++            //   2. Synthetic SizeEvent — propagates to the panel_3d
++            //      sizer so view3D / preview / assemble_view get
++            //      their Layout-derived sizes recomputed.
++            //   3. Force a render() on the active canvas3D — wxGLCanvasEGL
++            //      under termux-x11 sometimes never gets a wxEVT_PAINT
++            //      after first realize because there's no compositor
++            //      to fire the expose event. Calling render() directly
++            //      kicks the GL pipeline and pushes the build plate
++            //      texture to the X server.
++            m_plater->reset_window_layout();
++            m_plater->Layout();
++            wxSizeEvent szev(m_plater->GetSize(), m_plater->GetId());
++            szev.SetEventObject(m_plater);
++            m_plater->GetEventHandler()->ProcessEvent(szev);
++            m_plater->Refresh();
++            m_plater->Update();
++            if (sel == tp3DEditor) {
++                if (auto* c = m_plater->get_view3D_canvas3D()) {
++                    c->render();
++                }
++            } else if (sel == tpPreview) {
++                if (auto* c = m_plater->get_preview_canvas3D()) {
++                    c->render();
++                }
++            }
+         }
 @@ -1817,11 +1858,27 @@ wxBoxSizer* MainFrame::create_side_tools()
      sizer->Add(FromDIP(4), 0, 0, 0, 0);
      sizer->Add(split_line_icon, 0, wxALIGN_CENTER, 0);
