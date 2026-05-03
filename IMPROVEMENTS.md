@@ -2354,3 +2354,52 @@ discovered while tightening up the print pipeline (commits 9adb38a, c12f978,
     https://www.thingiverse.com/. Reuses the existing
     `m_browser->LoadURL` path that already serves MakerWorld so no
     new wxWebView needed. Patch in patches/WebViewDialog.cpp.termux.patch.
+
+
+# v1.2 follow-ups (raised 2026-05-03)
+
+User feature requests discovered after the v1.1 sweep landed.
+
+## Multi-extruder workflow
+
+- [ ] **82. Auxiliary extruder as second primary, not just support.**
+    Today the X2D's right (auxiliary) nozzle is wired up only via
+    BambuStudio's "support_filament" / "support_interface_filament" /
+    "wall_filament" preset slots. Feature ask: let the user assign any
+    object to the aux extruder as a primary (multi-color body, not just
+    support tower / interface). Implementation surface:
+    - Plater object-list right-click → "Assign extruder → Aux".
+    - PrintConfig: surface a per-object `extruder` override that
+      defaults from `wall_filament` but accepts both nozzles as
+      primaries (left=0, right=1).
+    - GCode generator: stop short-circuiting the right nozzle to
+      support-only paths when the per-object override picks it.
+    - Verify on the X2D that the wipe-tower / purge-block is handled
+      correctly with two primary filaments (currently the slicer only
+      generates a wipe path on left↔right swap when one is "support").
+
+- [ ] **83. On-the-fly model remix UI: resize / shells / infill / layer
+    height / extruder assignment without re-importing.** Today changing
+    these settings means re-importing or re-slicing from scratch. Ask:
+    a side panel (or modal) that lets the user tweak the common
+    primary-flow settings live and triggers a background reslice when
+    they hit Apply. Implementation surface:
+    - Plater right-click → "Remix this object…" → modal.
+    - Parameter panel: scale (per-axis %), wall loops, top/bottom
+      shells, sparse_infill_density, sparse_infill_pattern,
+      layer_height, primary extruder picker (#82).
+    - Hooks into `BackgroundSlicingProcess` so the reslice runs
+      async — no GUI lock-up. Re-uses the existing slicing-progress
+      bar + cancel button.
+    - `Apply & re-slice` button submits a single
+      DynamicPrintConfig overlay against the current plate's object,
+      then schedules `q->reslice()` (already exists for arrange/
+      reload-from-disk paths).
+
+- [ ] **84. Persist remix preset per object.** Once a user remixes
+    an object, that object's PrintConfig overrides should round-trip
+    through the .gcode.3mf so re-opening the project preserves the
+    overrides. The 3MF already has per-object metadata
+    (model_settings.config) so this is a serialisation-level fix
+    plus an importer that knows to layer the per-object dict back on
+    top of the global preset at load time.
