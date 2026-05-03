@@ -3922,6 +3922,105 @@ def cmd_cloud_chamber_light(args: argparse.Namespace) -> int:
     return _cloud_publish_payload(serial, payload, args.timeout)
 
 
+def cmd_cloud_get_access_code(args: argparse.Namespace) -> int:
+    """Fetch a printer's LAN access code over cloud MQTT (no LAN needed).
+
+    Mirrors what BambuStudio does on first cloud-bind (see
+    `MachineObject::command_get_access_code` in DeviceManager.cpp:1219):
+    publish `system.get_access_code` to the printer's cloud request topic
+    and wait for the report that comes back with `system.access_code`
+    set. Lets a fresh `cloud-login` finish setting up `~/.x2d/credentials`
+    automatically — no need to copy the code off the printer's screen.
+
+    Use --persist to also write the discovered code (and IP if --ip given,
+    or whatever was already in the section) into ~/.x2d/credentials so
+    subsequent LAN-direct commands work without flags. The serial is the
+    section key; missing sections get created as `[printer:<serial>]`.
+    """
+    import cloud_client
+    cli = cloud_client.CloudClient.load_or_anonymous()
+    if cli.session.empty:
+        print("not logged in — run `x2d_bridge.py cloud-login` first",
+              file=sys.stderr)
+        return 1
+    serial = _resolve_cloud_serial(args)
+    if not serial:
+        print("--serial required (or bind exactly one printer to the account)",
+              file=sys.stderr)
+        return 1
+
+    topic_report  = f"device/{serial}/report"
+    topic_request = f"device/{serial}/request"
+    seq = _next_seq()
+    payload = {"system": {"sequence_id": seq, "command": "get_access_code"}}
+
+    got_code: dict[str, str | None] = {"value": None}
+    done = _threading.Event()
+
+    def on_connect(c, userdata, flags, rc, properties=None):
+        if rc != 0:
+            print(f"[cloud-get-access-code] MQTT connect failed rc={rc}",
+                  file=sys.stderr)
+            return
+        c.subscribe(topic_report, qos=0)
+        c.publish(topic_request, json.dumps(payload, separators=(",", ":")))
+
+    def on_message(c, userdata, msg):
+        try:
+            j = json.loads(msg.payload.decode("utf-8"))
+        except Exception:
+            return
+        sysblock = (j or {}).get("system") or {}
+        # Reply payload from the firmware: system.command == "get_access_code"
+        # and system.access_code populated. Some firmwares also re-publish
+        # the field under top-level `info` — accept both.
+        code = (sysblock.get("access_code")
+                or (j.get("info") or {}).get("access_code"))
+        if code:
+            got_code["value"] = code
+            done.set()
+
+    c = _cloud_mqtt_connect(serial, cli)
+    c.on_connect = on_connect
+    c.on_message = on_message
+    c.loop_start()
+    try:
+        if not done.wait(timeout=args.timeout):
+            print(f"[cloud-get-access-code] timeout waiting {args.timeout}s "
+                  f"for response (printer offline?)", file=sys.stderr)
+            return 1
+    finally:
+        c.loop_stop()
+        c.disconnect()
+
+    code = got_code["value"]
+    print(code)
+
+    if args.persist:
+        ini_path = Path.home() / ".x2d" / "credentials"
+        ini_path.parent.mkdir(parents=True, exist_ok=True)
+        cp = configparser.ConfigParser()
+        if ini_path.exists():
+            cp.read(ini_path)
+        # Section name precedence: --section > printer:<serial> > printer.
+        target = args.section or f"printer:{serial}"
+        if not cp.has_section(target):
+            cp.add_section(target)
+        cp.set(target, "code", code)
+        cp.set(target, "serial", serial)
+        if args.ip:
+            cp.set(target, "ip", args.ip)
+        elif not cp.has_option(target, "ip"):
+            print(f"[cloud-get-access-code] no --ip given and {target} has no ip "
+                  f"set — re-run with --ip <printer-ip> to make this section "
+                  f"usable for LAN commands.", file=sys.stderr)
+        with ini_path.open("w") as f:
+            cp.write(f)
+        print(f"[cloud-get-access-code] wrote {target} -> {ini_path}",
+              file=sys.stderr)
+    return 0
+
+
 def cmd_cloud_print(args: argparse.Namespace) -> int:
     """Submit a complete cloud-mediated print job:
        1. Upload the .gcode.3mf to Bambu's OSS via the upload-token API.
@@ -4376,6 +4475,31 @@ def main() -> int:
     cli_clamp.add_argument("--loops",    type=int, default=0,
                            help="0 = forever for `flashing`")
     cli_clamp.add_argument("--interval", type=int, default=0)
+
+    cli_gac = sub.add_parser(
+        "cloud-get-access-code",
+        help="Fetch a printer's LAN access code over cloud MQTT — same "
+             "system.get_access_code path BambuStudio uses on first "
+             "cloud-bind. With --persist, also writes the discovered "
+             "code (and --ip if given) into ~/.x2d/credentials so "
+             "subsequent LAN commands work without flags.",
+    )
+    cli_gac.add_argument("--serial",
+                         help="Printer serial (auto-picks if exactly one is bound).")
+    cli_gac.add_argument("--timeout", type=float, default=10.0,
+                         help="Seconds to wait for printer reply (default 10).")
+    cli_gac.add_argument("--persist", action="store_true",
+                         help="Save the discovered code into ~/.x2d/credentials.")
+    cli_gac.add_argument("--ip", default="",
+                         help="Printer IP — written into the section when "
+                              "--persist is set. If omitted and the section "
+                              "already exists with an IP, the existing one "
+                              "is kept.")
+    cli_gac.add_argument("--section", default="",
+                         help="Section name in ~/.x2d/credentials to write to "
+                              "(default 'printer:<serial>'). Use 'printer' to "
+                              "make this the default printer.")
+    cli_gac.set_defaults(fn=cmd_cloud_get_access_code)
 
     cli_pub = sub.add_parser(
         "cloud-publish",
