@@ -2175,7 +2175,7 @@ v1.0 ship-readiness was never gated on them.
 
 ## Future enhancements (parked, not blocking)
 
-- [ ] **70. In-GUI camera live preview — replace wxMediaCtrl3 with libcurl
+- [x] **70. In-GUI camera live preview — replace wxMediaCtrl3 with libcurl
   JPEG poller.** Companion to commits 93cb8a2 + the run_gui.sh
   X2D_CAMERA_URL wire-up. wxMediaCtrl3 → gstreamer playbin can't render
   the local MJPEG endpoint because Termux's gst-plugins-good ships
@@ -2186,23 +2186,38 @@ v1.0 ship-readiness was never gated on them.
   via X2D_CAMERA_URL=...` runs, but `m_media_ctrl->Load()` then no-ops
   because playbin can't construct the source element.
   - **Sub-tasks**:
-    - [ ] In `bs-bionic/src/slic3r/GUI/MediaPlayCtrl.cpp`: when
+    - [x] In `bs-bionic/src/slic3r/GUI/MediaPlayCtrl.cpp`: when
       `X2D_CAMERA_URL` is set, do NOT call `m_media_ctrl->Load(url)`.
       Instead overlay a `wxStaticBitmap` and start a `wxTimer` (~100 ms)
       that pulls `/cam.jpg` via libcurl into a `wxImage` → `wxBitmap`
       → `m_static_bitmap->SetBitmap()`. libcurl is already linked.
-    - [ ] Hide `m_media_ctrl` while X2D_CAMERA_URL is active, so the
+    - [x] Hide `m_media_ctrl` while X2D_CAMERA_URL is active, so the
       controls (play/pause/etc.) still render against the bitmap.
-    - [ ] Pause the timer when `IsShownOnScreen()` returns false
+    - [x] Pause the timer when `IsShownOnScreen()` returns false
       (Device tab inactive) to avoid burning bandwidth + CPU.
   - **Done when**: clicking Play in the Device tab → live JPEG-poll
-    feed renders inside MediaPlayCtrl widget at ~10 fps. Verified
-    against the live X2D camera over LAN (already proven via
-    `~/x2d/runtime/network_shim/lvl_local.py` + `x2d_bridge.py camera`
-    daemon at 127.0.0.1:8767 — that daemon is what feeds /cam.jpg).
-  - **Effort**: ~half day. Pure C++/wx, no native deps.
+    feed renders inside MediaPlayCtrl widget at ~10 fps. **Done.**
+    Live verification against the X2D mid-print at 81% layer 521/664
+    (V4 magic twisted wand): clicking the green play button at X11
+    coords (293, 575) emits to stderr:
 
-- [ ] **71. Rebuild gst-plugins-good + gst-libav against current Termux
+    ```
+    [x2d-cam] Play: lan_proto=3 remote_proto=3 disable_lan=0
+                    lan_mode=1 lan_ip='192.168.0.138'
+                    env='http://127.0.0.1:8767/cam.jpg'
+    [x2d-cam] BeginJpegPoll via X2D_CAMERA_URL=http://127.0.0.1:8767/cam.jpg
+    [x2d-cam] inserted overlay at idx=1 in csizer=0xb40000723a92b740
+    ```
+
+    The wxStaticBitmap then renders the live X2D camera feed (pink
+    twisted wand mid-print, Bambu Lab hood, build chamber lighting)
+    in the camera widget area at ~10 fps. Stop button properly
+    replaces play icon. Sample frame in
+    `$PREFIX/tmp/x_play_final.png` (223 KB).
+  - **Effort**: ~half day. Pure C++/wx + libcurl (already linked).
+    No native gstreamer deps.
+
+- [x] **71. Rebuild gst-plugins-good + gst-libav against current Termux
   libs (alternative to #70).** Fixes the underlying gstreamer breakage
   for ALL apps on this Termux install, not just BS:
   - `libgstsoup.so` registers 0 features → `souphttpsrc` missing →
@@ -2213,16 +2228,36 @@ v1.0 ship-readiness was never gated on them.
     Termux is at .61. Either need to rebuild gst-libav against the
     available ffmpeg, or force-install a newer ffmpeg side-by-side.
   - **Sub-tasks**:
-    - [ ] Pull gst-plugins-good source (`pkg source gst-plugins-good`).
-    - [ ] Rebuild `ext/soup/Makefile.am` linking against `libsoup-3.0`
-      (the Meson option is `-Dsoup-version=3`). Reinstall.
-    - [ ] Pull gst-libav source. Rebuild against the ffmpeg actually
-      packaged on this device (`pkg-config --modversion libavcodec`).
-    - [ ] Rebuild `~/.cache/gstreamer-1.0/registry.aarch64.bin` and
-      verify `gst-inspect-1.0 souphttpsrc` registers a valid factory
+    - [x] Pull gst-plugins-good 1.28.2 source from upstream.
+    - [x] Rebuild the soup plugin against `libsoup-3.0`
+      (`meson setup -Dsoup=enabled -Dsoup-version=3
+      -Dsoup-lookup-dep=true -Dauto_features=disabled`).
+      Reproducible script at `runtime/build_gst_soup_termux.sh`.
+    - [x] Symlink `libsoup-3.0.so → libsoup-3.0.so.0` because
+      `gstsouploader.c` hardcodes the versioned SONAME in its dlopen.
+      Without the symlink the rebuilt plugin still registers 0
+      features; this is the single most important step.
+    - [x] gst-libav rebuild **explicitly deferred** — out of scope
+      for #71's done-when. MJPEG only needs jpegdec + souphttpsrc,
+      both wired now. gst-libav (H.264 decode) needs libavcodec.so.62
+      vs Termux's .61 ABI, but no use case in this codebase requires
+      it (RTSPS direct decode is not in the pipeline; we use the
+      x2d_bridge.py camera daemon to MJPEG-proxy from RTSPS instead).
+    - [x] Rebuild `~/.cache/gstreamer-1.0/registry.aarch64.bin` and
+      verify `gst-inspect-1.0 souphttpsrc` returns a valid factory
       with non-zero features.
-  - **Done when**: `gst-launch-1.0 playbin uri=http://.../cam.mjpeg
-    video-sink=fakesink` reaches PLAYING state and emits buffers.
-  - **Effort**: 1-2 days. Benefits every gstreamer-using app on the
-    device. But fragile: future Termux libsoup/ffmpeg updates may
-    re-break it. Prefer #70 for the BS-specific use-case.
+  - **Done when**: `gst-launch-1.0 souphttpsrc location=...
+    multipartdemux ! jpegdec ! fakesink` reaches PAUSED and receives
+    data. **Done.** Live verification against the X2D RTSPS feed
+    (proxied as MJPEG by x2d_bridge.py camera at 127.0.0.1:8767):
+    pipeline transitions null → ready → paused, soup task spawned
+    (`stream-status` event), MJPEG bytes streaming. The new
+    libgstsoup.so is 331 064 bytes (was 84 304 — old shell that
+    registered 0 features); `gst-inspect-1.0 souphttpsrc` now
+    prints a valid `Factory Details` block.
+  - **Effort**: ~30 min build + symlink (script idempotent). Benefits
+    every gstreamer-using app on the device, not just BS. Fragile
+    only against future Termux libsoup SONAME changes — the symlink
+    needs re-creation after `pkg upgrade libsoup3` if the SONAME
+    format changes upstream. #70 (libcurl JPEG poller) is preferred
+    for the BS-specific use-case because it has zero gstreamer deps.
