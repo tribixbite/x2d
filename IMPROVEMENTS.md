@@ -2421,7 +2421,7 @@ User feature requests discovered after the v1.1 sweep landed.
     nicer UX than the wx GUI ever offered.
 
 
-- [ ] **86. wxGLCanvasEGL surface paint under termux-x11.** After #85
+- [x] **86. wxGLCanvasEGL surface paint under termux-x11.** After #85
     the Plater sidebar renders correctly on Prepare/Preview tabs but
     the 3D viewport area (the wxGLCanvas inside view3D / preview)
     remains blank — the GL surface never gets a wxEVT_PAINT under

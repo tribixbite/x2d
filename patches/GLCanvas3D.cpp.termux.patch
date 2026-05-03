@@ -1,0 +1,22 @@
+diff --git a/src/slic3r/GUI/GLCanvas3D.cpp b/src/slic3r/GUI/GLCanvas3D.cpp
+index 0000000..0000001 100644
+--- a/src/slic3r/GUI/GLCanvas3D.cpp
++++ b/src/slic3r/GUI/GLCanvas3D.cpp
+@@ -6572,7 +6572,18 @@ const Camera *GLCanvas3D::get_active_camera_const() const
+ bool GLCanvas3D::_is_shown_on_screen() const
+ {
+-    return (m_canvas != nullptr) ? m_canvas->IsShownOnScreen() : false;
++    // x2d/termux #85+#86 — IsShownOnScreen() walks up the widget tree
++    // and queries the X server for compositor/EWMH visibility info,
++    // which is unreliable under termux-x11 (no compositor to ask).
++    // Falling back to the local m_canvas widget IsShown() check is
++    // sufficient: if the wxGLCanvas itself is Show()'d its parent
++    // chain has been laid out and a render here is the right thing
++    // to do. The render() entry guards against m_canvas == null and
++    // not-yet-initialised contexts further down, so being a bit
++    // permissive here just means a few wasted GL_INVALID_OP calls
++    // in the worst case rather than a permanently-blank viewport.
++    return (m_canvas != nullptr) && m_canvas->IsShown();
+ }
+
+ void GLCanvas3D::_resize(unsigned int w, unsigned int h)
