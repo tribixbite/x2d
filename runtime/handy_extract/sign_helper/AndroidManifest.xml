@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.x2d.sign"
+    android:sharedUserId="bbl.shared">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="33"/>
+    <application android:label="X2D Sign Helper" android:debuggable="true">
+        <activity android:name="com.x2d.sign.SignActivity"
+                  android:exported="true"
+                  android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="com.x2d.sign.LIST_ALIASES"/>
+                <action android:name="com.x2d.sign.SIGN_PAYLOAD"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
