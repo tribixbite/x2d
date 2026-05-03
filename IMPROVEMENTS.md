@@ -2403,3 +2403,19 @@ User feature requests discovered after the v1.1 sweep landed.
     (model_settings.config) so this is a serialisation-level fix
     plus an importer that knows to layer the per-object dict back on
     top of the global preset at load time.
+
+- [ ] **85. wxGLCanvasEGL realize on shared-Plater tab swap (Prepare /
+    Preview body blank).** MainFrame.cpp:977-978 inserts a single
+    m_plater into both tpPrepare AND tpPreview slots of m_tabpanel.
+    On termux-x11 the wxAuiNotebook + wxGLCanvasEGL combination
+    doesn't re-realize the GL surface when the shared widget swaps
+    tabs, so view3D / preview never paint after the first set_current_panel
+    succeeds (commit c3e2384's IsShown patch fixed that). Symptom:
+    Prepare and Preview tabs render an empty grey body while Home
+    + Device + Project + Calibration render correctly. Fix options:
+    (a) split m_plater into per-tab instances; (b) patch
+    wxGLCanvasEGL::Show to force-recreate the EGL surface on each
+    parent realize; (c) replace the GUI with the craftmatic web app
+    port (see docs/bambu-craftmatic-ts-port.md). The web app path
+    is recommended because it also unblocks #82-#84 with a much
+    nicer UX than the wx GUI ever offered.
