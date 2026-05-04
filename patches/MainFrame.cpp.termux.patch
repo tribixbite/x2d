@@ -1,12 +1,11 @@
 diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
-index f8dd9e2..4856fb2 100644
+index f8dd9e2..f059c2f 100644
 --- a/src/slic3r/GUI/MainFrame.cpp
 +++ b/src/slic3r/GUI/MainFrame.cpp
-@@ -300,6 +300,27 @@ Slic3r::GUI::MainFrame::MainFrame() :
-     wxAcceleratorTable accel(6, entries);
+@@ -301,6 +301,28 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
      SetAcceleratorTable(accel);
  #endif // _WIN32
-+
+ 
 +    // x2d/termux #79 — Ctrl+Shift+L toggles the Plater sidebar visibility.
 +    // Lets phone-portrait users hide the sidebar entirely without trips to
 +    // the View menu (which itself doesn't always render right under
@@ -28,10 +27,11 @@ index f8dd9e2..4856fb2 100644
 +            m_plater->Layout();
 +        }, wxID_HIGHEST + 9979);
 +    }
-
++
      // BBS
      //wxAcceleratorEntry entries[13];
-@@ -447,10 +468,30 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
+     //int index = 0;
+@@ -447,10 +469,40 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
      // BBS
      Fit();
  
@@ -56,22 +56,46 @@ index f8dd9e2..4856fb2 100644
 -    SetMinSize(min_size/*wxSize(760, 490)*/);
 -    SetSize(wxSize(FromDIP(1200), FromDIP(800)));
 +    SetMinSize(min_size);
++    // x2d/termux #88 — was init_size 1200x800 capped to display. On a phone
++    // display (1080x2340) the cap shrinks to 1080x2340 but the actual window
++    // is then placed by the WM at non-(0,0) and rendered at < display width
++    // because xfwm4's strut accounting subtracts xfce4-panel's reserved
++    // bottom area. Result: window only ~1000px wide, AMS strip clips, the
++    // 3D viewport gets cramped. Maximize directly so the WM gives us the
++    // full workarea (display - panel struts) without any fudge.
 +    wxSize init_size(FromDIP(1200), FromDIP(800));
 +    if (disp_size.GetWidth() > 0 && disp_size.GetHeight() > 0) {
 +        init_size.x = std::min(init_size.x, disp_size.GetWidth());
 +        init_size.y = std::min(init_size.y, disp_size.GetHeight());
 +    }
 +    SetSize(init_size);
++    // Maximize — uses _NET_WM_STATE_MAXIMIZED_VERT/HORZ so the WM honours
++    // panel struts. Falls through cleanly on platforms without an EWMH WM.
++    Maximize(true);
  
      Layout();
  
-@@ -1304,6 +1325,53 @@ MainFrame::~MainFrame()
-         if (panel == m_plater) {
-             if (sel == tp3DEditor) {
-                 wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
-                 m_param_panel->OnActivate();
-             }
-             else if (sel == tpPreview) {
+@@ -725,6 +777,19 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
+         if (manger) {
+             evt.IsShown() ? manger->start_refresher() : manger->stop_refresher();
+         }
++        // x2d/termux #88 — Maximize() called in the constructor runs before
++        // xfwm4 finishes mapping the window, so the EWMH MAXIMIZED state
++        // request is dropped. Repeat from wxEVT_SHOW once the window is
++        // actually mapped — at this point _NET_WM_STATE_MAXIMIZED_VERT/HORZ
++        // is honored. Single-shot guard so we don't re-maximize on every
++        // hide/show cycle.
++        static bool maximized_once = false;
++        if (evt.IsShown() && !maximized_once) {
++            maximized_once = true;
++            CallAfter([this]() {
++                if (!IsMaximized()) Maximize(true);
++            });
++        }
+     });
+     Bind(wxEVT_IDLE, ([this](wxIdleEvent &e) {
+              if (m_topbar && m_plater) {
+@@ -1273,6 +1338,40 @@ void MainFrame::init_tabpanel()
                  wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
                  m_param_panel->OnActivate();
              }
@@ -105,16 +129,14 @@ index f8dd9e2..4856fb2 100644
 +            m_plater->Refresh();
 +            m_plater->Update();
 +            if (sel == tp3DEditor) {
-+                if (auto* c = m_plater->get_view3D_canvas3D()) {
-+                    c->render();
-+                }
++                if (auto* c = m_plater->get_view3D_canvas3D()) c->render();
 +            } else if (sel == tpPreview) {
-+                if (auto* c = m_plater->get_preview_canvas3D()) {
-+                    c->render();
-+                }
++                if (auto* c = m_plater->get_preview_canvas3D()) c->render();
 +            }
          }
-@@ -1817,11 +1858,27 @@ wxBoxSizer* MainFrame::create_side_tools()
+         //else if (panel == m_param_panel)
+         //    m_param_panel->OnActivate();
+@@ -1817,11 +1916,27 @@ wxBoxSizer* MainFrame::create_side_tools()
      sizer->Add(FromDIP(4), 0, 0, 0, 0);
      sizer->Add(split_line_icon, 0, wxALIGN_CENTER, 0);
      sizer->Add(FromDIP(10), 0, 0, 0, 0);
