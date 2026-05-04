@@ -26,9 +26,62 @@
 #define _GNU_SOURCE
 #include <gtk/gtk.h>
 #include <dlfcn.h>
+#include <dirent.h>
+#include <errno.h>
 #include <locale.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
+#include <stdarg.h>
+
+/*
+ * x2d/termux #88 — opendir("/") interception.
+ *
+ * Termux can't read "/" without root (Android sandbox). Anything that
+ * tries opens it gets EACCES and gtk's GFileMonitor cascades that into
+ * a modal "Could not read the contents of /" popup at startup. The
+ * culprit is gvfsd-trash + GtkRecentManager scanning /. Setting
+ * GIO_USE_VFS=local helps but doesn't fully suppress the popup —
+ * the daemon's own enumeration runs independent of the BS env.
+ *
+ * Intercepting opendir/openat at libc level catches every caller
+ * (gvfs daemons, GTK, glib, BS itself) and returns EACCES silently
+ * without triggering any UI cascade. Only intercept the literal "/"
+ * path — every other dir access flows through unchanged.
+ *
+ * Kept short to keep the shim's dlopen footprint minimal.
+ */
+__attribute__((visibility("default")))
+DIR *opendir(const char *name) {
+    static DIR *(*real_opendir)(const char *) = NULL;
+    if (!real_opendir) real_opendir = dlsym(RTLD_NEXT, "opendir");
+    if (name && name[0] == '/' && name[1] == '\0') {
+        errno = EACCES;
+        return NULL;
+    }
+    return real_opendir(name);
+}
+
+__attribute__((visibility("default")))
+int openat(int dirfd, const char *pathname, int flags, ...) {
+    static int (*real_openat)(int, const char *, int, ...) = NULL;
+    if (!real_openat) real_openat = dlsym(RTLD_NEXT, "openat");
+    if (pathname && pathname[0] == '/' && pathname[1] == '\0' &&
+        (flags & O_DIRECTORY)) {
+        errno = EACCES;
+        return -1;
+    }
+    /* Variadic forward — only mode matters when O_CREAT | O_TMPFILE set. */
+    int mode = 0;
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = va_arg(ap, int);
+        va_end(ap);
+        return real_openat(dirfd, pathname, flags, mode);
+    }
+    return real_openat(dirfd, pathname, flags);
+}
 
 __attribute__((constructor(101)))
 static void preinit_gtk(void) {

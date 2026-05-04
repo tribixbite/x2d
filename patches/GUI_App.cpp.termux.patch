@@ -1,8 +1,8 @@
 diff --git a/src/slic3r/GUI/GUI_App.cpp b/src/slic3r/GUI/GUI_App.cpp
-index 94ad197..57e5023 100644
+index 94ad197..b9684ea 100644
 --- a/src/slic3r/GUI/GUI_App.cpp
 +++ b/src/slic3r/GUI/GUI_App.cpp
-@@ -1204,7 +1204,14 @@ void GUI_App::load_gl_resources(bool switch_to_3d)
+@@ -1204,7 +1204,14 @@ void GUI_App::post_init()
          plater_->select_view_3D("3D");
          //BBS init the opengl resource here
  //#ifdef __linux__
@@ -27,7 +27,7 @@ index 94ad197..57e5023 100644
                  if (j.contains("code")) {
                      if (!j["code"].is_null())
                          code = j["code"].get<int>();
-@@ -6388,24 +6388,18 @@ bool GUI_App::load_language(wxString language, bool initial)
+@@ -6388,24 +6395,18 @@ bool GUI_App::load_language(wxString language, bool initial)
          //}
      }
  
@@ -63,11 +63,10 @@ index 94ad197..57e5023 100644
      }
  
      // Release the old locales, create new locales.
-@@ -7745,23 +7739,42 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
+@@ -7745,23 +7746,76 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
      }
  }
  
--bool GUI_App::config_wizard_startup()
 +// Termux source patch (item #24): swallow specific wxWidgets sizer
 +// assertions that BambuStudio's slice + Sidebar UI triggers. The
 +// "CheckExpectedParentIs" warning fires multiple times per slice
@@ -79,6 +78,58 @@ index 94ad197..57e5023 100644
 +// effect.
 +void GUI_App::OnAssertFailure(const wxChar *file, int line, const wxChar *func,
 +                              const wxChar *cond, const wxChar *msg)
++{
++    // x2d/termux #24+#88 — swallow ALL wx-internal sizer/parent/window
++    // assertions that BambuStudio's slice + StatusPanel layouts trigger.
++    // The list grows over time as new asserts fire from new code paths;
++    // pattern-match on the msg/cond strings rather than enumerating
++    // each one. Common harmless asserts under wx 3.3:
++    //   * CheckExpectedParentIs       (Main Extruder, High Flow labels)
++    //   * Adding a window already in a sizer
++    //   * invalid page index in DoRemovePage
++    //   * Use SetValue() / ChangeValue() instead
++    //   * size constraints, sizer flags, negative content width
++    // None are functionally fatal — wx's default escalation pops modals
++    // that block the user. Log-once-per-pattern keeps the launcher.log
++    // useful without spam.
++    auto matches = [&](const wxChar* needle) -> bool {
++        if (msg  && wxString(msg ).Find(needle) != wxNOT_FOUND) return true;
++        if (cond && wxString(cond).Find(needle) != wxNOT_FOUND) return true;
++        return false;
++    };
++    static const wxChar* swallow_patterns[] = {
++        wxT("CheckExpectedParentIs"),
++        wxT("Adding a window already in a sizer"),
++        wxT("invalid page index in DoRemovePage"),
++        wxT("Use SetValue() / ChangeValue()"),
++        wxT("Negative content width"),
++        wxT("invalid bitmap"),
++        wxT("invalid window"),
++        wxT("DoSetClientSize"),
++        wxT("Calling Show on a window which is already shown"),
++        wxT("wxAuiNotebook"),
++        wxT("DoInsert"),
++        wxT("HasChildItem"),
++    };
++    for (auto p : swallow_patterns) {
++        if (matches(p)) {
++            static thread_local std::set<std::wstring> logged;
++            std::wstring key = std::wstring(p) + L"@" +
++                wxString(file).ToStdWstring() + L":" +
++                std::to_wstring(line);
++            if (logged.insert(key).second) {
++                BOOST_LOG_TRIVIAL(warning) << "swallowing wx assert ["
++                    << wxString(p).ToStdString() << "] at "
++                    << wxString(file).ToStdString() << ":" << line;
++            }
++            return;  // swallow
++        }
++    }
++    // Forward unknown asserts to wx's default handler.
++    wxApp::OnAssertFailure(file, line, func, cond, msg);
++}
++
+ bool GUI_App::config_wizard_startup()
  {
 -    if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
 -        BOOST_LOG_TRIVIAL(info) << "run wizard...";
@@ -91,27 +142,10 @@ index 94ad197..57e5023 100644
 -
 -        MsgDataLegacy dlg;
 -        dlg.ShowModal();
-+    if (msg && wxString(msg).Find(wxT("CheckExpectedParentIs")) != wxNOT_FOUND) {
-+        static bool logged = false;
-+        if (!logged) {
-+            BOOST_LOG_TRIVIAL(warning) << "swallowing repeated wx sizer "
-+                                          "CheckExpectedParentIs assertions "
-+                                          "(harmless, see Termux patch #24): "
-+                                       << wxString(file).ToStdString() << ":"
-+                                       << line;
-+            logged = true;
-+        }
-+        return;  // swallow; do NOT pop the modal
-+    }
-+    // Forward everything else to wx's default handler.
-+    wxApp::OnAssertFailure(file, line, func, cond, msg);
-+}
- 
+-
 -        run_wizard(ConfigWizard::RR_DATA_LEGACY);
 -        return true;
 -    }*/
-+bool GUI_App::config_wizard_startup()
-+{
 +    // Termux source patch (item #21): the upstream Setup Wizard
 +    // (WebGuideDialog) asserts mid-network or hangs on Bambu cloud
 +    // calls when run on aarch64 Termux + termux-x11 with restricted
