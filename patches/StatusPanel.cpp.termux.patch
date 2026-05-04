@@ -1,0 +1,35 @@
+diff --git a/src/slic3r/GUI/StatusPanel.cpp b/src/slic3r/GUI/StatusPanel.cpp
+index b425d68..915cc6b 100644
+--- a/src/slic3r/GUI/StatusPanel.cpp
++++ b/src/slic3r/GUI/StatusPanel.cpp
+@@ -104,7 +104,13 @@ static wxImage fail_image;
+ 
+ #define NORMAL_SPACING FromDIP(5)
+ #define PAGE_SPACING FromDIP(10)
+-#define PAGE_MIN_WIDTH FromDIP(574)
++// x2d/termux #87 — was FromDIP(574). Default upstream value assumes a
++// ≥1400px-wide display: left rail (200) + camera (574) + control (574)
++// > 1080. On a 1080-wide phone display the right control panel was
++// clipped — only AMS slot 1 was visible. Reducing to 360 lets all 4 AMS
++// slots fit (after companion AMSControl.cpp width patch). Camera panel
++// also tightens but the live-feed bitmap rescales fine.
++#define PAGE_MIN_WIDTH FromDIP(360)
+ #define PROGRESSBAR_HEIGHT FromDIP(8)
+ 
+ #define SWITCH_BUTTON_SIZE (wxSize(FromDIP(40), -1))
+@@ -1439,7 +1445,14 @@ StatusBasePanel::StatusBasePanel(wxWindow *parent, wxWindowID id, const wxPoint
+     m_machine_ctrl_panel->Layout();
+     m_machine_control->Fit(m_machine_ctrl_panel);
+ 
+-    bSizer_status_below->Add(m_machine_ctrl_panel, 0, wxALL, 0);
++    // x2d/termux #87 — was proportion 0 (fixed width = control panel's min
++    // size). On 1080-wide phone displays the camera panel (proportion 1)
++    // greedily takes ~720px and the control panel only gets ~280px, which
++    // clips the AMS strip to 1-2 of 4 slots. Switching to proportion 1
++    // makes camera and control split the available width evenly (about
++    // 540px each on 1080), and AMS_CANS_WINDOW_SIZE 320dip + 4×80dip
++    // slot widths fit cleanly.
++    bSizer_status_below->Add(m_machine_ctrl_panel, 1, wxALL | wxEXPAND, 0);
+ 
+     m_panel_separator_right = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(PAGE_SPACING, -1), wxTAB_TRAVERSAL);
+     m_panel_separator_right->SetBackgroundColour(STATUS_PANEL_BG);
