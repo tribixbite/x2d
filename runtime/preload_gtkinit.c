@@ -140,6 +140,38 @@ _Bool _ZN10wxUILocale11IsAvailableEi(int lang) {
 }
 
 /*
+ * wxGLCanvasEGL::IsShownOnScreen() const override — x2d/termux #86 root cause.
+ *
+ * In wx 3.3 src/unix/glegl.cpp:797, wxGLCanvasEGL::SwapBuffers() under X11
+ * gates on:
+ *     if ( !IsShownOnScreen() ) { return false; }   // line 832
+ *
+ * The default impl chains through wxGLCanvasBase::IsShownOnScreen() →
+ * wxWindowBase::IsShownOnScreen() → gdk_window_is_viewable() + EWMH/_NET_WM
+ * visibility queries. termux-x11 implements neither EWMH nor _NET_WM_STATE,
+ * so the gate returns false on every frame and SwapBuffers() silently
+ * skips the buffer swap. Result: GL renders correctly into the EGL surface
+ * but the framebuffer never shows it → 3D viewport stays black even though
+ * render() / glDraw* are all firing.
+ *
+ * Forcing the override to return true makes SwapBuffers() actually swap.
+ * Side-effect under a real WM: a GL canvas occluded by another window will
+ * still consume render bandwidth — fine on Termux where there's only one
+ * desktop and one app drawing at a time.
+ *
+ * Symbol confirmed from `nm -D libwx_gtk3u_gl-3.3.so`:
+ *   _ZNK13wxGLCanvasEGL15IsShownOnScreenEv
+ * (Itanium mangling: _ZNK = const member, then 13wxGLCanvasEGL = class,
+ * 15IsShownOnScreen = method, Ev = no-args returning ... — return type
+ * isn't part of the mangle, but it's bool / _Bool.)
+ */
+__attribute__((visibility("default")))
+_Bool _ZNK13wxGLCanvasEGL15IsShownOnScreenEv(void *self) {
+    (void)self;
+    return 1;
+}
+
+/*
  * wxOnAssert override — turn every wx assertion failure into a no-op.
  *
  * BambuStudio's GUI startup hits a stream of debug asserts in wx 3.3:

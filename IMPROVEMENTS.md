@@ -2421,30 +2421,30 @@ User feature requests discovered after the v1.1 sweep landed.
     nicer UX than the wx GUI ever offered.
 
 
-- [x] **86. wxGLCanvasEGL surface paint under termux-x11.** After #85
-    the Plater sidebar renders correctly on Prepare/Preview tabs but
-    the 3D viewport area (the wxGLCanvas inside view3D / preview)
-    remains blank — the GL surface never gets a wxEVT_PAINT under
-    termux-x11 + wx 3.3 + GTK3 + Mesa EGL/swrast. EGL itself works
-    (probe outside BS shows Mesa EGL 1.5 OpenGL+OpenGL_ES). The
-    triple-hammer in #85 (reset_window_layout + Layout + SizeEvent
-    + explicit canvas3D->render()) successfully primes everything
-    BUT the X server. The wx 3.3 GLCanvasEGL surface attached to
-    the GdkX11Window doesn't blit its render target to the visible
-    X surface. Three remediation paths, in increasing scope:
-    a. Patch `wxGLCanvasEGL::SwapBuffers()` to fall back to
-       `glReadPixels` + `XPutImage` when `eglSwapBuffers` returns
-       EGL_BAD_SURFACE / EGL_BAD_ALLOC. Requires a wxWidgets rebuild
-       (~30-60 min on Termux) and is the smallest patch that gets
-       the GUI working.
-    b. Replace the GLCanvas3D backbone in BambuStudio with a
-       custom EGL surfaceless renderer that does the offscreen→XImage
-       blit itself, keeping wx out of the GL path. ~1 week of work.
-    c. Skip the BS GUI entirely in favour of the craftmatic web app
-       port (see docs/bambu-craftmatic-ts-port.md). 5-8 weeks for
-       feature parity but a much nicer end-state UX, mobile-friendly,
-       and unblocks every other v1.x ask via Three.js.
-    Recommended path: (c) — short-term users have headless tools
-    (`x2d_bridge.py`, `lan_print.py`, `remix_3mf.py`,
-    `preflight_3mf.py`) that don't need the viewport; long-term the
-    web app supersedes the wx GUI entirely.
+- [x] **86. wxGLCanvasEGL surface paint under termux-x11.** Two-part fix:
+    (1) **Symbol-level shim** in `runtime/preload_gtkinit.c` that overrides
+    `_ZNK13wxGLCanvasEGL15IsShownOnScreenEv` to always return true. Root
+    cause: wx 3.3 `src/unix/glegl.cpp:832` gates `SwapBuffers()` on
+    `IsShownOnScreen()`, whose default impl chains to
+    `wxWindowBase::IsShownOnScreen()` → `gdk_window_is_viewable()` +
+    `_NET_WM_STATE` queries. termux-x11 implements neither EWMH nor
+    `_NET_WM_STATE`, so the gate is permanently false → `SwapBuffers`
+    silently returns false → the EGL surface is rendered into but never
+    blitted to the framebuffer → blank viewport. The override forces
+    SwapBuffers to actually swap. Verified vtable interposition works
+    here because `libwx_gtk3u_gl-3.3.so` was linked WITHOUT
+    `-Bsymbolic-functions` (only DT_FLAGS=BIND_NOW), so the dynamic
+    linker honours LD_PRELOAD when resolving R_AARCH64_ABS64
+    relocations against `_ZTV13wxGLCanvasEGL` vtable slots.
+    (2) **Force `GALLIUM_DRIVER=llvmpipe`** in `run_gui.sh`, replacing
+    the previous virpipe + ANGLE + virgl_test_server pipeline. Mesa
+    silently falls back to the zink driver when it can't reach
+    virgl_test_server, and zink+kopper hits
+    `assertion "res->obj->dt_idx != UINT32_MAX" failed` on the first
+    swap because it needs DRI3/Present (which termux-x11 lacks).
+    Forcing llvmpipe gives pure software rendering through XPutImage,
+    which termux-x11 supports cleanly.
+    Live-tested: Prepare and Preview tabs both render the build plate
+    ("Bambu Textured PEI Plate") with axes, plate marker, and the
+    Top/Front view-orientation widget — full slicer workflow now
+    functional.
