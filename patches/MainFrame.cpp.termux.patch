@@ -1,5 +1,5 @@
 diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
-index f8dd9e2..f059c2f 100644
+index f8dd9e2..f3cb2d6 100644
 --- a/src/slic3r/GUI/MainFrame.cpp
 +++ b/src/slic3r/GUI/MainFrame.cpp
 @@ -301,6 +301,28 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
@@ -75,7 +75,7 @@ index f8dd9e2..f059c2f 100644
  
      Layout();
  
-@@ -725,6 +777,19 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
+@@ -725,6 +777,45 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
          if (manger) {
              evt.IsShown() ? manger->start_refresher() : manger->stop_refresher();
          }
@@ -91,11 +91,37 @@ index f8dd9e2..f059c2f 100644
 +            CallAfter([this]() {
 +                if (!IsMaximized()) Maximize(true);
 +            });
++            // x2d/termux #89 — pre-warm view3D + preview canvases during
++            // startup. First tab click triggers GLCanvas3D::init() which
++            // builds the bed mesh + VBOs + compiles GLSL shaders — 5-10s
++            // under llvmpipe. By programmatically select_tab'ing through
++            // tp3DEditor → tpPreview → tpHome before the user can click
++            // anything, both canvases run init() and subsequent user
++            // clicks land at the fast 200-700ms render() path.
++            //
++            // Each CallAfter yields to the wx event loop so the
++            // intermediate select_tab actually paints (otherwise wxIdle
++            // would never fire and init() short-circuits on
++            // _is_shown_on_screen). The whole chain takes ~1-2s of
++            // wallclock during which the user might briefly see the
++            // tabs flicker, which is acceptable startup overhead.
++            CallAfter([this]() {
++                fprintf(stderr, "[x2d-prewarm] select_tab(tp3DEditor)\n");
++                select_tab(static_cast<size_t>(tp3DEditor));
++                CallAfter([this]() {
++                    fprintf(stderr, "[x2d-prewarm] select_tab(tpPreview)\n");
++                    select_tab(static_cast<size_t>(tpPreview));
++                    CallAfter([this]() {
++                        fprintf(stderr, "[x2d-prewarm] select_tab(tpHome)\n");
++                        select_tab(static_cast<size_t>(tpHome));
++                    });
++                });
++            });
 +        }
      });
      Bind(wxEVT_IDLE, ([this](wxIdleEvent &e) {
               if (m_topbar && m_plater) {
-@@ -1273,6 +1338,40 @@ void MainFrame::init_tabpanel()
+@@ -1273,6 +1364,40 @@ void MainFrame::init_tabpanel()
                  wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
                  m_param_panel->OnActivate();
              }
@@ -136,7 +162,7 @@ index f8dd9e2..f059c2f 100644
          }
          //else if (panel == m_param_panel)
          //    m_param_panel->OnActivate();
-@@ -1817,11 +1916,27 @@ wxBoxSizer* MainFrame::create_side_tools()
+@@ -1817,11 +1942,27 @@ wxBoxSizer* MainFrame::create_side_tools()
      sizer->Add(FromDIP(4), 0, 0, 0, 0);
      sizer->Add(split_line_icon, 0, wxALIGN_CENTER, 0);
      sizer->Add(FromDIP(10), 0, 0, 0, 0);
