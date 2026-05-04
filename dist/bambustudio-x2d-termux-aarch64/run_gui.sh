@@ -122,6 +122,11 @@ export GVFS_DISABLE_FUSE=1
 # enumerate of / which dbus-pops the popup at GTK file monitor connect.
 pkill -TERM gvfsd-trash 2>/dev/null
 pkill -TERM gvfsd-recent 2>/dev/null
+# Thunar (xfce4-session auto-spawn) is the actual source of the
+# "Could not read the contents of /" popup — it scans / for the desktop
+# location panel. BS doesn't need Thunar; killing it is safe for our
+# slicer-only use case. The xfce4-panel + xfwm4 stay running.
+pkill -TERM Thunar 2>/dev/null
 
 # x2d/termux #88 — wxFrame::Maximize() in BambuStudio source runs before
 # xfwm4 finishes mapping the window, so the EWMH _NET_WM_STATE_MAXIMIZED
