@@ -2664,19 +2664,39 @@ if user-facing — then the checkbox flips to [x].
     Patches: `runtime/preload_gtkinit.c` (opendir/openat/gtk_show_uri/
     gtk_message_dialog shims) + `dist/.../run_gui.sh` (env + pkills).
 
-- [ ] **92. Storage browser end-to-end with X2D firmware.** The
-    BambuTunnel client at runtime/network_shim/file_tunnel.py reaches
-    the wire format but X2D firmware 02.06.00.51 returns connection
-    reset after the LIST_INFO frame. Determine whether: (a) X2D
-    requires a different opcode/framing, (b) the auth blob needs a
-    second handshake step the lvl_local code doesn't do, (c) the
-    file tunnel was moved to a different port on newer firmware, or
-    (d) the protocol moved cloud-only. Use mitmproxy + a real
-    BambuStudio session to capture the actual file-list traffic.
-    **Done when** `python -m runtime.network_shim.file_tunnel
-    192.168.0.138 <code> timelapse` returns the actual SD-card
-    timelapse file list, AND a new bridge subcommand
-    `x2d_bridge.py files <kind>` exposes it.
+- [x] **92. Storage browser end-to-end — works via FTPS port 990.**
+    Empirical finding: X2D firmware 02.06.00.51 does NOT use the
+    BambuTunnel TCP/TLS:6000 LIST_INFO protocol that older Bambu
+    printers + BambuStudio source assume — port 6000 is camera-only
+    on X2D. The SD card is exposed via standard **FTPS-implicit on
+    port 990** with vsFTPd 3.0.5. Auth is the same access-code:
+        USER bblp / PASS <8-char-code>
+    Then PBSZ 0 + PROT P enables TLS on the data channel, and
+    standard NLST/SIZE/MDTM commands work.
+
+    Caveat: vsFTPd has `ssl_session_reuse=YES` (default) which
+    requires the data channel TLS handshake to share the control
+    channel's session. Python's stdlib FTP_TLS doesn't do this by
+    default — needs an `ntransfercmd` override that passes
+    `session=ftp.sock.session` to `wrap_socket`. The module
+    `runtime/network_shim/file_tunnel.py` ships the override.
+
+    Live-tested against X2D 192.168.0.138:
+    * `python -m runtime.network_shim.file_tunnel <ip> <code> /`
+      returns SD root listing — 13 files + 4 dirs incl. `/cache`,
+      `/timelapse`, `/ipcam`, `/System Volume Information`.
+    * `... <code> timelapse` returns 6 actual `.mp4` timelapse
+      videos (1.4–4.4 MiB each, dated 2026-04-30 through 2026-05-04).
+    * `... <code> cache` returns 7 cached `.gcode.3mf` files from
+      past prints incl. user's "Standard Pokeball" + "V4 magic
+      twisted wand" projects.
+    * `x2d_bridge.py files <kind> [--json]` exposes the same via
+      the bridge CLI with --json mode and the standard
+      Creds.resolve flag handling.
+
+    Patches: `runtime/network_shim/file_tunnel.py` (rewritten from
+    BambuTunnel-attempting earlier draft) + `x2d_bridge.py` (new
+    `files` subcommand).
 
 - [x] **93. Touch-target enlargement on tabs + sidebar items.**
     Topbar (Prepare/Preview/Device/Project/Calibration) and

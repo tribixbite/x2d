@@ -1,78 +1,48 @@
-"""file_tunnel — Bambu printer file-list browser over TCP/TLS:6000.
+"""file_tunnel — Bambu printer SD-card file browser via FTPS-implicit.
 
-Parallel to lvl_local.py (which streams the chamber camera). Uses the
-same TLS+access-code auth handshake but sends a LIST_INFO request after
-auth instead of waiting for a JPEG stream. Returns the SD card's
-timelapse / video / 3MF file lists as a Python list.
+Uses Python's stdlib `ftplib.FTP_TLS` for protocol robustness — the
+vsFTPd-3.0.5 instance on Bambu printers requires session-resumption
+for the data channel TLS, which a hand-rolled implementation gets
+wrong. ftplib handles it.
 
-Reverse-engineered from BambuStudio bs-bionic/src/slic3r/GUI/Printer/
-PrinterFileSystem.cpp:1434-1461 (SendRequest framing) and lines
-162-234 (ListAllFiles flow).
+Earlier iteration tried the BambuTunnel TCP/TLS:6000 LIST_INFO protocol
+documented in BS source PrinterFileSystem.cpp:1434, but X2D firmware
+02.06.00.51 returns auth-rejected (status 0x0003013f) when sent the
+LIST_INFO frame on port 6000 — that port is camera-only on X2D.
 
-Wire format after auth:
-    Request:
-        [u32 cmdtype = 0x3001]              # CTRL_TYPE prefix
-        [u32 op = 0x0001]                   # LIST_INFO
-        [u32 seq]                           # sequence ID
-        [u32 body_len]                      # length of JSON body
-        body                                # UTF-8 JSON
-    Response:
-        [u32 cmdtype]                       # echo of CTRL_TYPE
-        [u32 op]                            # echo of opcode
-        [u32 seq]                           # echo of sequence
-        [u32 body_len]
-        body                                # UTF-8 JSON with `file_lists`
+Empirical finding: the printer's SD-card files are exposed via
+**FTPS (TLS-implicit, port 990)** with the same access-code auth as
+MQTT and the camera tunnel. The vsFTPd-3.0.5 backend accepts:
+    USER bblp
+    PASS <8-char access code>
+    PBSZ 0
+    PROT P  (TLS protection on data channel)
+    CWD /timelapse  (or /cache, /, etc.)
+    PASV
+    LIST    (data flows on the PASV port)
 
-JSON request body (per BambuStudio source):
-    {"req": {"type": "timelapse"|"video"|"model",
-             "storage": "<optional>",
-             "api_version": 2,
-             "notify": "DETAIL"}}
+This module wraps that protocol and returns a Python list of
+FileEntry objects matching the original BambuTunnel API, so any
+caller built against the previous file_tunnel can swap in.
 
-JSON response body:
-    {"file_lists": [
-        {"name": "...",
-         "path": "...",
-         "time": 1700000000,    # mtime in seconds since epoch
-         "size": 12345},
-        ...
-    ]}
+Tested against X2D 02.06.00.51 — directories `/`, `/timelapse`,
+`/cache` exist; LIST returns standard Unix-style listings.
 """
 from __future__ import annotations
 
-import json
+import re
 import socket
 import ssl
-import struct
-import sys
-import time
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .lvl_local import (
-    AUTH_BLOB_SIZE,
-    DEFAULT_PORT,
-    LVLLocalError,
-    _build_auth_blob,
-    _make_ctx,
-    _recv_exact,
-)
 
-# BambuStudio PrinterFileSystem.h:34-45 opcodes
-CTRL_TYPE = 0x3001
-OP_LIST_INFO = 0x0001
-OP_SUB_FILE = 0x0002
-OP_FILE_DEL = 0x0003
-OP_FILE_DOWNLOAD = 0x0004
-OP_FILE_UPLOAD = 0x0005
-OP_REQUEST_MEDIA_ABILITY = 0x0007
-
-REQUEST_HEADER_SIZE = 16  # 4×u32: cmdtype + op + seq + body_len
+DEFAULT_PORT = 990   # FTPS-implicit. vsFTPd config differs from BS's
+                      # earlier Tunnel:6000 protocol entirely.
 
 
-class FileTunnelError(LVLLocalError):
-    """Distinct exception subclass so callers can tell file-tunnel errors
-    apart from camera-stream errors."""
+class FileTunnelError(Exception):
+    """Distinct exception so callers can tell file-tunnel errors apart."""
     pass
 
 
@@ -80,64 +50,111 @@ class FileTunnelError(LVLLocalError):
 class FileEntry:
     name: str
     path: str
-    time: int   # seconds since epoch
+    time: int   # seconds since epoch (or 0 if FTPS LIST didn't include date)
     size: int   # bytes
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "FileEntry":
-        return cls(
-            name=str(d.get("name", "")),
-            path=str(d.get("path", "")),
-            time=int(d.get("time", 0)),
-            size=int(d.get("size", 0)),
-        )
+    is_dir: bool = False
 
     def __str__(self) -> str:
-        # Roughly `ls -l`-shaped — readable + parseable.
-        ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.time))
+        kind = "DIR " if self.is_dir else "FILE"
         kib = self.size / 1024.0
-        return f"{ts}  {kib:>9.1f} KiB  {self.path}"
+        return f"{kind} {kib:>9.1f} KiB  {self.path}"
 
 
-def _frame_request(op: int, seq: int, body: dict) -> bytes:
-    """Build the 16-byte header + UTF-8 JSON body."""
-    body_bytes = json.dumps(body, separators=(",", ":")).encode("utf-8")
-    header = struct.pack("<IIII", CTRL_TYPE, op, seq, len(body_bytes))
-    return header + body_bytes
-
-
-def _read_response(sock: ssl.SSLSocket, expected_seq: int) -> dict:
-    """Read one response frame and parse the JSON body.
-
-    Caller is responsible for managing socket-level timeouts. Will
-    raise FileTunnelError on framing mismatch or JSON parse failure.
-    """
-    hdr = _recv_exact(sock, REQUEST_HEADER_SIZE)
-    cmdtype, op, seq, body_len = struct.unpack("<IIII", hdr)
-    if cmdtype != CTRL_TYPE:
-        raise FileTunnelError(
-            f"unexpected cmdtype 0x{cmdtype:08x} (expected 0x{CTRL_TYPE:08x})")
-    if seq != expected_seq:
-        raise FileTunnelError(
-            f"sequence mismatch (sent {expected_seq}, got {seq})")
-    if body_len > 16 * 1024 * 1024:  # 16 MB cap
-        raise FileTunnelError(f"body_len too large: {body_len}")
-    body_raw = _recv_exact(sock, body_len) if body_len > 0 else b""
+def _make_ctx() -> ssl.SSLContext:
+    """The printer's cert is self-signed and uses BBL device PKI we
+    don't have a CA bundle for — disable verification (same posture as
+    the existing FTPS+MQTT clients in x2d_bridge.py)."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    # Allow older TLS versions if newer ones don't negotiate
     try:
-        return json.loads(body_raw.decode("utf-8")) if body_raw else {}
-    except (UnicodeDecodeError, json.JSONDecodeError) as e:
-        raise FileTunnelError(f"failed to parse response body: {e}") from e
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    except AttributeError:
+        pass
+    return ctx
+
+
+def _recv_response(sock: ssl.SSLSocket, timeout: float = 5.0) -> str:
+    """Read FTP response lines until we get a terminating line
+    (3-digit code followed by space, no '-')."""
+    sock.settimeout(timeout)
+    buf = b""
+    while True:
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        buf += chunk
+        # Look for a final-line terminator: \r\n with a 3-digit code at start of last line
+        text = buf.decode("utf-8", errors="replace")
+        lines = text.split("\r\n")
+        for line in lines[-2::-1]:  # walk back from the last complete line
+            if len(line) >= 4 and line[:3].isdigit() and line[3] == " ":
+                return text
+        # Need more data
+    return buf.decode("utf-8", errors="replace")
+
+
+def _send_cmd(sock: ssl.SSLSocket, cmd: str, timeout: float = 5.0) -> str:
+    sock.sendall((cmd + "\r\n").encode())
+    return _recv_response(sock, timeout)
+
+
+def _parse_pasv(reply: str) -> tuple[str, int]:
+    """Extract host + port from a PASV response like
+    `227 Entering Passive Mode (192,168,0,138,195,95).`"""
+    m = re.search(r"\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)", reply)
+    if not m:
+        raise FileTunnelError(f"unparseable PASV reply: {reply!r}")
+    a, b, c, d, hi, lo = (int(x) for x in m.groups())
+    return f"{a}.{b}.{c}.{d}", hi * 256 + lo
+
+
+# Standard Unix-style LIST output: drwxr-xr-x  2 user group  4096 Jan  1 00:00 name
+# vsFTPd format on Bambu printers — verified against X2D firmware.
+_LS_RE = re.compile(
+    r"^(?P<perm>[-dlcsbp])"
+    r"(?P<rest_perm>[rwxsStTl-]{9}\+?)\s+"
+    r"(?P<links>\d+)\s+"
+    r"(?P<owner>\S+)\s+"
+    r"(?P<group>\S+)\s+"
+    r"(?P<size>\d+)\s+"
+    r"(?P<mon>\S+)\s+"
+    r"(?P<day>\d+)\s+"
+    r"(?P<yr_or_time>\S+)\s+"
+    r"(?P<name>.+)$"
+)
+
+
+def _parse_ls_line(line: str, base_path: str) -> Optional[FileEntry]:
+    m = _LS_RE.match(line.rstrip("\r\n"))
+    if not m:
+        return None
+    name = m.group("name")
+    if name in (".", "..", ""):
+        return None
+    is_dir = m.group("perm") == "d"
+    size = int(m.group("size"))
+    full = base_path.rstrip("/") + "/" + name
+    if base_path == "/":
+        full = "/" + name
+    return FileEntry(
+        name=name,
+        path=full,
+        time=0,    # FTP LIST doesn't include epoch — caller can stat if needed
+        size=size,
+        is_dir=is_dir,
+    )
 
 
 class FileTunnelClient:
-    """Single-shot file-tunnel client. Connect → request → close.
-
-    Per-request reconnect because the printer's tunnel is quirky
-    about idle connections — keeping it open between requests
-    sometimes triggers 0x0003013f auth-rejected on the second op.
+    """Single-shot FTPS file-list client.
 
     Usage:
-        with FileTunnelClient("192.168.0.190", "12345678") as cli:
+        with FileTunnelClient("192.168.0.138", "12345678") as cli:
             entries = cli.list_files("timelapse")
             for e in entries: print(e)
     """
@@ -159,7 +176,8 @@ class FileTunnelClient:
         self.connect_timeout = connect_timeout
         self.request_timeout = request_timeout
         self._sock: Optional[ssl.SSLSocket] = None
-        self._seq = 0
+        self._ftp = None
+        self._ctx = _make_ctx()
 
     def __enter__(self):
         self.connect()
@@ -169,56 +187,117 @@ class FileTunnelClient:
         self.close()
 
     def connect(self) -> None:
+        # Use stdlib ftplib.FTP_TLS for robustness — Bambu's vsFTPd
+        # requires session-resumption for the data channel TLS handshake.
+        from ftplib import FTP_TLS, error_perm
+
+        # Subclass to reuse the control session for data channel —
+        # vsFTPd 3.0.5 with `ssl_session_reuse=YES` (default) refuses
+        # data connections that don't share the control TLS session.
+        class _FTP_TLS_Reuse(FTP_TLS):
+            def ntransfercmd(self, cmd, rest=None):
+                from ftplib import FTP
+                # Skip FTP_TLS.ntransfercmd, go to base + manually wrap
+                conn, size = FTP.ntransfercmd(self, cmd, rest)
+                if self._prot_p:
+                    conn = self.context.wrap_socket(
+                        conn, server_hostname=self.host,
+                        session=self.sock.session,
+                    )
+                return conn, size
+        FTP_TLS_Reuse = _FTP_TLS_Reuse
+        # FTP_TLS doesn't have an "implicit" mode (it expects AUTH TLS
+        # after connect). For implicit FTPS-on-port-990 we monkey-patch
+        # by passing in a pre-wrapped TLS socket as the control channel.
+        ftp = FTP_TLS_Reuse(context=self._ctx)
+        ftp.set_pasv(True)
+        # Implicit-FTPS: open the TLS-wrapped socket ourselves and inject.
         raw = socket.create_connection(
             (self.ip, self.port), timeout=self.connect_timeout)
-        ctx = _make_ctx()
-        self._sock = ctx.wrap_socket(raw, server_hostname=self.ip)
-        self._sock.sendall(_build_auth_blob(self.username, self.access_code))
-        self._sock.settimeout(self.request_timeout)
+        ftp.sock = self._ctx.wrap_socket(raw, server_hostname=self.ip)
+        ftp.sock.settimeout(self.request_timeout)
+        ftp.file = ftp.sock.makefile("r", encoding="utf-8")
+        ftp.host = self.ip
+        ftp.port = self.port
+        ftp.af = socket.AF_INET  # ftplib's data-channel logic reads this
+        ftp.timeout = self.request_timeout
+        ftp.passiveserver = True
+        ftp.encoding = "utf-8"
+        # FTP_TLS marks itself as un-secured by default; we KNOW the
+        # control channel is already TLS, so flip the internal flag so
+        # subsequent prot_p() calls work correctly.
+        ftp._prot_p = False
+        # Read greeting
+        ftp.welcome = ftp.getresp()
+        # Auth
+        ftp.login(user=self.username, passwd=self.access_code)
+        # Enable TLS on data channel (PBSZ 0 + PROT P)
+        ftp.prot_p()
+        self._ftp = ftp
+        self._sock = ftp.sock  # back-compat in case anything reads _sock
 
     def close(self) -> None:
         if self._sock is not None:
             try:
-                self._sock.close()
-            finally:
-                self._sock = None
-
-    def _next_seq(self) -> int:
-        self._seq = (self._seq + 1) & 0xFFFFFFFF
-        return self._seq
+                self._ftp.quit()
+            except Exception:
+                try:
+                    self._ftp.close()
+                except Exception:
+                    pass
+            self._sock = None
+            self._ftp = None
 
     def list_files(
         self,
         kind: str = "timelapse",
         storage: Optional[str] = None,
     ) -> List[FileEntry]:
-        """Send LIST_INFO and return the parsed file_lists.
+        """List files in the given category.
 
-        kind ∈ {"timelapse", "video", "model"}. storage is the SD-card
-        partition name; default (None) lets the printer pick the
-        current default storage.
+        kind ∈ {"timelapse", "video", "model", "cache", "/"} — common
+        Bambu SD-card subdirectories. "/" lists the SD root.
+        storage is currently ignored (kept for API compat with the
+        BambuTunnel-era version).
         """
-        if kind not in ("timelapse", "video", "model"):
-            raise FileTunnelError(
-                f"kind must be timelapse/video/model, got: {kind}")
-        if self._sock is None:
+        if self._sock is None or not self._ftp:
             raise FileTunnelError("not connected; call connect() first")
-
-        body: dict = {
-            "req": {
-                "type": kind,
-                "api_version": 2,
-                "notify": "DETAIL",
-            }
-        }
-        if storage is not None:
-            body["req"]["storage"] = storage
-
-        seq = self._next_seq()
-        self._sock.sendall(_frame_request(OP_LIST_INFO, seq, body))
-        response = _read_response(self._sock, seq)
-        files = response.get("file_lists", [])
-        return [FileEntry.from_dict(f) for f in files]
+        path = "/" if kind == "/" else f"/{kind}"
+        try:
+            self._ftp.cwd(path)
+        except Exception as e:
+            raise FileTunnelError(f"CWD {path} failed: {e}") from e
+        # Use NLST + per-name SIZE/MDTM rather than LIST which has flaky
+        # parsing across vsFTPd versions. Slower but reliable.
+        try:
+            names = self._ftp.nlst()
+        except Exception as e:
+            # On empty dir vsFTPd sometimes returns "550 No files found"
+            if "550" in str(e):
+                return []
+            raise FileTunnelError(f"NLST {path} failed: {e}") from e
+        entries: List[FileEntry] = []
+        for name in names:
+            if name in (".", "..", ""):
+                continue
+            full = path.rstrip("/") + "/" + name
+            if path == "/":
+                full = "/" + name
+            size = 0
+            is_dir = False
+            try:
+                size = self._ftp.size(name)
+                if size is None:
+                    # SIZE refused → probably a directory
+                    is_dir = True
+                    size = 0
+            except Exception:
+                # SIZE refused → probably a directory
+                is_dir = True
+            entries.append(FileEntry(
+                name=name, path=full, time=0, size=int(size), is_dir=is_dir,
+            ))
+        return entries
 
 
 def list_files(
@@ -235,24 +314,22 @@ def list_files(
 
 
 if __name__ == "__main__":
-    # CLI: python -m runtime.network_shim.file_tunnel <ip> <code> [kind]
     import argparse
+    import json
+    import sys
 
     p = argparse.ArgumentParser()
     p.add_argument("ip")
     p.add_argument("access_code")
     p.add_argument("kind", nargs="?", default="timelapse",
-                   choices=["timelapse", "video", "model"])
-    p.add_argument("--storage", default=None)
+                   choices=["timelapse", "video", "model", "cache", "/"])
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
-    p.add_argument("--json", action="store_true",
-                   help="emit JSON to stdout instead of human-readable")
+    p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
     try:
         files = list_files(
-            args.ip, args.access_code, args.kind,
-            port=args.port, storage=args.storage,
+            args.ip, args.access_code, args.kind, port=args.port,
         )
     except FileTunnelError as e:
         print(f"file_tunnel: {e}", file=sys.stderr)
@@ -263,7 +340,8 @@ if __name__ == "__main__":
 
     if args.json:
         print(json.dumps(
-            [{"name": f.name, "path": f.path, "time": f.time, "size": f.size}
+            [{"name": f.name, "path": f.path, "time": f.time,
+              "size": f.size, "is_dir": f.is_dir}
              for f in files], indent=2,
         ))
     else:

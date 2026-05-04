@@ -2913,6 +2913,42 @@ def cmd_timelapse(args: argparse.Namespace) -> int:
     return _publish_one(args, payload)
 
 
+def cmd_files(args: argparse.Namespace) -> int:
+    """List SD-card files via FTPS — see runtime/network_shim/file_tunnel.py.
+    Empirical finding (#92): X2D firmware exposes its SD card via vsFTPd
+    on port 990, NOT the BambuTunnel:6000 protocol that older Bambu
+    printers + BambuStudio source assume."""
+    import json as _json
+    creds = Creds.resolve(args)
+    try:
+        from runtime.network_shim.file_tunnel import (
+            FileTunnelClient, FileTunnelError,
+        )
+    except ImportError as e:
+        sys.exit(f"file_tunnel module missing: {e}")
+
+    try:
+        with FileTunnelClient(creds.ip, creds.code) as cli:
+            files = cli.list_files(args.kind)
+    except FileTunnelError as e:
+        sys.exit(f"file_tunnel: {e}")
+    except OSError as e:
+        sys.exit(f"socket error: {e}")
+
+    if args.json:
+        print(_json.dumps(
+            [{"name": f.name, "path": f.path, "time": f.time,
+              "size": f.size, "is_dir": f.is_dir}
+             for f in files], indent=2,
+        ))
+    else:
+        if not files:
+            print(f"(no {args.kind} files)")
+        for f in files:
+            print(f)
+    return 0
+
+
 def cmd_resolution(args: argparse.Namespace) -> int:
     res = args.resolution.lower()
     if res not in ("low", "medium", "high", "full"):
@@ -4786,6 +4822,18 @@ def main() -> int:
     tl.add_argument("state", choices=["on", "off"],
                     help="on = enable timelapse; off = disable")
     tl.set_defaults(fn=cmd_timelapse)
+
+    f = sub.add_parser(
+        "files",
+        help="List SD-card files via FTPS (see #92). Categories match "
+             "the on-printer directory layout: timelapse, cache, ipcam, /.",
+    )
+    f.add_argument("kind", nargs="?", default="/",
+                   choices=["timelapse", "video", "model", "cache", "/"],
+                   help="Subdirectory to list (default: SD root)")
+    f.add_argument("--json", action="store_true",
+                   help="Emit JSON instead of human-readable")
+    f.set_defaults(fn=cmd_files)
 
     h = sub.add_parser(
         "health",
