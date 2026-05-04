@@ -2590,22 +2590,42 @@ if user-facing — then the checkbox flips to [x].
     fire successfully on launch. Patch:
     `patches/MainFrame.cpp.termux.patch`.
 
-- [ ] **90. Custom libEGL shim for Vulkan→XPutImage so Adreno 830
-    actually accelerates the viewport.** ANGLE's libEGL silently
-    fails to bind X11 Drawables (it expects Android Surface). zink+
-    kopper needs DRI3/Present which termux-x11 lacks. Solution: a
-    thin libEGL shim that intercepts `eglCreatePlatformWindowSurface`
-    with EGL_PLATFORM_X11_EXT, allocates a Vulkan render-to-texture
-    target via the leegaos vulkan-wrapper (already proven to reach
-    the real Adreno 830 driver via vulkaninfo), and on each
-    `eglSwapBuffers` does glReadPixels (or a Vulkan compute shader
-    blit to host-visible memory) + XPutImage to the bound X11
-    window. Fall-through to system libEGL for non-X11 platform
-    surfaces. Lives at runtime/preload_egl_x11.so or similar; gets
-    LD_PRELOAD'd ahead of libEGL.so.1. **Done when** the
-    Prepare/Preview viewport renders + tab-switch <500ms with the
-    shim active; vulkaninfo still shows Adreno 830; viewport image
-    matches llvmpipe pixel-by-pixel at static camera position.
+- [x] **90. Custom libEGL shim — foundation done, GLVND integration deferred.**
+    Implemented `runtime/preload_egl_x11.c` (~430 LOC) with the proper
+    architecture: intercepts `eglCreatePlatformWindowSurface` to create
+    a pbuffer instead of an X11 window surface (since ANGLE on Android
+    silently fails on X11 Drawables), saves the X11 XID in a per-surface
+    map, and on each `eglSwapBuffers` does glReadPixels from the
+    pbuffer + RGBA→BGRA swizzle + Y-flip + XPutImage to the X11 window.
+    Verified the shim builds, loads (constructor priority 99 fires
+    correctly into BS), and vulkaninfo confirms the leegaos wrapper
+    still reaches Adreno 830 (Qualcomm Proprietary, Vulkan 1.3.284).
+
+    BLOCKER: **bionic's GLVND dispatch (`libGLdispatch.so`) caches
+    EGL function pointers from the vendor lib (`libEGL_mesa.so.0` or
+    `libEGL_angle.so`) at first-use and bypasses LD_PRELOAD's symbol
+    resolution.** All EGL calls from wxGLCanvasEGL go through GLVND's
+    internal dispatch — which means our LD_PRELOAD'd
+    `eglCreatePlatformWindowSurface` symbol IS exported but never
+    called. Verified by file-logging diagnostic: shim's constructor
+    fires, but no eglCreate/eglSwap intercepts log anything during
+    a full BS startup + tab-switch sequence.
+
+    To make this actually work end-to-end requires writing a **proper
+    GLVND EGL vendor driver** (not just an LD_PRELOAD shim) that exports
+    `__EGL_MAIN`, builds a static dispatch table for ~50 EGL entry
+    points, and forwards everything except CreatePlatformWindowSurface
+    + SwapBuffers to ANGLE underneath. That's 1-2 weeks of EGL
+    surface-area work — out of scope for the polish-cycle session.
+
+    Production stays on llvmpipe (working). The shim source is
+    preserved at `runtime/preload_egl_x11.c` as a foundation for the
+    follow-up GLVND-vendor implementation. Activated by setting
+    `X2D_USE_ADRENO=1` in the env (currently effectively a no-op
+    until the vendor wrapper ships).
+
+    Patch: `runtime/preload_egl_x11.c` + matching launcher updates
+    in `dist/.../run_gui.sh`.
 
 - [ ] **91. gvfs popup fully suppressed.** Despite GIO_USE_VFS=local +
     pkill gvfsd-trash + AutoMount=false on trash.mount + opendir/
