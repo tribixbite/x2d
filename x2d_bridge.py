@@ -2746,6 +2746,16 @@ def _system_cmd(command: str, **extra) -> dict:
     return {"system": body}
 
 
+def _camera_cmd(command: str, **extra) -> dict:
+    """Build a `{"camera": {"command":..., "sequence_id":..., **extra}}`.
+    Used for ipcam_record_set / ipcam_timelapse / ipcam_resolution_set —
+    all unsigned MQTT publishes to device/<sn>/request. See
+    BambuStudio DeviceManager.cpp:2027-2080.
+    """
+    body = {"command": command, "sequence_id": _next_seq(), **extra}
+    return {"camera": body}
+
+
 def cmd_pause(args: argparse.Namespace) -> int:
     # MachineObject::command_task_pause — DeviceManager.cpp:1337
     return _publish_one(args, _print_cmd("pause", param=""))
@@ -2878,6 +2888,38 @@ def cmd_jog(args: argparse.Namespace) -> int:
 # Multiple browser clients tee off the same single ffmpeg subprocess.
 # Surfaces a clear error when the printer reports rtsp_url=disable.
 # ---------------------------------------------------------------------------
+
+# x2d/termux #88 — IPCAM control commands matching BS DeviceManager.cpp:
+#   command_ipcam_record (2027), command_ipcam_timelapse (2038),
+#   command_ipcam_resolution_set (2049). Plain MQTT publish to
+#   device/<sn>/request, no Bambu Connect signing. Sub-commands match
+#   the printer's bambu IPCAM service which controls the chamber camera
+#   (recording to SD, timelapse capture, resolution).
+def cmd_record(args: argparse.Namespace) -> int:
+    state = args.state.lower()
+    if state not in ("on", "off"):
+        sys.exit(f"record state must be on/off, got: {state}")
+    payload = _camera_cmd("ipcam_record_set",
+                          control="enable" if state == "on" else "disable")
+    return _publish_one(args, payload)
+
+
+def cmd_timelapse(args: argparse.Namespace) -> int:
+    state = args.state.lower()
+    if state not in ("on", "off"):
+        sys.exit(f"timelapse state must be on/off, got: {state}")
+    payload = _camera_cmd("ipcam_timelapse",
+                          control="enable" if state == "on" else "disable")
+    return _publish_one(args, payload)
+
+
+def cmd_resolution(args: argparse.Namespace) -> int:
+    res = args.resolution.lower()
+    if res not in ("low", "medium", "high", "full"):
+        sys.exit(f"resolution must be low/medium/high/full, got: {res}")
+    payload = _camera_cmd("ipcam_resolution_set", resolution=res)
+    return _publish_one(args, payload)
+
 
 def cmd_camera(args: argparse.Namespace) -> int:
     import http.server
@@ -4470,6 +4512,32 @@ def main() -> int:
                     help="Bearer token required for HTTP requests when "
                          "--bind is non-loopback. Default $X2D_AUTH_TOKEN.")
     cm.set_defaults(fn=cmd_camera)
+
+    # x2d/termux #88 — IPCAM control commands (camera-side, not the
+    # ffmpeg/MJPEG proxy above). These send plain MQTT to device/<sn>/request.
+    rec = sub.add_parser(
+        "record",
+        help="Start/stop chamber-camera video recording to printer's SD card",
+    )
+    rec.add_argument("state", choices=["on", "off"],
+                     help="on = enable recording; off = disable")
+    rec.set_defaults(fn=cmd_record)
+
+    tl = sub.add_parser(
+        "timelapse",
+        help="Enable/disable timelapse capture during prints (writes to SD)",
+    )
+    tl.add_argument("state", choices=["on", "off"],
+                    help="on = enable timelapse; off = disable")
+    tl.set_defaults(fn=cmd_timelapse)
+
+    res = sub.add_parser(
+        "resolution",
+        help="Set chamber camera resolution",
+    )
+    res.add_argument("resolution", choices=["low", "medium", "high", "full"],
+                     help="low/medium/high/full")
+    res.set_defaults(fn=cmd_resolution)
 
     cli_login = sub.add_parser(
         "cloud-login",
