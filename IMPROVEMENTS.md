@@ -2448,3 +2448,115 @@ User feature requests discovered after the v1.1 sweep landed.
     ("Bambu Textured PEI Plate") with axes, plate marker, and the
     Top/Front view-orientation widget — full slicer workflow now
     functional.
+
+## Phase 6 — phone-display polish + camera bridge (items 87-88)
+
+### Phase 6.1 — AMS strip + control panel sizing (item 87)
+
+- [x] **87. AMS strip clipped on 1080-wide displays.** User-reported.
+    Standard 4-can AMS strip (`AMS_CANS_WINDOW_SIZE` in AMSItem.cpp)
+    was hardcoded to FromDIP(264) but the right control panel allocates
+    only ~270-340px on a 1080×2340 phone display, leaving the rightmost
+    AMS slot permanently clipped. `PAGE_MIN_WIDTH` (StatusPanel.cpp) was
+    FromDIP(574) on both camera + control panels — combined with left
+    rail and panel struts, that exceeds the screen width, forcing the
+    sizer to squeeze the right column. Fixed:
+    * `PAGE_MIN_WIDTH` 574→360dip — both panels can shrink.
+    * `AMS_CANS_WINDOW_SIZE` 264→320dip — wider can strip.
+    * `AMS_CANS_SIZE` 284→340dip in matching declares.
+    * `m_panel_option_left/right` 180→130dip (auto-refill column).
+    * `m_amswin SetSize(578)` removed entirely (was forcing parent
+       sizer to ignore width constraint).
+    * Camera + control panel proportional sizers in
+       `bSizer_status_below`: control was proportion 0 (fixed), now
+       proportion 1 (50/50 split with camera).
+    Patches: `patches/AMS_layout.cpp.termux.patch`. Two of 4 AMS slots
+    fully visible + partial 3rd (was: 1 only). Full 4-slot view still
+    clips ~10px on right — needs further sizer tuning or AMS rotation
+    to vertical layout.
+
+### Phase 6.2 — runtime polish + camera control commands (item 88)
+
+- [x] **88. Window doesn't auto-maximize / xfce panel covered / fonts tiny /
+    sizer-assert dialogs / camera buttons inert.** User-reported across
+    the v1.0.0 + v1.1 + v1.2 sweep. Several distinct fixes shipped as
+    a polish bundle:
+
+    * **Auto-maximize via launcher xdotool watcher.** wxFrame::Maximize()
+      in BS source runs before xfwm4 finishes mapping the window so its
+      EWMH MAXIMIZED request is dropped. run_gui.sh now backgrounds an
+      xdotool watcher that polls for the bambu-studio main window
+      post-spawn and resizes it to `(disp_w × (disp_h - 140))` so the
+      xfce4-panel struts are honored. Includes one-shot
+      `xfconf-query -p /panels/panel-1/enable-struts -s true` so panel-1
+      reserves screen space (most Termux + sabamdarif/termux-desktop
+      installs default to enable-struts=false).
+    * **gvfs popup on every launch.** Multi-pronged:
+      - `GIO_USE_VFS=local GVFS_DISABLE_FUSE=1` env so BS's libgio
+         doesn't talk to gvfsd.
+      - `pkill -TERM gvfsd-trash gvfsd-recent Thunar` pre-spawn so
+         persistent xfce4-session daemons can't dbus-pop a modal.
+      - LD_PRELOAD `opendir("/")` + `openat(_,"/",O_DIRECTORY)` shims
+         in `runtime/preload_gtkinit.c` that return EACCES silently
+         without UI cascade.
+      - Set `AutoMount=false` in
+         `$PREFIX/share/gvfs/mounts/trash.mount`.
+      Popup STILL appears once on first launch — exact source not yet
+      isolated (suspected xfce4-volumed or xfsettingsd daemon's own
+      `/` enumeration). Followup: build a per-process strace harness
+      to identify the specific syscall that triggers the popup window.
+    * **Mobile font readability.** wx 3.3 `Label::sysFont` shrinks all
+      Body_X / Head_X by 0.8x on Linux for "Windows convention". On a
+      180+ DPI phone the 8pt result is unreadable. Removed the shrink
+      (Label.cpp) — text is 25% larger overall, still fits the existing
+      fixed-width sidebars and topbar columns.
+    * **wx 3.3 sizer-assert dialogs during slice.** OnAssertFailure
+      override in GUI_App.cpp now pattern-matches a list of harmless
+      asserts (CheckExpectedParentIs, page-index, sizer flags, negative
+      content width, AuiNotebook, etc.) and swallows them log-once.
+      Was causing 2-3 modal "Continue / Stop" dialogs per slice.
+    * **`run_gui.sh` GL-stack rewrite.** Restored the proper
+      sabamdarif/termux-desktop `EPOXY_USE_ANGLE=1 + virgl_test_server_android
+      --angle-gl + GALLIUM_DRIVER=virpipe + VK_ICD_FILENAMES=wrapper_icd`
+      recipe with llvmpipe fallback when ANGLE/virgl aren't installed.
+      Replaced the broken virgl_test_server invocation
+      (`--use-egl-surfaceless --use-gles` is for the upstream binary,
+      NOT `_android`). Live-tested viewport stays gray with hardware
+      path because ANGLE's libEGL doesn't bind X11 windows under
+      termux-x11 — fell back to llvmpipe.
+    * **Adreno 830 hardware-acceleration research.** Installed
+      `vulkan-wrapper-android-leegaos-fork` at `~/.local/leegaos-vk/`.
+      Verified via vulkaninfo that the real Qualcomm Adreno 830 driver
+      (Vulkan 1.3.284, DRIVER_ID_QUALCOMM_PROPRIETARY) is reachable.
+      Mesa zink+kopper still asserts under termux-x11 because kopper
+      needs DRI3/Present. ANGLE-Vulkan path loads but can't bind X11
+      windows. Future fix path: custom libEGL shim that intercepts
+      `eglCreatePlatformWindowSurface(x11_xid)` and routes through
+      Vulkan render-to-texture + glReadPixels + XPutImage. Estimated
+      1-2 weeks. Documented in `~/.claude/CLAUDE.md` hard-won lesson
+      block for future sessions.
+    * **IPCAM control commands in the bridge.** Three new MQTT
+      subcommands in `x2d_bridge.py`:
+      `record on|off`        → camera SD-card recording toggle
+      `timelapse on|off`     → timelapse capture during prints
+      `resolution low|...`   → chamber camera resolution
+      All emit plain MQTT to `device/<sn>/request` (no Bambu Connect
+      cert signing), matching DeviceManager.cpp:2027/2038/2049.
+      Live-tested all six combos against the X2D — printer ACKs cleanly.
+    * **`runtime/network_shim/file_tunnel.py` BambuTunnel client.**
+      Implementation of the SD-card file-list browser protocol
+      (PrinterFileSystem.cpp:1434-1461). 80-byte access-code auth blob
+      shared with `lvl_local.py` + LIST_INFO request frame
+      (CTRL_TYPE 0x3001, opcode 0x0001, JSON body). CLI:
+      `python -m runtime.network_shim.file_tunnel <ip> <code> [kind]`.
+      KNOWN ISSUE: X2D firmware 02.06.00.51 returns connection-reset
+      after our LIST_INFO frame. Same printer accepts the auth blob +
+      responds with status 0x0003013f for camera streams (gated on
+      LAN-mode liveview). File tunnel may be cloud-only on newer
+      BBL printers, or X2D needs different framing. Module is ready
+      for older P1S/X1C and future X2D firmware updates.
+
+  Sidebar gear-popup integration of the IPCAM commands (so the GUI
+  Go Live / Recording / Timelapse switches actually fire MQTT) and
+  the Storage tab in MediaFilePanel (file_tunnel-backed) are
+  followups.
