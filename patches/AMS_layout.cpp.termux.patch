@@ -1,0 +1,99 @@
+diff --git a/src/slic3r/GUI/StatusPanel.cpp b/src/slic3r/GUI/StatusPanel.cpp
+index b425d68..01af690 100644
+--- a/src/slic3r/GUI/StatusPanel.cpp
++++ b/src/slic3r/GUI/StatusPanel.cpp
+@@ -104,7 +104,13 @@ static wxImage fail_image;
+ 
+ #define NORMAL_SPACING FromDIP(5)
+ #define PAGE_SPACING FromDIP(10)
+-#define PAGE_MIN_WIDTH FromDIP(574)
++// x2d/termux #87 — was FromDIP(574). Default upstream value assumes a
++// ≥1400px-wide display: left rail (200) + camera (574) + control (574)
++// > 1080. On a 1080-wide phone display the right control panel was
++// clipped — only AMS slot 1 was visible. Reducing to 360 lets all 4 AMS
++// slots fit (after companion AMSControl.cpp width patch). Camera panel
++// also tightens but the live-feed bitmap rescales fine.
++#define PAGE_MIN_WIDTH FromDIP(360)
+ #define PROGRESSBAR_HEIGHT FromDIP(8)
+ 
+ #define SWITCH_BUTTON_SIZE (wxSize(FromDIP(40), -1))
+diff --git a/src/slic3r/GUI/Widgets/AMSControl.cpp b/src/slic3r/GUI/Widgets/AMSControl.cpp
+index e169de9..afcb772 100644
+--- a/src/slic3r/GUI/Widgets/AMSControl.cpp
++++ b/src/slic3r/GUI/Widgets/AMSControl.cpp
+@@ -20,8 +20,9 @@
+ 
+ namespace Slic3r { namespace GUI {
+ 
+-#define AMS_CANS_SIZE wxSize(FromDIP(284), -1)
+-#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(264), -1)
++// x2d/termux #87 — widen to fit 4-can standard AMS. See AMSItem.cpp.
++#define AMS_CANS_SIZE wxSize(FromDIP(340), -1)
++#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(320), -1)
+ #define SINGLE_SLOT_AMS_PANEL_SIZE wxSize(FromDIP(264), FromDIP(160))
+ 
+ 
+@@ -44,8 +45,15 @@ AMSControl::AMSControl(wxWindow *parent, wxWindowID id, const wxPoint &pos, cons
+     m_sizer_body = new wxBoxSizer(wxVERTICAL);
+     m_amswin                 = new wxWindow(this, wxID_ANY);
+     m_amswin->SetBackgroundColour(*wxWHITE);
+-    m_amswin->SetSize(wxSize(FromDIP(578), -1));
+-    m_amswin->SetMinSize(wxSize(FromDIP(578), -1));
++    // x2d/termux #87 — AMS panel is hardcoded at 578dip in upstream BBL,
++    // which exceeds the right-column width on a 1080px-wide display under
++    // termux-x11 (right column is ~280-340px after camera + status sizing).
++    // Result: AMS strip clips and only slot 1 is visible. Reducing min to
++    // 280dip lets all 4 slots fit and makes the panel responsive to the
++    // available column width. Cap remains -1 so wider displays let the
++    // panel grow back. SetSize() removed because SetMinSize() is sufficient
++    // and SetSize() forces the panel to ignore parent sizer constraints.
++    m_amswin->SetMinSize(wxSize(FromDIP(280), -1));
+ 
+ 
+     m_sizer_ams_items = new wxBoxSizer(wxHORIZONTAL);
+@@ -127,11 +135,15 @@ AMSControl::AMSControl(wxWindow *parent, wxWindowID id, const wxPoint &pos, cons
+     m_panel_option_left->SetSizer(m_sizer_option_left);
+     m_panel_option_right->SetSizer(m_sizer_option_right);
+ 
+-    m_panel_option_left->SetMinSize(wxSize(FromDIP(180), -1));
+-    m_panel_option_left->SetMaxSize(wxSize(FromDIP(180), -1));
++    // x2d/termux #87 — option panels reduced from 180dip→130dip; just enough
++    // to fit the Auto-refill button (80dip) + 24dip setting bitmap + 8dip
++    // padding. Keeps room for the AMS strip in narrow right columns.
++    m_panel_option_left->SetMinSize(wxSize(FromDIP(130), -1));
++    m_panel_option_left->SetMaxSize(wxSize(FromDIP(130), -1));
+ 
+-    m_panel_option_right->SetMinSize(wxSize(FromDIP(180), -1));
+-    m_panel_option_right->SetMaxSize(wxSize(FromDIP(180), -1));
++    // x2d/termux #87 — see m_panel_option_left above.
++    m_panel_option_right->SetMinSize(wxSize(FromDIP(130), -1));
++    m_panel_option_right->SetMaxSize(wxSize(FromDIP(130), -1));
+ 
+     StateColor btn_bg_green(std::pair<wxColour, int>(AMS_CONTROL_DISABLE_COLOUR, StateColor::Disabled),
+         std::pair<wxColour, int>(wxColour(27, 136, 68), StateColor::Pressed),
+diff --git a/src/slic3r/GUI/Widgets/AMSItem.cpp b/src/slic3r/GUI/Widgets/AMSItem.cpp
+index 1022b06..66f6fb5 100644
+--- a/src/slic3r/GUI/Widgets/AMSItem.cpp
++++ b/src/slic3r/GUI/Widgets/AMSItem.cpp
+@@ -42,11 +42,16 @@ namespace Slic3r { namespace GUI {
+     wxDEFINE_EVENT(EVT_AMS_SWITCH, SimpleEvent);
+ 
+ 
+-#define AMS_CANS_SIZE wxSize(FromDIP(284), -1)
+-//#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(264), 144)
+-//#define AMS_SINGLE_CAN_SIZE wxSize(FromDIP(78), 144)
+-#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(264), FromDIP(174))
+-#define AMS_SINGLE_CAN_SIZE wxSize(FromDIP(78), FromDIP(174))
++// x2d/termux #87 — for standard AMS (4-slot), AMS_CANS_WINDOW_SIZE is the
++// container that holds all 4 cans inside via internal sizers. Was 264dip
++// wide which couldn't fit 4 cans + their internal padding, so the rightmost
++// can was always clipped. Widened to 320dip + parallel widen in AMSControl.cpp
++// so the AMS strip displays all 4 slots cleanly.
++// AMS_SINGLE_CAN_SIZE is only used for AMS_LITE (single-can) mode; left at
++// the smaller 60dip for those.
++#define AMS_CANS_SIZE wxSize(FromDIP(340), -1)
++#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(320), FromDIP(174))
++#define AMS_SINGLE_CAN_SIZE wxSize(FromDIP(60), FromDIP(174))
+ bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, bool humidity_flag)
+ {
+     if (!ams) return false;
