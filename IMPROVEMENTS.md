@@ -2678,7 +2678,7 @@ if user-facing — then the checkbox flips to [x].
     timelapse file list, AND a new bridge subcommand
     `x2d_bridge.py files <kind>` exposes it.
 
-- [ ] **93. Touch-target enlargement on tabs + sidebar items.**
+- [x] **93. Touch-target enlargement on tabs + sidebar items.**
     Topbar (Prepare/Preview/Device/Project/Calibration) and
     Plater sidebar are all ~30dip tall — under Material's 48dp
     minimum touch target. Earlier attempt to bump BBLTopbar
