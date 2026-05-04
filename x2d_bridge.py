@@ -2921,6 +2921,112 @@ def cmd_resolution(args: argparse.Namespace) -> int:
     return _publish_one(args, payload)
 
 
+# ---------------------------------------------------------------------------
+# x2d/termux #88 — `health` one-shot diagnostic. Combines what the user
+# typically needs to debug a fresh install: TCP reachability, MQTT
+# connect, last printer state, AMS slot summary, camera port. Output
+# is concise (one line per check) so it fits in a phone terminal.
+
+def cmd_health(args: argparse.Namespace) -> int:
+    import socket as _socket
+    import time as _time
+
+    creds = Creds.resolve(args)
+    print(f"x2d health check — printer {creds.serial} @ {creds.ip}")
+    fail_count = 0
+
+    def _ok(label: str, detail: str = "") -> None:
+        print(f"  \033[32m✓\033[0m {label:<28}{(' '+detail) if detail else ''}")
+
+    def _fail(label: str, detail: str) -> None:
+        nonlocal fail_count
+        print(f"  \033[31m✗\033[0m {label:<28} {detail}")
+        fail_count += 1
+
+    def _info(label: str, detail: str) -> None:
+        print(f"  \033[36m·\033[0m {label:<28} {detail}")
+
+    # 1. TCP reachability for each port BS uses
+    for port, label in ((8883, "MQTT-TLS"),
+                         (322,  "RTSPS-camera"),
+                         (6000, "LVL-Local"),
+                         (990,  "FTPS-upload")):
+        try:
+            with _socket.create_connection((creds.ip, port), timeout=3.0) as s:
+                _ok(f"port {port} ({label})", "open")
+        except (OSError, _socket.timeout) as e:
+            _fail(f"port {port} ({label})", str(e))
+
+    # 2. MQTT connect + state
+    try:
+        cli = X2DClient(creds)
+        cli.connect(timeout=8.0)
+        t0 = _time.time()
+        state = cli.request_state(timeout=8.0)
+        elapsed = _time.time() - t0
+        cli.disconnect()
+        _ok("MQTT request_state", f"{int(elapsed*1000)}ms")
+    except Exception as e:
+        _fail("MQTT request_state", str(e))
+        state = None
+
+    # 3. AMS slots summary
+    if state:
+        ams = state.get("print", {}).get("ams", {}).get("ams", [])
+        if ams:
+            for unit in ams:
+                trays = unit.get("tray", [])
+                loaded = sum(1 for t in trays if t.get("type"))
+                _info(f"AMS{unit.get('id', '?')}", f"{loaded}/{len(trays)} slots loaded")
+        else:
+            _info("AMS", "no AMS reported (single-spool / unbound)")
+
+        # 4. Print state
+        print_state = state.get("print", {})
+        gcode_state = print_state.get("gcode_state", "?")
+        layer = print_state.get("layer_num", 0)
+        total_layers = print_state.get("total_layer_num", 0)
+        if gcode_state and gcode_state != "?":
+            _info("print state", f"{gcode_state}, layer {layer}/{total_layers}")
+
+        # 5. Camera state
+        ipcam = print_state.get("ipcam", {})
+        rtsp = ipcam.get("rtsp_url", "?")
+        if rtsp == "disable":
+            _info("camera", "rtsp disabled (toggle on touchscreen → Settings → Network → Liveview)")
+        elif rtsp.startswith("rtsps://"):
+            _ok("camera", "rtsps URL ready")
+        else:
+            _info("camera", f"rtsp_url={rtsp}")
+
+        # 6. SD card state
+        sdcard = print_state.get("sdcard", "?")
+        if sdcard == "0" or sdcard == 0:
+            _info("SD card", "not inserted")
+        elif sdcard:
+            _ok("SD card", f"state={sdcard}")
+
+    # 7. Bridge daemon socket (if running)
+    sock_path = Path.home() / ".x2d" / "bridge.sock"
+    if sock_path.exists():
+        try:
+            with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as us:
+                us.settimeout(2.0)
+                us.connect(str(sock_path))
+                _ok("bridge daemon", f"socket alive at ~/.x2d/bridge.sock")
+        except OSError as e:
+            _fail("bridge daemon", f"socket present but {e}")
+    else:
+        _info("bridge daemon", "not running (no ~/.x2d/bridge.sock)")
+
+    print()
+    if fail_count == 0:
+        print("\033[32mAll checks passed.\033[0m")
+        return 0
+    print(f"\033[31m{fail_count} check(s) failed.\033[0m")
+    return 1
+
+
 def cmd_camera(args: argparse.Namespace) -> int:
     import http.server
     import shutil
@@ -4530,6 +4636,14 @@ def main() -> int:
     tl.add_argument("state", choices=["on", "off"],
                     help="on = enable timelapse; off = disable")
     tl.set_defaults(fn=cmd_timelapse)
+
+    h = sub.add_parser(
+        "health",
+        help="One-shot diagnostic: TCP reachability + MQTT state + "
+             "AMS + camera + SD card + bridge daemon. Useful to debug "
+             "a fresh install or a flaky printer.",
+    )
+    h.set_defaults(fn=cmd_health)
 
     res = sub.add_parser(
         "resolution",
