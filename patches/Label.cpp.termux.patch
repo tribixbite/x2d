@@ -1,0 +1,32 @@
+diff --git a/src/slic3r/GUI/Widgets/Label.cpp b/src/slic3r/GUI/Widgets/Label.cpp
+index be48956..24d3e85 100644
+--- a/src/slic3r/GUI/Widgets/Label.cpp
++++ b/src/slic3r/GUI/Widgets/Label.cpp
+@@ -13,7 +13,17 @@ wxFont Label::sysFont(int size, bool bold, std::string lang_code)
+ //#ifdef __linux__
+ //    return wxFont{};
+ //#endif
+-#ifndef __APPLE__
++// x2d/termux #88 — was `size = size * 4 / 5` on non-Apple platforms,
++// which renders all Body_X / Head_X 20% smaller than their stated size.
++// Designed for higher-DPI Windows displays where 8pt text was the norm.
++// Phone displays at ~180 DPI show this as tiny / unreadable. Removing
++// the shrink boosts everything ~25% which is the right balance for the
++// S25U at native portrait orientation. Layout still fits because the
++// shrink was so small to begin with — most BS sizing uses FromDIP not
++// the raw font height. Apple kept its full size (no #ifdef branch).
++#if defined(__APPLE__) || 1
++    // intentional no-op — leave size at stated value
++#else
+     size = size * 4 / 5;
+ #endif
+ 
+@@ -62,7 +72,7 @@ wxFont Label::Body_8;
+ 
+ void Label::initSysFont(std::string lang_code, bool load_font_resource)
+ {
+-#ifdef __linux__
++#if defined(__linux__) && wxUSE_PRIVATE_FONTS
+     if (load_font_resource) {
+         const std::string& resource_path = Slic3r::resources_dir();
+         wxString font_path = wxString::FromUTF8(resource_path+"/fonts/HarmonyOS_Sans_SC_Bold.ttf");
