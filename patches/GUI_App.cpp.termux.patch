@@ -2,7 +2,23 @@ diff --git a/src/slic3r/GUI/GUI_App.cpp b/src/slic3r/GUI/GUI_App.cpp
 index 94ad197..57e5023 100644
 --- a/src/slic3r/GUI/GUI_App.cpp
 +++ b/src/slic3r/GUI/GUI_App.cpp
-@@ -4944,7 +4944,7 @@ void GUI_App::on_http_error(wxCommandEvent &evt)
+@@ -1204,7 +1204,14 @@ void GUI_App::load_gl_resources(bool switch_to_3d)
+         plater_->select_view_3D("3D");
+         //BBS init the opengl resource here
+ //#ifdef __linux__
+-        if (plater_->canvas3D()->get_wxglcanvas()->IsShownOnScreen()&&plater_->canvas3D()->make_current_for_postinit()) {
++        // x2d/termux #86 — IsShownOnScreen() returns false on first init
++        // under termux-x11 (no compositor / EWMH-aware ancestor reporter),
++        // gating the entire post-init block including enable_render(true).
++        // Result: m_enable_render stayed false forever, every render() call
++        // bailed at "if (!m_enable_render) return", and the 3D viewport
++        // never painted. Use the canvas's local IsShown() — same semantics
++        // on a real WM, but doesn't depend on X server roundtrip.
++        if (plater_->canvas3D()->get_wxglcanvas()->IsShown()&&plater_->canvas3D()->make_current_for_postinit()) {
+ //#endif
+             Size canvas_size = plater_->canvas3D()->get_canvas_size();
+             wxGetApp().imgui()->set_display_size(static_cast<float>(canvas_size.get_width()), static_cast<float>(canvas_size.get_height()));
+@@ -4944,7 +4951,7 @@ void GUI_App::on_http_error(wxCommandEvent &evt)
                  }
              }
              if (found_json) {

@@ -20,3 +20,52 @@ index 0000000..0000001 100644
  }
 
  void GLCanvas3D::_resize(unsigned int w, unsigned int h)
+@@ -7588,17 +7599,46 @@ Camera *GLCanvas3D::get_active_camera()
+ bool GLCanvas3D::_set_current(bool force_update)
+ {
+     if (!m_context || !m_canvas) {
+         return false;
+     }
+     if (m_dirty_context || force_update) {
+-        const auto rt = m_canvas->SetCurrent(*m_context);
++        // x2d/termux #86 — ensure the canvas has a real (non-zero,
++        // non-negative) size before SetCurrent. wxGLCanvasEGL refuses
++        // to allocate a window surface for a 0-or-negative-sized
++        // canvas. Under termux-x11 the canvas's initial size is
++        // stale (-128 x -48 type values) until the first parent
++        // Layout pass — but the early calls to render() happen
++        // BEFORE that layout, so the canvas is permanently stuck.
++        // Force-size it from the parent's client area to unblock
++        // the EGL surface allocation.
++        wxSize cs = m_canvas->GetClientSize();
++        if (cs.x <= 0 || cs.y <= 0) {
++            wxWindow* p = m_canvas->GetParent();
++            wxSize ps = p ? p->GetClientSize() : wxSize(800, 600);
++            if (ps.x > 0 && ps.y > 0) {
++                m_canvas->SetSize(ps);
++            }
++        }
++        auto rt = m_canvas->SetCurrent(*m_context);
++        if (!rt) {
++            // x2d/termux #86 — recreate the wxGLContext lazily on
++            // first failure. Some EGL backends bind the context to
++            // the canvas's surface state at construction time; if
++            // the canvas wasn't realized then, recreating with the
++            // now-realized canvas can give us a usable context.
++            // Single-shot retry — if this still fails the issue is
++            // a wx-level wxGLCanvasEGL surface-binding bug under
++            // termux-x11 that needs a wxWidgets rebuild to fix.
++            static int retry_count = 0;
++            if (retry_count++ < 2) {
++                delete m_context;
++                m_context = new wxGLContext(m_canvas);
++                rt = m_canvas->SetCurrent(*m_context);
++            }
++        }
+         if (rt) {
+             m_dirty_context = false;
+         }
+         return rt;
+     }
+     return true;
+ }
