@@ -2560,3 +2560,89 @@ User feature requests discovered after the v1.1 sweep landed.
   Go Live / Recording / Timelapse switches actually fire MQTT) and
   the Storage tab in MediaFilePanel (file_tunnel-backed) are
   followups.
+
+## Phase 7 — finish the parked items, no compromise (items 89-94)
+
+Top-of-list-first ordering. Each item must be fully implemented,
+live-tested where applicable, committed + pushed, and dist refreshed
+if user-facing — then the checkbox flips to [x].
+
+- [ ] **89. Tab-switch caching — Plater framebuffer cache between
+    same-Plater-different-tab swaps.** The Plater widget is shared
+    across Prepare / Preview / Device tabs. Each switch currently
+    re-runs the triple-hammer (reset_window_layout + Layout +
+    SizeEvent + render()) which under llvmpipe takes ~10s before the
+    viewport repaints. Cache the rendered framebuffer (or the
+    GLCanvas3D's offscreen texture) and blit on subsequent switches
+    when the model + camera + plate haven't changed. Invalidate
+    cache on model/AMS/print state changes. Expected outcome:
+    sub-second tab swap when nothing has changed; full re-render
+    only on actual scene changes. **Done when** Home → Prepare →
+    Preview cycle measured at <1s under llvmpipe per switch with
+    no visual regressions.
+
+- [ ] **90. Custom libEGL shim for Vulkan→XPutImage so Adreno 830
+    actually accelerates the viewport.** ANGLE's libEGL silently
+    fails to bind X11 Drawables (it expects Android Surface). zink+
+    kopper needs DRI3/Present which termux-x11 lacks. Solution: a
+    thin libEGL shim that intercepts `eglCreatePlatformWindowSurface`
+    with EGL_PLATFORM_X11_EXT, allocates a Vulkan render-to-texture
+    target via the leegaos vulkan-wrapper (already proven to reach
+    the real Adreno 830 driver via vulkaninfo), and on each
+    `eglSwapBuffers` does glReadPixels (or a Vulkan compute shader
+    blit to host-visible memory) + XPutImage to the bound X11
+    window. Fall-through to system libEGL for non-X11 platform
+    surfaces. Lives at runtime/preload_egl_x11.so or similar; gets
+    LD_PRELOAD'd ahead of libEGL.so.1. **Done when** the
+    Prepare/Preview viewport renders + tab-switch <500ms with the
+    shim active; vulkaninfo still shows Adreno 830; viewport image
+    matches llvmpipe pixel-by-pixel at static camera position.
+
+- [ ] **91. gvfs popup fully suppressed.** Despite GIO_USE_VFS=local +
+    pkill gvfsd-trash + AutoMount=false on trash.mount + opendir/
+    openat LD_PRELOAD shims + pkill Thunar, the "Could not read the
+    contents of /" modal still pops on first launch. The exact
+    daemon that emits it isn't yet isolated. **Done when** strace
+    diagnostic identifies the source process + syscall, the launch
+    flow is updated to suppress that specific call (env var,
+    pkill, LD_PRELOAD, or xfconf), and a fresh launch under
+    `setsid run_gui.sh` produces ZERO modal dialogs of any kind.
+
+- [ ] **92. Storage browser end-to-end with X2D firmware.** The
+    BambuTunnel client at runtime/network_shim/file_tunnel.py reaches
+    the wire format but X2D firmware 02.06.00.51 returns connection
+    reset after the LIST_INFO frame. Determine whether: (a) X2D
+    requires a different opcode/framing, (b) the auth blob needs a
+    second handshake step the lvl_local code doesn't do, (c) the
+    file tunnel was moved to a different port on newer firmware, or
+    (d) the protocol moved cloud-only. Use mitmproxy + a real
+    BambuStudio session to capture the actual file-list traffic.
+    **Done when** `python -m runtime.network_shim.file_tunnel
+    192.168.0.138 <code> timelapse` returns the actual SD-card
+    timelapse file list, AND a new bridge subcommand
+    `x2d_bridge.py files <kind>` exposes it.
+
+- [ ] **93. Touch-target enlargement on tabs + sidebar items.**
+    Topbar (Prepare/Preview/Device/Project/Calibration) and
+    Plater sidebar are all ~30dip tall — under Material's 48dp
+    minimum touch target. Earlier attempt to bump BBLTopbar
+    `m_toolbar_h` from 30→56 didn't visually grow because
+    wxAuiToolBar autosizes to children. Need to either (a) enlarge
+    the children's bitmaps + text + padding, OR (b) replace the
+    AuiToolBar with a custom wxPanel that respects the m_toolbar_h
+    setting. **Done when** every clickable element in the topbar
+    + sidebar is ≥48dip tall, and finger taps land 100% reliably
+    in five attempts at the screen edges (right side of last tab,
+    left side of first sidebar item).
+
+- [ ] **94. AMS proportional verification + final tuning.** Patches
+    from #87 (PAGE_MIN_WIDTH, AMS_CANS_WINDOW_SIZE, control panel
+    proportion 1) need a clean live-test against real X2D Device
+    tab. Current screenshots show 2-3 of 4 slots — the 4th still
+    clips. Either widen further (AMS_CANS_WINDOW_SIZE 320→340,
+    AMS_CANS_SIZE 340→360) OR rotate AMS strip vertical (4 slots
+    stacked with 80dip × 4 height instead of 80dip × 4 width).
+    **Done when** Device tab on a 1080-wide display shows ALL 4
+    AMS slots without clipping, with humidity + auto-refill +
+    feed/back option panels also fully visible, verified by a
+    screenshot and a click-tested slot-toggle.
