@@ -3027,6 +3027,66 @@ def cmd_health(args: argparse.Namespace) -> int:
     return 1
 
 
+# x2d/termux #88 — `watch` live status. Polls printer state every N seconds
+# and emits one line per poll: gcode_state, layer, eta, nozzle/bed temp.
+# Useful for shell pipelines, status bars, scripts. Ctrl-C to exit.
+def cmd_watch(args: argparse.Namespace) -> int:
+    import time as _time
+
+    creds = Creds.resolve(args)
+    interval = max(1, int(args.interval))
+    cli = X2DClient(creds)
+    cli.connect(timeout=8.0)
+
+    try:
+        while True:
+            try:
+                state = cli.request_state(timeout=8.0)
+            except Exception as e:
+                print(f"[{_time.strftime('%H:%M:%S')}] error: {e}",
+                      file=sys.stderr)
+                _time.sleep(interval)
+                continue
+
+            print_state = state.get("print", {})
+            gcode_state = print_state.get("gcode_state", "?")
+            layer = int(print_state.get("layer_num", 0) or 0)
+            total = int(print_state.get("total_layer_num", 0) or 0)
+            mc_pct = int(print_state.get("mc_percent", 0) or 0)
+            mc_remaining = int(print_state.get("mc_remaining_time", 0) or 0)
+
+            nozzle_l = float(print_state.get("nozzle_temper", 0.0) or 0.0)
+            nozzle_l_t = float(print_state.get("nozzle_target_temper", 0.0) or 0.0)
+            bed = float(print_state.get("bed_temper", 0.0) or 0.0)
+            bed_t = float(print_state.get("bed_target_temper", 0.0) or 0.0)
+
+            eta = ""
+            if mc_remaining > 0:
+                hours = mc_remaining // 60
+                mins  = mc_remaining % 60
+                eta = f"{hours:02d}h{mins:02d}m"
+            else:
+                eta = "--:--"
+
+            ts = _time.strftime("%H:%M:%S")
+            line = (
+                f"[{ts}] {gcode_state:<8} "
+                f"L{layer}/{total} {mc_pct}% eta={eta}  "
+                f"N:{nozzle_l:.0f}/{nozzle_l_t:.0f}°C "
+                f"B:{bed:.0f}/{bed_t:.0f}°C"
+            )
+            print(line, flush=True)
+
+            if args.once:
+                break
+            _time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\n[watch] stopped", file=sys.stderr)
+    finally:
+        cli.disconnect()
+    return 0
+
+
 def cmd_camera(args: argparse.Namespace) -> int:
     import http.server
     import shutil
@@ -4644,6 +4704,18 @@ def main() -> int:
              "a fresh install or a flaky printer.",
     )
     h.set_defaults(fn=cmd_health)
+
+    w = sub.add_parser(
+        "watch",
+        help="Live one-line printer status updated every N seconds. "
+             "Format: [HH:MM:SS] STATE Lx/y P% eta=HHhMMm  N:cur/tgt°C  B:cur/tgt°C. "
+             "Ctrl+C to exit.",
+    )
+    w.add_argument("--interval", type=int, default=5,
+                   help="Polling interval in seconds (default: 5)")
+    w.add_argument("--once", action="store_true",
+                   help="Print one status line and exit (good for scripts)")
+    w.set_defaults(fn=cmd_watch)
 
     res = sub.add_parser(
         "resolution",
