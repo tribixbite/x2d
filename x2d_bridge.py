@@ -3087,6 +3087,96 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+# x2d/termux #88 — `notify` runs `watch` semantics in the background and
+# fires a termux-notification when the print state transitions to FINISH /
+# IDLE / FAILED. Lets the phone notify the user without keeping the GUI
+# open. termux-api package required (`pkg install termux-api`).
+def cmd_notify(args: argparse.Namespace) -> int:
+    import shutil
+    import subprocess as _sp
+    import time as _time
+
+    if not shutil.which("termux-notification"):
+        print("termux-notification not found — install `termux-api` package",
+              file=sys.stderr)
+        return 1
+
+    creds = Creds.resolve(args)
+    cli = X2DClient(creds)
+    cli.connect(timeout=8.0)
+
+    poll_interval = max(5, int(args.interval))
+    last_state = None
+    last_layer = -1
+    notified_complete = False
+
+    print(f"[{_time.strftime('%H:%M:%S')}] notify started — polling every {poll_interval}s")
+    try:
+        while True:
+            try:
+                state = cli.request_state(timeout=8.0)
+            except Exception as e:
+                print(f"[{_time.strftime('%H:%M:%S')}] error: {e}",
+                      file=sys.stderr)
+                _time.sleep(poll_interval)
+                continue
+
+            ps = state.get("print", {})
+            gs = ps.get("gcode_state", "?")
+            layer = int(ps.get("layer_num", 0) or 0)
+            total = int(ps.get("total_layer_num", 0) or 0)
+            mc_pct = int(ps.get("mc_percent", 0) or 0)
+
+            changed = (gs != last_state)
+            milestone = (args.layer_milestone > 0 and total > 0
+                         and layer >= last_layer + args.layer_milestone)
+
+            if changed:
+                title = f"X2D: {gs}"
+                msg = ""
+                if gs == "RUNNING" and total > 0:
+                    msg = f"Layer {layer}/{total} ({mc_pct}%)"
+                elif gs == "FINISH":
+                    msg = f"Print complete ({total} layers)"
+                    notified_complete = True
+                elif gs == "FAILED":
+                    msg = f"Print failed at layer {layer}/{total}"
+                elif gs == "PAUSE":
+                    msg = f"Paused at layer {layer}/{total}"
+                else:
+                    msg = f"State: {gs}"
+                _sp.run(["termux-notification",
+                         "--id", "x2d_print",
+                         "--title", title,
+                         "--content", msg,
+                         "--ongoing"] if gs == "RUNNING" else
+                        ["termux-notification",
+                         "--id", "x2d_print",
+                         "--title", title,
+                         "--content", msg],
+                        check=False)
+                print(f"[{_time.strftime('%H:%M:%S')}] notified: {title} — {msg}")
+
+            elif milestone and gs == "RUNNING":
+                _sp.run(["termux-notification",
+                         "--id", "x2d_print",
+                         "--title", f"X2D: layer {layer}/{total}",
+                         "--content", f"{mc_pct}% complete",
+                         "--ongoing"],
+                        check=False)
+                last_layer = layer
+
+            last_state = gs
+            if notified_complete and args.exit_on_finish:
+                break
+            _time.sleep(poll_interval)
+    except KeyboardInterrupt:
+        print("\n[notify] stopped")
+    finally:
+        cli.disconnect()
+    return 0
+
+
 def cmd_camera(args: argparse.Namespace) -> int:
     import http.server
     import shutil
@@ -4716,6 +4806,21 @@ def main() -> int:
     w.add_argument("--once", action="store_true",
                    help="Print one status line and exit (good for scripts)")
     w.set_defaults(fn=cmd_watch)
+
+    n = sub.add_parser(
+        "notify",
+        help="Background poller that fires termux-notification on print "
+             "state transitions (RUNNING → FINISH / FAILED / PAUSE) and "
+             "optional layer milestones. Requires termux-api package.",
+    )
+    n.add_argument("--interval", type=int, default=10,
+                   help="Polling interval in seconds (min 5, default: 10)")
+    n.add_argument("--layer-milestone", type=int, default=0,
+                   help="Also notify every N layers during RUNNING. "
+                        "0 disables (default).")
+    n.add_argument("--exit-on-finish", action="store_true",
+                   help="Exit cleanly after FINISH notification")
+    n.set_defaults(fn=cmd_notify)
 
     res = sub.add_parser(
         "resolution",
