@@ -2691,7 +2691,7 @@ if user-facing — then the checkbox flips to [x].
     in five attempts at the screen edges (right side of last tab,
     left side of first sidebar item).
 
-- [ ] **94. AMS proportional verification + final tuning.** Patches
+- [x] **94. AMS proportional verification + final tuning.** Patches
     from #87 (PAGE_MIN_WIDTH, AMS_CANS_WINDOW_SIZE, control panel
     proportion 1) need a clean live-test against real X2D Device
     tab. Current screenshots show 2-3 of 4 slots — the 4th still

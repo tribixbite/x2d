@@ -1,5 +1,5 @@
 diff --git a/src/slic3r/GUI/StatusPanel.cpp b/src/slic3r/GUI/StatusPanel.cpp
-index b425d68..01af690 100644
+index b425d68..915cc6b 100644
 --- a/src/slic3r/GUI/StatusPanel.cpp
 +++ b/src/slic3r/GUI/StatusPanel.cpp
 @@ -104,7 +104,13 @@ static wxImage fail_image;
@@ -17,8 +17,24 @@ index b425d68..01af690 100644
  #define PROGRESSBAR_HEIGHT FromDIP(8)
  
  #define SWITCH_BUTTON_SIZE (wxSize(FromDIP(40), -1))
+@@ -1439,7 +1445,14 @@ StatusBasePanel::StatusBasePanel(wxWindow *parent, wxWindowID id, const wxPoint
+     m_machine_ctrl_panel->Layout();
+     m_machine_control->Fit(m_machine_ctrl_panel);
+ 
+-    bSizer_status_below->Add(m_machine_ctrl_panel, 0, wxALL, 0);
++    // x2d/termux #87 — was proportion 0 (fixed width = control panel's min
++    // size). On 1080-wide phone displays the camera panel (proportion 1)
++    // greedily takes ~720px and the control panel only gets ~280px, which
++    // clips the AMS strip to 1-2 of 4 slots. Switching to proportion 1
++    // makes camera and control split the available width evenly (about
++    // 540px each on 1080), and AMS_CANS_WINDOW_SIZE 320dip + 4×80dip
++    // slot widths fit cleanly.
++    bSizer_status_below->Add(m_machine_ctrl_panel, 1, wxALL | wxEXPAND, 0);
+ 
+     m_panel_separator_right = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(PAGE_SPACING, -1), wxTAB_TRAVERSAL);
+     m_panel_separator_right->SetBackgroundColour(STATUS_PANEL_BG);
 diff --git a/src/slic3r/GUI/Widgets/AMSControl.cpp b/src/slic3r/GUI/Widgets/AMSControl.cpp
-index e169de9..afcb772 100644
+index e169de9..62c69c2 100644
 --- a/src/slic3r/GUI/Widgets/AMSControl.cpp
 +++ b/src/slic3r/GUI/Widgets/AMSControl.cpp
 @@ -20,8 +20,9 @@
@@ -28,8 +44,8 @@ index e169de9..afcb772 100644
 -#define AMS_CANS_SIZE wxSize(FromDIP(284), -1)
 -#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(264), -1)
 +// x2d/termux #87 — widen to fit 4-can standard AMS. See AMSItem.cpp.
-+#define AMS_CANS_SIZE wxSize(FromDIP(340), -1)
-+#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(320), -1)
++#define AMS_CANS_SIZE wxSize(FromDIP(380), -1)
++#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(360), -1)
  #define SINGLE_SLOT_AMS_PANEL_SIZE wxSize(FromDIP(264), FromDIP(160))
  
  
@@ -72,7 +88,7 @@ index e169de9..afcb772 100644
      StateColor btn_bg_green(std::pair<wxColour, int>(AMS_CONTROL_DISABLE_COLOUR, StateColor::Disabled),
          std::pair<wxColour, int>(wxColour(27, 136, 68), StateColor::Pressed),
 diff --git a/src/slic3r/GUI/Widgets/AMSItem.cpp b/src/slic3r/GUI/Widgets/AMSItem.cpp
-index 1022b06..66f6fb5 100644
+index 1022b06..2700fbe 100644
 --- a/src/slic3r/GUI/Widgets/AMSItem.cpp
 +++ b/src/slic3r/GUI/Widgets/AMSItem.cpp
 @@ -42,11 +42,16 @@ namespace Slic3r { namespace GUI {
@@ -91,8 +107,8 @@ index 1022b06..66f6fb5 100644
 +// so the AMS strip displays all 4 slots cleanly.
 +// AMS_SINGLE_CAN_SIZE is only used for AMS_LITE (single-can) mode; left at
 +// the smaller 60dip for those.
-+#define AMS_CANS_SIZE wxSize(FromDIP(340), -1)
-+#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(320), FromDIP(174))
++#define AMS_CANS_SIZE wxSize(FromDIP(380), -1)
++#define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(360), FromDIP(174))
 +#define AMS_SINGLE_CAN_SIZE wxSize(FromDIP(60), FromDIP(174))
  bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, bool humidity_flag)
  {
