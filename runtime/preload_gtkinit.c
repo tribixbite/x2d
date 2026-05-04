@@ -83,6 +83,93 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
     return real_openat(dirfd, pathname, flags);
 }
 
+/* x2d/termux #91 — gtk_show_uri suppression for the
+ * "Could not read the contents of /" popup.
+ *
+ * Despite GIO_USE_VFS=local + opendir("/") shim + pkill gvfsd-trash +
+ * pkill Thunar, the popup persists. Diagnostic showed the small popup
+ * window is owned by BS itself (proc=bambustu_main). BS doesn't have
+ * the literal popup string in source, so it must be coming through a
+ * GTK error path that BS's libgtk-3 invokes when some operation fails
+ * with EACCES on "/".
+ *
+ * This intercepts gtk_show_uri / gtk_show_uri_on_window — the
+ * higher-level entry points that BS would use for "open this URI" that
+ * triggers the GTK file chooser error display. If the URI is "/", we
+ * silently no-op instead of letting GTK pop the modal.
+ */
+__attribute__((visibility("default")))
+gboolean gtk_show_uri_on_window(GtkWindow *parent, const gchar *uri,
+                                 guint32 timestamp, GError **error) {
+    static gboolean (*real)(GtkWindow*, const gchar*, guint32, GError**) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "gtk_show_uri_on_window");
+    if (uri && (strcmp(uri, "/") == 0 || strcmp(uri, "file:///") == 0)) {
+        fprintf(stderr, "[preload] suppressed gtk_show_uri_on_window(\"%s\")\n", uri);
+        if (error) *error = NULL;
+        return TRUE;
+    }
+    return real ? real(parent, uri, timestamp, error) : FALSE;
+}
+
+__attribute__((visibility("default")))
+gboolean gtk_show_uri(GdkScreen *screen, const gchar *uri, guint32 timestamp,
+                      GError **error) {
+    static gboolean (*real)(GdkScreen*, const gchar*, guint32, GError**) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "gtk_show_uri");
+    if (uri && (strcmp(uri, "/") == 0 || strcmp(uri, "file:///") == 0)) {
+        fprintf(stderr, "[preload] suppressed gtk_show_uri(\"%s\")\n", uri);
+        if (error) *error = NULL;
+        return TRUE;
+    }
+    return real ? real(screen, uri, timestamp, error) : FALSE;
+}
+
+/* gtk_message_dialog_new — used by GTK's internal error reporting.
+ * Match on the format string for our specific popup and no-op it.
+ */
+__attribute__((visibility("default")))
+GtkWidget *gtk_message_dialog_new(GtkWindow *parent, GtkDialogFlags flags,
+                                   GtkMessageType type,
+                                   GtkButtonsType buttons,
+                                   const gchar *fmt, ...) {
+    static GtkWidget *(*real)(GtkWindow*, GtkDialogFlags, GtkMessageType,
+                              GtkButtonsType, const gchar*, ...) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "gtk_message_dialog_new");
+
+    /* Sniff the format string. The popup uses "Could not read the
+     * contents of %s". Match on this prefix so localized variants
+     * (in English) are also caught. */
+    if (fmt && strstr(fmt, "Could not read the contents") != NULL) {
+        fprintf(stderr, "[preload] suppressed gtk_message_dialog_new "
+                "(\"Could not read the contents...\" pattern)\n");
+        /* Return a hidden, never-shown placeholder so caller's
+         * subsequent gtk_dialog_run / gtk_widget_show calls don't
+         * crash on NULL. The placeholder is a label widget that
+         * gets destroyed silently. */
+        GtkWidget *(*real_label)(const gchar*) = dlsym(RTLD_NEXT, "gtk_label_new");
+        if (real_label) {
+            GtkWidget *w = real_label("");
+            return w;
+        }
+        return NULL;
+    }
+
+    /* Forward unmatched calls. Use the va_list path because we can't
+     * just pass the variadic args through to a non-variadic helper. */
+    va_list ap;
+    va_start(ap, fmt);
+    /* Format the string into a buffer then call the _with_markup variant
+     * which takes a non-formatted string. But that loses the %s
+     * substitution semantics. Easier: call the function with no markup
+     * and hope the caller doesn't rely on format substitution we just
+     * passed through. Practically all dialog formats are simple. */
+    char buf[1024];
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    /* Call real with the pre-formatted string (no further % expansion) */
+    return real ? real(parent, flags, type, buttons, "%s", buf) : NULL;
+}
+
 __attribute__((constructor(101)))
 static void preinit_gtk(void) {
     int argc = 0;

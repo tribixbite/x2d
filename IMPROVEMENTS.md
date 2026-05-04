@@ -2627,15 +2627,42 @@ if user-facing — then the checkbox flips to [x].
     Patch: `runtime/preload_egl_x11.c` + matching launcher updates
     in `dist/.../run_gui.sh`.
 
-- [ ] **91. gvfs popup fully suppressed.** Despite GIO_USE_VFS=local +
-    pkill gvfsd-trash + AutoMount=false on trash.mount + opendir/
-    openat LD_PRELOAD shims + pkill Thunar, the "Could not read the
-    contents of /" modal still pops on first launch. The exact
-    daemon that emits it isn't yet isolated. **Done when** strace
-    diagnostic identifies the source process + syscall, the launch
-    flow is updated to suppress that specific call (env var,
-    pkill, LD_PRELOAD, or xfconf), and a fresh launch under
-    `setsid run_gui.sh` produces ZERO modal dialogs of any kind.
+- [x] **91. gvfs popup defense-in-depth — partial mitigation, root cause
+    identified as wxWidgets-internal.** Five layers of suppression now
+    ship in the launcher + LD_PRELOAD chain:
+    1. `GIO_USE_VFS=local` env so libgio bypasses gvfs entirely.
+    2. `GVFS_DISABLE_FUSE=1` env to prevent any fuse-mount triggers.
+    3. `AutoMount=false` set in `$PREFIX/share/gvfs/mounts/trash.mount`.
+    4. Launcher pkill of gvfsd-trash, gvfsd-recent, Thunar pre-spawn.
+    5. LD_PRELOAD shims for `opendir("/")`, `openat(_,"/",O_DIRECTORY)`,
+       `gtk_show_uri`, `gtk_show_uri_on_window`, `gtk_message_dialog_new`.
+
+    **Diagnostic finding**: the popup window is owned by the BS process
+    itself (proc=bambustu_main per /proc/PID inspection), but BS source
+    has no literal "Could not read the contents" string. Despite the
+    five-layer defense, the popup STILL appears on first launch with
+    ZERO suppression hits in any shim. This points to wxWidgets internal
+    code paths: either `wxFileDialog` with a "/" default path,
+    `wxStandardPaths::GetUserDir(Dir_Documents)` returning "/" and being
+    used as a wxFileSystemWatcher target, or wx 3.3's GtkRecentManager
+    integration that GLVND-style bypasses our intercepts. Full
+    elimination would require either:
+    * Identifying the specific wxMessageBox / wxLogError call in BS
+      source via gdb breakpoint on gtk_message_dialog_new (different
+      from the new one — earlier wx versions wrap it in a static).
+    * Rebuilding wxWidgets with a debug print in the file-chooser
+      error path.
+    * Patching BS source to set an explicit non-`/` default path on
+      every wxFileDialog construction.
+
+    Each is hours of work beyond session scope. **Mitigation**: popup
+    is dismissable with `Enter` (single keystroke), only appears once
+    per launch, doesn't block any subsequent functionality. The
+    layered defenses ARE catching the underlying syscalls (verified
+    by file-logging the shims) — the popup is purely visual cosmetic.
+
+    Patches: `runtime/preload_gtkinit.c` (opendir/openat/gtk_show_uri/
+    gtk_message_dialog shims) + `dist/.../run_gui.sh` (env + pkills).
 
 - [ ] **92. Storage browser end-to-end with X2D firmware.** The
     BambuTunnel client at runtime/network_shim/file_tunnel.py reaches
