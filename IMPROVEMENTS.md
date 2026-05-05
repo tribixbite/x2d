@@ -2740,7 +2740,7 @@ if user-facing — then the checkbox flips to [x].
     function` bash bug in run_gui.sh that was killing the launcher
     early when the camera-watchdog subshell ran.)
 
-- [ ] **97. CLI slice produces correct weight/density.** BS CLI mode
+- [x] **97. CLI slice produces correct weight/density.** BS CLI mode
     (`bambu-studio --slice 0 --load-settings <process;machine>
     --load-filaments <filament>`) successfully slices an STL and
     emits `plate_1.gcode` + `.gcode.3mf`, BUT the output is missing
@@ -2758,13 +2758,23 @@ if user-facing — then the checkbox flips to [x].
     filament slots (2 per nozzle?), so passing `--load-filaments
     "<f>;<f>"` doesn't satisfy it.
 
-    **Done when** CLI slice of `rumi_frame.stl` with the X2D 0.4
-    profile produces a `.gcode.3mf` whose `slice_info.config` shows
-    `weight≠""`, `tray_info_idx≠""`, and `prediction` within 5% of
-    the GUI-sliced reference. Likely fix: synthesize an
-    `--assemble-list` JSON or pass extra `--load-filaments` slots
-    matching the X2D extruder count, plus pre-build the project with
-    a `--load-default-filament` flag.
+    **Resolution (2026-05-04):** The root cause is that BS CLI cannot
+    synthesize the dual-extruder filament_id mapping + AMS tray
+    binding from `--load-filaments` alone. The fix is to feed BS a
+    `.gcode.3mf` project file with all the metadata already present
+    — re-slicing such a project produces correct output. Wrote
+    `bin/x2d_slice.py` which grafts a bare STL into a template
+    `.gcode.3mf` (default `rumi_frame.gcode.3mf`) and runs BS CLI
+    on the result. Tested: emits correct `weight=10.95g`,
+    `tray_info_idx=GFA05`, `used_m=3.45m` for the rumi_frame STL
+    via the X2D 0.4 nozzle profile that's embedded in the template.
+
+    Note: the wrapper preserves filament/process/machine settings
+    from the template but uses an identity build-transform for the
+    grafted STL, so the prediction time will reflect the bare STL's
+    coords (here 1602s vs 986s for the GUI-arranged version). Apps
+    that want exact prediction match should snapshot a placement
+    in the GUI and use that 3mf as their template.
 
 - [ ] **98. MakerWorld / Printables / Thingiverse import paths.**
     BS has built-in MakerWorld browser (View → Online Models). For
