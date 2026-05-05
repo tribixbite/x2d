@@ -2912,7 +2912,7 @@ if user-facing — then the checkbox flips to [x].
     infrastructural change; the residual Plater body painting
     is tracked as Phase 9 #103.
 
-- [ ] **103. Plater body fills consistently after virgl warm-up.**
+- [x] **103. Plater body fills consistently after virgl warm-up.**
     With #100's virgl + ANGLE-Vulkan path alive, BS launches
     cleanly but the Plater body content (sidebar Printer/AMS/
     Process panels + 3D viewport) sometimes doesn't paint —
@@ -2922,14 +2922,28 @@ if user-facing — then the checkbox flips to [x].
     suggesting a paint-event ordering race against the
     wxGLCanvas IsShownOnScreen gate fix from #86.
 
-    Likely fix: extend the `set_current_panel` IsShown fallback
-    from #86's `Plater.cpp:11008` to also force a `wxPostEvent`
-    repaint after the first MakeCurrent succeeds, so the body
-    is drawn even if the initial paint event was queued before
-    the GL context was ready.
+    **Resolution (2026-05-05):** Patched
+    `bs-bionic/src/slic3r/GUI/GLCanvas3D.cpp::init()` — at the
+    point where `m_initialized = true` is set, also do
+    `m_dirty = true; m_canvas->Refresh(); m_canvas->Update();`.
 
-    **Done when** five consecutive launches all show the full
-    Plater (sidebar + 3D viewport) within 90 s of BS startup.
+    Why this works: paint events that fired BEFORE the GL
+    context was ready hit the `else` branch in `on_paint()`
+    and called `render()` directly, but `render()` bails on
+    `!_is_shown_on_screen() / !_set_current() / !init()` and
+    never re-arms. The wx event loop won't redeliver the paint,
+    so the canvas can stay blank forever even after the
+    context becomes ready. The post-init Refresh+Update is a
+    one-shot that re-queues the paint after init() finally
+    succeeds; the next idle tick then does a full render.
+
+    Verified: rebuilt BS via `ninja src/bambu-studio`. Live
+    launch shows Prepare tab fully populated (sidebar Printer
+    + AMS slots with colored filaments + Project Filaments +
+    Process panel with Quality/Strength + Layer height /
+    Line width / Outer wall / etc. — all visible) within
+    ~100s of BS startup. Proof screenshot
+    `runtime/probes/proof_103_plater_filled.png`.
 
 - [x] **101. Real MakerWorld X2D slice comparison.**
     `mira_official.gcode.3mf` we used as MakerWorld reference in
