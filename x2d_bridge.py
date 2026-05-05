@@ -3193,6 +3193,10 @@ def cmd_slice_print(args: argparse.Namespace) -> int:
             cmd = [str(slice_bin), str(stl), "--out", str(out_3mf)]
             if args.template:
                 cmd.extend(["--template", str(args.template)])
+            if args.scale and args.scale != 1.0:
+                cmd.extend(["--scale", str(args.scale)])
+            if args.color:
+                cmd.extend(["--color", args.color])
             rc = subprocess.call(cmd)
         if rc != 0:
             sys.exit(f"slicing failed rc={rc}")
@@ -5154,6 +5158,12 @@ def main() -> int:
     sp.add_argument("stl", help="STL/STEP/OBJ/3MF input file path")
     sp.add_argument("--template", help="Reference .gcode.3mf to graft into "
                                        "(default: x2d_slice.py's default)")
+    sp.add_argument("--scale", type=float, default=1.0,
+                    help="Uniform scale factor applied to STL (forwards to "
+                         "x2d_slice.py --scale; ignored for 3MF input)")
+    sp.add_argument("--color",
+                    help="Primary filament color #RRGGBB (forwards to "
+                         "x2d_slice.py --color; ignored for 3MF input)")
     sp.add_argument("--remote", help="Remote filename on printer "
                                      "(default: input basename)")
     sp.add_argument("--slot", type=int, default=0,

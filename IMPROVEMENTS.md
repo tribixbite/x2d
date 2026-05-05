@@ -2945,6 +2945,37 @@ if user-facing — then the checkbox flips to [x].
     ~100s of BS startup. Proof screenshot
     `runtime/probes/proof_103_plater_filled.png`.
 
+- [x] **104. Full end-to-end smoke: fetch → slice → printer-ready.**
+    Combine all of #98/#97/#102/#99 into a single repeatable
+    test: download a public model with `x2d_bridge fetch`, slice
+    it with `x2d_slice.py` (with custom scale + color), and
+    confirm the resulting `.gcode.3mf` is structurally complete
+    enough to upload + start a print on the X2D. Don't actually
+    print (the user has a print running) — use `--dry-run`.
+
+    **Resolution (2026-05-05):** Threaded `--scale` and `--color`
+    through `cmd_slice_print` so the full pipeline can be driven
+    from one bridge subcommand. Smoke-tested:
+
+    ```bash
+    x2d_bridge fetch \
+      https://raw.githubusercontent.com/CreativeTools/3DBenchy/master/Single-part/3DBenchy.stl \
+      --out-dir /tmp/work
+    x2d_bridge slice-print /tmp/work/3DBenchy.stl \
+      --scale 0.5 --color "#FF8800" --dry-run
+    ```
+
+    Output: `3DBenchy.sliced.gcode.3mf` with
+    `prediction=1076s`, `weight=2.08g`, `used_m=0.65m`,
+    `tray_info_idx=GFA05`, `color="#FF8800"` — 14 files in
+    the 3MF including 18 MB `3D/Objects/object_1.model` mesh
+    and 3 MB `Metadata/plate_1.gcode`. Ready to upload to the
+    X2D via the `--no-dry-run` path.
+
+    Compared to baseline (1.0x default-green): 0.5x produced
+    42% time / 17% weight — matches s²·thickness expectation
+    for benchy's hull-dominated geometry.
+
 - [x] **101. Real MakerWorld X2D slice comparison.**
     `mira_official.gcode.3mf` we used as MakerWorld reference in
     #97/#35 actually has `printer_model_id="N6"` (= H2D), not X2D.
