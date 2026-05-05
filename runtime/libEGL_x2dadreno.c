@@ -336,6 +336,81 @@ static EGLBoolean my_eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
     return rc;
 }
 
+/* ----- Generic pass-through wrappers for the rest of EGL 1.5 ------------
+ * Why each function needs its own wrapper instead of returning ANGLE's
+ * pointer directly from getProcAddress: libglvnd's static dispatch via
+ * ANGLE function pointers fails for many EGL functions with
+ * EGL_BAD_DISPLAY at call time (see Lesson 2 in IMPROVEMENTS #95). The
+ * fix is to have the call site live in OUR library — bionic's namespace
+ * resolution behaves differently for cross-library function-pointer calls.
+ *
+ * The macro below generates a static wrapper named my_<func> that
+ * dlsym's ANGLE at first use and forwards. No logging in the hot path. */
+#define ANGLE_FWD0(NAME, RET) \
+    static RET my_##NAME(void) { \
+        static RET (*f)(void) = NULL; \
+        if (!f) { load_angle(); f = dlsym(g_angle, #NAME); } \
+        return f ? f() : (RET)0; \
+    }
+#define ANGLE_FWD1(NAME, RET, T1) \
+    static RET my_##NAME(T1 a) { \
+        static RET (*f)(T1) = NULL; \
+        if (!f) { load_angle(); f = dlsym(g_angle, #NAME); } \
+        return f ? f(a) : (RET)0; \
+    }
+#define ANGLE_FWD2(NAME, RET, T1, T2) \
+    static RET my_##NAME(T1 a, T2 b) { \
+        static RET (*f)(T1, T2) = NULL; \
+        if (!f) { load_angle(); f = dlsym(g_angle, #NAME); } \
+        return f ? f(a, b) : (RET)0; \
+    }
+#define ANGLE_FWD3(NAME, RET, T1, T2, T3) \
+    static RET my_##NAME(T1 a, T2 b, T3 c) { \
+        static RET (*f)(T1, T2, T3) = NULL; \
+        if (!f) { load_angle(); f = dlsym(g_angle, #NAME); } \
+        return f ? f(a, b, c) : (RET)0; \
+    }
+#define ANGLE_FWD4(NAME, RET, T1, T2, T3, T4) \
+    static RET my_##NAME(T1 a, T2 b, T3 c, T4 d) { \
+        static RET (*f)(T1, T2, T3, T4) = NULL; \
+        if (!f) { load_angle(); f = dlsym(g_angle, #NAME); } \
+        return f ? f(a, b, c, d) : (RET)0; \
+    }
+
+ANGLE_FWD1(eglTerminate,           EGLBoolean, EGLDisplay)
+ANGLE_FWD0(eglGetError,            EGLint)
+ANGLE_FWD0(eglGetCurrentDisplay,   EGLDisplay)
+ANGLE_FWD0(eglGetCurrentContext,   EGLContext)
+ANGLE_FWD1(eglGetCurrentSurface,   EGLSurface, EGLint)
+ANGLE_FWD0(eglWaitClient,          EGLBoolean)
+ANGLE_FWD0(eglWaitGL,              EGLBoolean)
+ANGLE_FWD1(eglWaitNative,          EGLBoolean, EGLint)
+ANGLE_FWD0(eglReleaseThread,       EGLBoolean)
+ANGLE_FWD0(eglQueryAPI,            EGLenum)
+ANGLE_FWD2(eglDestroyContext,      EGLBoolean, EGLDisplay, EGLContext)
+ANGLE_FWD2(eglSwapInterval,        EGLBoolean, EGLDisplay, EGLint)
+ANGLE_FWD2(eglCopyBuffers,         EGLBoolean, EGLDisplay, EGLSurface)
+ANGLE_FWD4(eglGetConfigs,          EGLBoolean, EGLDisplay, EGLConfig*, EGLint, EGLint*)
+ANGLE_FWD4(eglGetConfigAttrib,     EGLBoolean, EGLDisplay, EGLConfig, EGLint, EGLint*)
+ANGLE_FWD4(eglQuerySurface,        EGLBoolean, EGLDisplay, EGLSurface, EGLint, EGLint*)
+ANGLE_FWD4(eglQueryContext,        EGLBoolean, EGLDisplay, EGLContext, EGLint, EGLint*)
+ANGLE_FWD4(eglSurfaceAttrib,       EGLBoolean, EGLDisplay, EGLSurface, EGLint, EGLint)
+ANGLE_FWD3(eglBindTexImage,        EGLBoolean, EGLDisplay, EGLSurface, EGLint)
+ANGLE_FWD3(eglReleaseTexImage,     EGLBoolean, EGLDisplay, EGLSurface, EGLint)
+ANGLE_FWD2(eglDestroyImage,        EGLBoolean, EGLDisplay, EGLImage)
+ANGLE_FWD2(eglDestroyImageKHR,     EGLBoolean, EGLDisplay, EGLImage)
+ANGLE_FWD2(eglDestroySync,         EGLBoolean, EGLDisplay, EGLSync)
+ANGLE_FWD2(eglDestroySyncKHR,      EGLBoolean, EGLDisplay, EGLSync)
+ANGLE_FWD3(eglCreateWindowSurface, EGLSurface, EGLDisplay, EGLConfig, EGLNativeWindowType)
+ANGLE_FWD3(eglCreatePixmapSurface, EGLSurface, EGLDisplay, EGLConfig, EGLNativePixmapType)
+ANGLE_FWD3(eglCreateImage,         EGLImage,   EGLDisplay, EGLContext, EGLenum)
+ANGLE_FWD3(eglCreateImageKHR,      EGLImage,   EGLDisplay, EGLContext, EGLenum)
+ANGLE_FWD3(eglCreateSync,          EGLSync,    EGLDisplay, EGLenum, const EGLAttrib*)
+ANGLE_FWD3(eglCreateSyncKHR,       EGLSync,    EGLDisplay, EGLenum, const EGLint*)
+ANGLE_FWD4(eglClientWaitSync,      EGLint,     EGLDisplay, EGLSync, EGLint, EGLTime)
+ANGLE_FWD4(eglClientWaitSyncKHR,   EGLint,     EGLDisplay, EGLSync, EGLint, EGLTimeKHR)
+ANGLE_FWD4(eglGetSyncAttrib,       EGLBoolean, EGLDisplay, EGLSync, EGLint, EGLAttrib*)
+
 static EGLBoolean my_eglDestroySurface(EGLDisplay dpy, EGLSurface surface) {
     load_angle();
     pthread_mutex_lock(&g_surface_lock);
@@ -496,6 +571,25 @@ static void *my_getProcAddress(const char *procName) {
         return (void*)my_eglBindAPI;
     if (!strcmp(procName, "eglCreatePbufferSurface"))
         return (void*)my_eglCreatePbufferSurface;
+    /* Generic forwarders — see ANGLE_FWD* table above. */
+    #define R(name) if (!strcmp(procName, #name)) return (void*)my_##name;
+    R(eglTerminate)             R(eglGetError)
+    R(eglGetCurrentDisplay)     R(eglGetCurrentContext)
+    R(eglGetCurrentSurface)
+    R(eglWaitClient)            R(eglWaitGL)             R(eglWaitNative)
+    R(eglReleaseThread)         R(eglQueryAPI)
+    R(eglDestroyContext)        R(eglSwapInterval)       R(eglCopyBuffers)
+    R(eglGetConfigs)            R(eglGetConfigAttrib)
+    R(eglQuerySurface)          R(eglQueryContext)       R(eglSurfaceAttrib)
+    R(eglBindTexImage)          R(eglReleaseTexImage)
+    R(eglDestroyImage)          R(eglDestroyImageKHR)
+    R(eglDestroySync)           R(eglDestroySyncKHR)
+    R(eglCreateWindowSurface)   R(eglCreatePixmapSurface)
+    R(eglCreateImage)           R(eglCreateImageKHR)
+    R(eglCreateSync)            R(eglCreateSyncKHR)
+    R(eglClientWaitSync)        R(eglClientWaitSyncKHR)
+    R(eglGetSyncAttrib)
+    #undef R
     /* Everything else → ANGLE */
     load_angle();
     if (!g_angle) {
