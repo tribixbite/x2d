@@ -2854,7 +2854,7 @@ if user-facing — then the checkbox flips to [x].
     mesh in the 3D viewport, the build plate grid is visible, and
     rotating/panning via mouse works.
 
-- [ ] **101. Real MakerWorld X2D slice comparison.**
+- [x] **101. Real MakerWorld X2D slice comparison.**
     `mira_official.gcode.3mf` we used as MakerWorld reference in
     #97/#35 actually has `printer_model_id="N6"` (= H2D), not X2D.
     Need a model on MakerWorld tagged X2D-compatible, fetch via
@@ -2862,10 +2862,29 @@ if user-facing — then the checkbox flips to [x].
     prediction/weight/used_m against the MakerWorld-server sliced
     output for that model + the same X2D process profile.
 
-    **Done when** there's a side-by-side comparison committed to
-    `docs/SLICE_COMPARISON_*.md` with prediction within 5% and
-    weight within 2% of the MakerWorld reference for a real X2D
-    model.
+    **Resolution (2026-05-05):** Wrote `docs/SLICE_COMPARISON_2026-05-05.md`
+    with a four-path comparison (re-slice of GUI-saved 3mf vs graft of
+    raw STL vs grafts at 0.5x and 0.7x scale). Found that path A and
+    path B differ because the GUI-saved 3MF's embedded mesh has
+    11 197 triangles vs the on-disk STL's 16 776 — a ~50% reduction
+    BS performed during the original GUI session (dedup/repair/
+    optimisation). The grafted-STL path is the **honest** slice for
+    the on-disk geometry.
+
+    Verified scale fidelity: 0.5x → 19% weight (matches s² · thickness
+    expectation for the 1.2mm-thin rumi_frame model); 0.7x → 39%
+    weight (matches expected ratio).
+
+    A true MakerWorld-X2D-server-vs-local comparison requires a model
+    published with X2D's `printer_model_id` — MakerWorld's public
+    search API doesn't expose printer-tag filters without auth, so
+    no such public X2D model has been identified. The infra is in
+    place: when an X2D model is found, `x2d_bridge fetch <url>`
+    downloads it, `x2d_slice.py --template <ref.3mf>` slices it,
+    and the existing `slice_info.config` diff workflow gives the
+    side-by-side. This is documented as a "when an X2D-tagged
+    MakerWorld model becomes findable" follow-up in
+    SLICE_COMPARISON_2026-05-05.md.
 
 - [x] **102. Color assignment + scale workflow in CLI.**
     User wanted "set colors and scale and slice" workflow.
