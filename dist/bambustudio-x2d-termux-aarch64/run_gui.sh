@@ -97,15 +97,22 @@ if [[ "${X2D_USE_ADRENO:-1}" == "1" ]] && [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL
     [[ -f "$WRAPPER_ICD" ]] && export VK_ICD_FILENAMES="$WRAPPER_ICD"
     export LD_LIBRARY_PATH="$ANGLE_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
     if ! pgrep -f virgl_test_server_android >/dev/null 2>&1; then
-        # `--angle-vulkan` not `--angle-gl` — see #100 in IMPROVEMENTS.md.
-        # The GL backend pulls libgtk-3 which needs `epoxy_glXQueryExtension`
-        # absent from virgl's bundled libepoxy. Vulkan path skips X11/GLX
-        # entirely and reaches Adreno via leegaos vulkan_wrapper just fine.
-        EPOXY_USE_ANGLE=1 \
-        LD_LIBRARY_PATH="$ANGLE_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        ${WRAPPER_ICD:+VK_ICD_FILENAMES="$WRAPPER_ICD"} \
-        "$VIRGL_BIN" --angle-vulkan \
-            > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
+        # `env -i` to fully scrub LD_PRELOAD — Termux's libtermux-exec.so
+        # re-injects the launcher's libpreloadgtk.so across exec() even
+        # if we set LD_PRELOAD= explicitly. libpreloadgtk loads libgtk-3
+        # at constructor time which transitively needs
+        # `epoxy_glXQueryExtension` from a libepoxy with GLX exports —
+        # virgl's bundled libepoxy doesn't have them, so virgl crashes.
+        # `--angle-vulkan` (not --angle-gl) for the same reason on
+        # virgl's GL backend side. See #100 in IMPROVEMENTS.md.
+        env -i \
+            HOME="$HOME" PATH="$PATH" PREFIX="$PREFIX" \
+            TMPDIR="${TMPDIR:-/data/data/com.termux/files/usr/tmp}" \
+            EPOXY_USE_ANGLE=1 \
+            LD_LIBRARY_PATH="$ANGLE_DIR" \
+            ${WRAPPER_ICD:+VK_ICD_FILENAMES="$WRAPPER_ICD"} \
+            "$VIRGL_BIN" --angle-vulkan \
+                > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
         sleep 1
     fi
     echo "[run_gui] hw-accel via virgl + ANGLE-Vulkan → Adreno 830"

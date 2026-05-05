@@ -192,11 +192,28 @@ pkill -TERM gvfsd-recent 2>/dev/null || true
 # path doesn't actually win since both end up going through Vulkan
 # anyway. Required for X2D_USE_ADRENO=1.
 if [[ "${X2D_USE_ADRENO:-1}" == "1" ]] && ! pgrep -f virgl_test_server_android >/dev/null 2>&1; then
-    EPOXY_USE_ANGLE=1 \
-    LD_LIBRARY_PATH="$PREFIX/opt/angle-android/vulkan${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-    VK_ICD_FILENAMES="$PREFIX/share/vulkan/icd.d/wrapper_icd.aarch64.json" \
-    virgl_test_server_android --angle-vulkan \
-        > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
+    # CRITICAL env scrub via `env -i`: Termux's `libtermux-exec.so`
+    # auto-re-injects LD_PRELOAD across exec() boundaries (its
+    # `unset_ld_preload_from_env` helper preserves the launcher's
+    # libpreloadgtk.so even if we set LD_PRELOAD= explicitly). The
+    # preload calls gtk_init_check from a constructor → loads
+    # libgtk-3 → libgtk-3 needs `epoxy_glXQueryExtension` which
+    # virgl's bundled libepoxy
+    # ($PREFIX/opt/virglrenderer-android/lib/libepoxy.so, DT_RUNPATH
+    # wins over LD_LIBRARY_PATH) doesn't expose, and virgl crashes
+    # at link time. `env -i` is the only reliable way to spawn
+    # virgl with a fully clean env, then re-add only what virgl
+    # needs (HOME/PATH/PREFIX/TMPDIR + the ANGLE/Vulkan knobs).
+    env -i \
+        HOME="$HOME" \
+        PATH="$PATH" \
+        PREFIX="$PREFIX" \
+        TMPDIR="${TMPDIR:-/data/data/com.termux/files/usr/tmp}" \
+        EPOXY_USE_ANGLE=1 \
+        LD_LIBRARY_PATH="$PREFIX/opt/angle-android/vulkan" \
+        VK_ICD_FILENAMES="$PREFIX/share/vulkan/icd.d/wrapper_icd.aarch64.json" \
+        virgl_test_server_android --angle-vulkan \
+            > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
     sleep 1
 fi
 
