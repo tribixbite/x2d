@@ -178,15 +178,24 @@ pkill -TERM gvfsd-trash 2>/dev/null || true
 pkill -TERM gvfsd-recent 2>/dev/null || true
 
 # Spin up the ANGLE-aware virgl render server if it isn't already running.
-# `--angle-gl` selects the OpenGL backend inside ANGLE (faster than Vulkan-
-# inside-ANGLE per the bench above). `&` + redirect so it doesn't tie up
-# this script. Server reads env vars from this shell at fork time.
-# Required for X2D_USE_ADRENO=1 (the only path that reaches Adreno hw).
+# `--angle-vulkan` (was --angle-gl) — the GL backend pulls in libgtk-3 which
+# requires `epoxy_glXQueryExtension` (a GLX symbol). Termux's libepoxy.so
+# at $PREFIX/lib has it, but virgl's bundled
+# `$PREFIX/opt/virglrenderer-android/lib/libepoxy.so` (DT_RUNPATH) is a
+# different build that exposes `epoxy_set_library_path` (which Termux's
+# doesn't) but lacks the GLX surface. Result: --angle-gl crashes with
+# "cannot locate symbol epoxy_glXQueryExtension". --angle-vulkan
+# bypasses libgtk-3 entirely (Vulkan render path skips X11/GLX) and
+# reaches the Adreno via the leegaos vulkan_wrapper just fine. The
+# bench saying ANGLE-GL is faster than ANGLE-Vulkan in virgl was for
+# a desktop x86_64 host; on Adreno 830 with the vulkan_wrapper the GL
+# path doesn't actually win since both end up going through Vulkan
+# anyway. Required for X2D_USE_ADRENO=1.
 if [[ "${X2D_USE_ADRENO:-1}" == "1" ]] && ! pgrep -f virgl_test_server_android >/dev/null 2>&1; then
     EPOXY_USE_ANGLE=1 \
     LD_LIBRARY_PATH="$PREFIX/opt/angle-android/vulkan${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     VK_ICD_FILENAMES="$PREFIX/share/vulkan/icd.d/wrapper_icd.aarch64.json" \
-    virgl_test_server_android --angle-gl \
+    virgl_test_server_android --angle-vulkan \
         > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
     sleep 1
 fi

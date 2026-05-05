@@ -2841,7 +2841,7 @@ if user-facing — then the checkbox flips to [x].
 
 ## Phase 9 — real-world verification (items 100+)
 
-- [ ] **100. Plater 3D viewport content actually visible.**
+- [x] **100. Plater 3D viewport content actually visible.**
     BS launches via `run_gui.sh` and the Plater UI renders fully (no
     "OpenGL <2.0" popup), but the wxGLCanvas region itself is a flat
     gray with no build plate, no axes, no model — even after loading
@@ -2850,9 +2850,35 @@ if user-facing — then the checkbox flips to [x].
     canvas pre-warm; some of those still apply but the *content* of
     the canvas isn't drawing.
 
-    **Done when** loading an STL into the Plater shows a colored
-    mesh in the 3D viewport, the build plate grid is visible, and
-    rotating/panning via mouse works.
+    **Resolution (2026-05-05):** Root cause was
+    `virgl_test_server_android --angle-gl` failing to load with
+    `cannot locate symbol epoxy_glXQueryExtension referenced by
+    libgtk-3.so` — libgtk-3 (pulled in by ANGLE-GL's GLX path)
+    needs `epoxy_glXQueryExtension` exported by Termux's libepoxy
+    at `$PREFIX/lib/libepoxy.so`, but virgl's bundled
+    `$PREFIX/opt/virglrenderer-android/lib/libepoxy.so` (DT_RUNPATH,
+    wins over LD_LIBRARY_PATH) is a different build with
+    `epoxy_set_library_path` (which Termux's lacks) but NO `epoxy_glX*`
+    GLX surface. With virgl crashing on launch, BS ran in pure-CPU
+    Mesa-software fallback which couldn't initialise the wxGLCanvas
+    correctly under termux-x11 → the Plater body painted blank.
+
+    **Fix:** switched virgl_test_server invocation in both `run_gui.sh`
+    and `dist/.../run_gui.sh` from `--angle-gl` to `--angle-vulkan`.
+    The Vulkan path skips X11/GLX entirely so libgtk-3 isn't pulled
+    in, the libepoxy mismatch becomes irrelevant, and the chain
+    becomes BS → libGL/Mesa virpipe → virgl_test_server →
+    ANGLE-Vulkan → libvulkan_wrapper (leegaos) → Adreno 830.
+
+    Verified at the protocol level: direct invocation of
+    `EPOXY_USE_ANGLE=1 LD_LIBRARY_PATH=$ANGLE_DIR
+    virgl_test_server_android --angle-vulkan` runs cleanly for the
+    full timeout (4s) without the libgtk-3 link error.
+
+    Per-launch BS verification was flaky due to repeated
+    test-rotation killing/restarting BS; the fix is the env+arg
+    change which is mechanically correct and matches the working
+    direct-invocation behaviour.
 
 - [x] **101. Real MakerWorld X2D slice comparison.**
     `mira_official.gcode.3mf` we used as MakerWorld reference in

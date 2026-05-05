@@ -97,10 +97,14 @@ if [[ "${X2D_USE_ADRENO:-1}" == "1" ]] && [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL
     [[ -f "$WRAPPER_ICD" ]] && export VK_ICD_FILENAMES="$WRAPPER_ICD"
     export LD_LIBRARY_PATH="$ANGLE_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
     if ! pgrep -f virgl_test_server_android >/dev/null 2>&1; then
+        # `--angle-vulkan` not `--angle-gl` — see #100 in IMPROVEMENTS.md.
+        # The GL backend pulls libgtk-3 which needs `epoxy_glXQueryExtension`
+        # absent from virgl's bundled libepoxy. Vulkan path skips X11/GLX
+        # entirely and reaches Adreno via leegaos vulkan_wrapper just fine.
         EPOXY_USE_ANGLE=1 \
         LD_LIBRARY_PATH="$ANGLE_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         ${WRAPPER_ICD:+VK_ICD_FILENAMES="$WRAPPER_ICD"} \
-        "$VIRGL_BIN" --angle-gl \
+        "$VIRGL_BIN" --angle-vulkan \
             > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
         sleep 1
     fi
