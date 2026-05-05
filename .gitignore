@@ -64,6 +64,8 @@ __pycache__/
 
 # Pre-built shim — always rebuild from source
 runtime/libpreloadgtk.so
+runtime/libEGL_x2dadreno.so
+runtime/probes/probe_*
 
 # Old draft notes
 UNANSWERED_QUESTIONS.md

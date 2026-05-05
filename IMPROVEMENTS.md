@@ -2698,6 +2698,67 @@ if user-facing — then the checkbox flips to [x].
     BambuTunnel-attempting earlier draft) + `x2d_bridge.py` (new
     `files` subcommand).
 
+## Phase 8 — long-tail follow-ups (items 95+)
+
+- [ ] **95. EGL vendor for Adreno (the long-tail of #90).** GLVND's
+    libGLdispatch dispatches EGL calls to a vendor library whose path
+    is registered via `$PREFIX/share/glvnd/egl_vendor.d/<name>.json`.
+    LD_PRELOAD shims don't intercept this path because GLVND caches
+    function pointers from the vendor at first use. Write a real
+    GLVND EGL vendor (`libEGL_x2dadreno.so`) that:
+    1. Exports `__EGL_MAIN(version) → __EGLapiExports*` per
+       `$PREFIX/include/glvnd/libeglabi.h`.
+    2. Internally `dlopen`s ANGLE's `libEGL_angle.so` and forwards
+       most static-dispatch entries (eglInitialize, eglChooseConfig,
+       eglCreateContext, eglMakeCurrent, eglQueryString, etc.) to
+       ANGLE via the GetProcAddress dance.
+    3. Replaces only `eglCreatePlatformWindowSurface` and
+       `eglSwapBuffers` with our X11 redirect logic from
+       `runtime/preload_egl_x11.c` (already correct in implementation
+       — just needs the vendor wrapper around it).
+    4. Registers via `$PREFIX/share/glvnd/egl_vendor.d/40_x2dadreno.json`
+       at install time. The `40_*` prefix wins over Mesa's `50_*`.
+
+    **Done when** the dist install registers the vendor JSON +
+    libEGL_x2dadreno.so, BambuStudio under run_gui.sh with
+    X2D_USE_ADRENO=1 routes its wxGLCanvas EGL calls through our
+    vendor (verified by file-logging in the redirect handlers),
+    the viewport renders pixel-correctly, and tab-switch is <500ms
+    on the Plater scene.
+
+    **Status (2026-05-04):** Vendor + JSON registered, launcher
+    `X2D_USE_ADRENO=1` switch wired into run_gui.sh. End-to-end
+    proven via `runtime/probes/probe_vendor_gl.c`:
+    ```
+    GL_VERSION  = OpenGL ES 3.2.0 (ANGLE 2.1.24923)
+    GL_RENDERER = ANGLE (Qualcomm, Vulkan 1.3.284 (Adreno (TM) 830
+                  (0x44050001)), Qualcomm Adreno Vulkan Driver-512.800.1)
+    GL_VENDOR   = Google Inc. (Qualcomm)
+    ```
+    — i.e. the libglvnd → vendor → ANGLE → vulkan-wrapper → Adreno
+    830 chain works through eglInitialize / eglChooseConfig /
+    eglCreateContext / eglMakeCurrent / glGetString.
+
+    **Two non-obvious fixes were required:**
+    (a) ANGLE on Android only accepts EGL_DEFAULT_DISPLAY for
+    eglGetDisplay — passing an X11 Display* returns a poisoned
+    display that silently fails eglInitialize with EGL_BAD_DISPLAY.
+    Always force EGL_PLATFORM_ANGLE_ANGLE + Vulkan attribs.
+    (b) libglvnd's static dispatch via cached ANGLE function pointers
+    (returned bare from getProcAddress) fails for several functions
+    with EGL_BAD_DISPLAY at call time — wrapping each function
+    (Initialize/QueryString/ChooseConfig/BindAPI/CreatePbufferSurface/
+    CreateContext/MakeCurrent) so the call site is in our library
+    fixes it. Likely a bionic linker namespace quirk with the
+    cross-library function-pointer call path.
+
+    **Remaining:** full BS-side verification — the prior session's
+    BS instance has been running ~24h with the broken vendor path
+    and shouldn't be killed (user's bridge supervisor + state would
+    be lost). On user's next BS restart with X2D_USE_ADRENO=1, the
+    expected outcome: viewport renders via Adreno hw, tab-switch
+    drops from minutes to <500ms.
+
 - [x] **93. Touch-target enlargement on tabs + sidebar items.**
     Topbar (Prepare/Preview/Device/Project/Calibration) and
     Plater sidebar are all ~30dip tall — under Material's 48dp

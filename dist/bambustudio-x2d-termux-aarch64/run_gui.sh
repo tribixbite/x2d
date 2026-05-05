@@ -80,9 +80,30 @@ unset EPOXY_USE_ANGLE MESA_GL_VERSION_OVERRIDE MESA_GLES_VERSION_OVERRIDE \
       LIBGL_ALWAYS_SOFTWARE MESA_LOADER_DRIVER_OVERRIDE EGL_PLATFORM \
       VK_ICD_FILENAMES
 
-if [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL_BIN" ]]; then
-    # Hw-accel path. virgl_test_server_android proxies GL into ANGLE which
-    # forwards to /vendor/lib64/hw/vulkan.adreno.so via the wrapper ICD.
+VENDOR_JSON="$PREFIX/share/glvnd/egl_vendor.d/40_x2dadreno.json"
+if [[ "${X2D_USE_ADRENO:-0}" == "1" ]] && [[ -f "$VENDOR_JSON" ]]; then
+    # Direct GLVND vendor path (item #95). libEGL_x2dadreno.so wraps
+    # libEGL_angle.so + intercepts eglCreatePlatformWindowSurface to
+    # redirect X11 windows to a pbuffer, eglSwapBuffers to glReadPixels +
+    # XPutImage. ANGLE on Android can't render to X11 windows natively
+    # so we ride a pbuffer + soft-blit. Calls flow:
+    #   wxGLCanvas → libEGL.so.1 (libglvnd) → libEGL_x2dadreno.so
+    #     → libEGL_angle.so → libvulkan_wrapper.so → vendor/.../vulkan.adreno
+    # Skip virgl_test_server_android — vendor is in-process.
+    export MESA_NO_ERROR=1
+    export MESA_GL_VERSION_OVERRIDE=4.3COMPAT
+    export MESA_GLES_VERSION_OVERRIDE=3.2
+    export MESA_GLSL_VERSION_OVERRIDE=430
+    export LIBGL_DRI3_DISABLE=1
+    export X2D_ANGLE_DIR="$ANGLE_DIR"
+    export __EGL_VENDOR_LIBRARY_FILENAMES="$VENDOR_JSON"
+    [[ -f "$WRAPPER_ICD" ]] && export VK_ICD_FILENAMES="$WRAPPER_ICD"
+    export LD_LIBRARY_PATH="$ANGLE_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    echo "[run_gui] using direct ANGLE vendor (Adreno 830)"
+elif [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL_BIN" ]]; then
+    # Legacy Hw-accel path via virgl_test_server_android (item #28).
+    # Same backend chain but with one extra IPC hop: GL calls go to
+    # virgl_test_server which has its own ANGLE instance.
     export MESA_NO_ERROR=1
     export MESA_GL_VERSION_OVERRIDE=4.3COMPAT
     export MESA_GLES_VERSION_OVERRIDE=3.2
@@ -120,8 +141,8 @@ export GVFS_DISABLE_FUSE=1
 # also kill any persistent gvfsd-trash from xfce4-session — see comment in
 # the dev run_gui.sh; GIO_USE_VFS in BS doesn't stop the daemon's own
 # enumerate of / which dbus-pops the popup at GTK file monitor connect.
-pkill -TERM gvfsd-trash 2>/dev/null
-pkill -TERM gvfsd-recent 2>/dev/null
+pkill -TERM gvfsd-trash 2>/dev/null || true
+pkill -TERM gvfsd-recent 2>/dev/null || true
 # Thunar (xfce4-session auto-spawn) is the actual source of the
 # "Could not read the contents of /" popup — it scans / for the desktop
 # location panel. BS doesn't need Thunar; killing it is safe for our

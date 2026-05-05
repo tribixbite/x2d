@@ -179,6 +179,37 @@ chmod +x "$INSTALL_ROOT/bin/bambu-studio" \
          "$INSTALL_ROOT/run_gui.sh" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# GLVND EGL vendor (item #95) — installs libEGL_x2dadreno.so + JSON so
+# X2D_USE_ADRENO=1 routes wxGLCanvas through ANGLE-Vulkan → Adreno 830 hw.
+# ---------------------------------------------------------------------------
+
+section "installing GLVND EGL vendor (Adreno hw-accel)"
+
+VENDOR_SO_SRC="$INSTALL_ROOT/runtime/libEGL_x2dadreno.so"
+VENDOR_SO_DST="$PREFIX/lib/libEGL_x2dadreno.so"
+VENDOR_JSON_DIR="$PREFIX/share/glvnd/egl_vendor.d"
+VENDOR_JSON="$VENDOR_JSON_DIR/40_x2dadreno.json"
+
+if [[ -f "$VENDOR_SO_SRC" ]]; then
+    cp -f "$VENDOR_SO_SRC" "$VENDOR_SO_DST" \
+        && c_green "libEGL_x2dadreno.so → $VENDOR_SO_DST"
+    mkdir -p "$VENDOR_JSON_DIR"
+    cat > "$VENDOR_JSON" <<JSON
+{
+    "file_format_version" : "1.0.0",
+    "ICD" : {
+        "library_path" : "$VENDOR_SO_DST"
+    }
+}
+JSON
+    c_green "vendor JSON → $VENDOR_JSON"
+    c_blue  "  Use \`X2D_USE_ADRENO=1 ./run_gui.sh\` to switch wxGLCanvas onto"
+    c_blue  "  the direct ANGLE-Vulkan path (default still virgl for compat)."
+else
+    c_yellow "no libEGL_x2dadreno.so in tarball — Adreno hw path unavailable, falling back to virgl"
+fi
+
+# ---------------------------------------------------------------------------
 # Plug-ins (item #34: binary wizard-patch removed — config_wizard_startup
 # is now source-patched in patches/GUI_App.cpp.termux.patch and baked
 # into the shipped binary)
