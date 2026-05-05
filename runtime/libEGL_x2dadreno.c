@@ -237,10 +237,20 @@ static EGLSurface my_eglCreatePlatformWindowSurface(EGLDisplay dpy, EGLConfig co
         LOG("  XGetGeometry failed");
         return EGL_NO_SURFACE;
     }
-    if (w == 0 || h == 0) { w = 800; h = 600; }
+    /* wxWidgets calls eglCreatePlatformWindowSurface BEFORE the wxGLCanvas
+     * is laid out, so XGetGeometry often returns 1×1 here. We can't easily
+     * resize an EGL pbuffer after creation (would need eglDestroySurface +
+     * recreate + the app to call eglMakeCurrent again, which BS won't do
+     * on its own). Instead, create the pbuffer at a max screen size — the
+     * actual rendered region is bounded by glViewport that BS sets per
+     * frame, and our swap path uses the *current* X window size for
+     * glReadPixels + XPutImage. Memory cost: 2560*1600*4 = 16 MB. */
+    int pbuf_w = (int)w; int pbuf_h = (int)h;
+    if (pbuf_w < 2560) pbuf_w = 2560;
+    if (pbuf_h < 1600) pbuf_h = 1600;
     EGLint pbuf_attribs[] = {
-        EGL_WIDTH,  (EGLint)w,
-        EGL_HEIGHT, (EGLint)h,
+        EGL_WIDTH,  (EGLint)pbuf_w,
+        EGL_HEIGHT, (EGLint)pbuf_h,
         EGL_TEXTURE_TARGET, EGL_NO_TEXTURE,
         EGL_TEXTURE_FORMAT, EGL_NO_TEXTURE,
         EGL_NONE,
@@ -253,6 +263,8 @@ static EGLSurface my_eglCreatePlatformWindowSurface(EGLDisplay dpy, EGLConfig co
     }
     surface_map_entry_t *e = calloc(1, sizeof(*e));
     e->pbuf = pbuf; e->xdpy = xdpy; e->xwin = xwin;
+    /* width/height start at the current X window size — swap path will
+     * track resizes via XGetGeometry on each frame. */
     e->width = (int)w; e->height = (int)h; e->config = config;
     pthread_mutex_lock(&g_surface_lock);
     e->next = g_surface_map; g_surface_map = e;

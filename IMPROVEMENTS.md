@@ -2700,6 +2700,78 @@ if user-facing — then the checkbox flips to [x].
 
 ## Phase 8 — long-tail follow-ups (items 95+)
 
+- [ ] **96. wxGLCanvas/desktop-GL bridge for the EGL vendor path.**
+    Discovered while smoke-testing #95 with BS: ANGLE only provides
+    GLES (843 funcs in `libGLESv2_angle.so`). BS uses Mesa's libGL
+    (3470 funcs incl. desktop-only `glBegin`/`glAccum`/etc.). When BS
+    runs with `X2D_USE_ADRENO=1`, our vendor handles EGL surface
+    creation correctly but `glGetString(GL_VERSION)` from libGL
+    returns NULL — libglvnd can't find the GL stub in our vendor
+    because we only registered as an EGL vendor, not a GL one.
+    Result: BS shows "OpenGL <2.0" popup, 3D viewport stays blank,
+    but the rest of the GUI (panels, toolbars, sidebar) renders
+    fine via GTK/cairo.
+
+    **Two options to fix:**
+    (a) Register a libGLdispatch GL vendor too — implement the full
+    GL function table and translate desktop-GL → ANGLE GLES at the
+    function-call level (massive effort, basically reimplementing
+    virgl's protocol layer in-process).
+    (b) Make the vendor path coexist with the existing virgl/EPOXY_USE_ANGLE
+    path: keep virgl handling GL function dispatch (which is what
+    BS actually wants via libepoxy), and use our vendor only for
+    direct EGL surface acceleration where libepoxy bypasses libGL
+    entirely.
+
+    **Done when** BS under `X2D_USE_ADRENO=1` shows the Plater
+    viewport with the 3D model rendered (not the "OpenGL <2.0"
+    popup), and tab-switch is meaningfully faster than the virgl
+    path (or at minimum: not slower).
+
+- [ ] **97. CLI slice produces correct weight/density.** BS CLI mode
+    (`bambu-studio --slice 0 --load-settings <process;machine>
+    --load-filaments <filament>`) successfully slices an STL and
+    emits `plate_1.gcode` + `.gcode.3mf`, BUT the output is missing
+    weight/density/tray_info_idx that the GUI normally fills in:
+    ```
+    GUI ref:  prediction=986s,  weight=6.20g,  used_m=1.95m,  tray_info_idx=GFA05
+    Our CLI:  prediction=1503s, weight="",    used_m=1.83m,  tray_info_idx=""
+    ```
+    The 52% prediction-time discrepancy and missing weight indicate
+    the X2D dual-extruder profile isn't fully loaded — the CLI logs
+    `update_values_to_printer_extruders … could not found extruder_type
+    Bowden, nozzle_volume_type Standard, extruder_index 2` repeatedly.
+    The X2D machine declares 2 nozzles + the process inherits from
+    `fdm_process_dual_0.20_nozzle_0.4`, suggesting it expects 4
+    filament slots (2 per nozzle?), so passing `--load-filaments
+    "<f>;<f>"` doesn't satisfy it.
+
+    **Done when** CLI slice of `rumi_frame.stl` with the X2D 0.4
+    profile produces a `.gcode.3mf` whose `slice_info.config` shows
+    `weight≠""`, `tray_info_idx≠""`, and `prediction` within 5% of
+    the GUI-sliced reference. Likely fix: synthesize an
+    `--assemble-list` JSON or pass extra `--load-filaments` slots
+    matching the X2D extruder count, plus pre-build the project with
+    a `--load-default-filament` flag.
+
+- [ ] **98. MakerWorld / Printables / Thingiverse import paths.**
+    BS has built-in MakerWorld browser (View → Online Models). For
+    Printables/Thingiverse, the workflow is: download the .stl/.3mf
+    via a system browser, then File→Import. Should add a
+    bridge command `x2d_bridge fetch <url>` that downloads + opens
+    in BS via DBus or wxFile-Open IPC, so the user doesn't have to
+    manually drag files. **Done when** all three platforms work
+    end-to-end on a fresh model: browse → download → open in
+    Plater → set color/scale → slice → ready to send.
+
+- [ ] **99. Bridge `print` command end-to-end with new vendor.**
+    Item #11/#12 proved bridge can send a sliced .gcode.3mf to the
+    X2D via FTPS upload + MQTT print-start. Re-verify after #95/#96
+    land that the full pipeline (Plater → slice → bridge upload →
+    print start → MQTT progress events) survives. **Done when** a
+    user-clicked "Print" in BS with a real X2D online ends with
+    nozzle moving and timelapse frames coming in via the bridge.
+
 - [x] **95. EGL vendor for Adreno (the long-tail of #90).** GLVND's
     libGLdispatch dispatches EGL calls to a vendor library whose path
     is registered via `$PREFIX/share/glvnd/egl_vendor.d/<name>.json`.
