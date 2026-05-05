@@ -80,30 +80,13 @@ unset EPOXY_USE_ANGLE MESA_GL_VERSION_OVERRIDE MESA_GLES_VERSION_OVERRIDE \
       LIBGL_ALWAYS_SOFTWARE MESA_LOADER_DRIVER_OVERRIDE EGL_PLATFORM \
       VK_ICD_FILENAMES
 
-VENDOR_JSON="$PREFIX/share/glvnd/egl_vendor.d/40_x2dadreno.json"
-if [[ "${X2D_USE_ADRENO:-0}" == "1" ]] && [[ -f "$VENDOR_JSON" ]]; then
-    # Direct GLVND vendor path (item #95). libEGL_x2dadreno.so wraps
-    # libEGL_angle.so + intercepts eglCreatePlatformWindowSurface to
-    # redirect X11 windows to a pbuffer, eglSwapBuffers to glReadPixels +
-    # XPutImage. ANGLE on Android can't render to X11 windows natively
-    # so we ride a pbuffer + soft-blit. Calls flow:
-    #   wxGLCanvas → libEGL.so.1 (libglvnd) → libEGL_x2dadreno.so
-    #     → libEGL_angle.so → libvulkan_wrapper.so → vendor/.../vulkan.adreno
-    # Skip virgl_test_server_android — vendor is in-process.
-    export MESA_NO_ERROR=1
-    export MESA_GL_VERSION_OVERRIDE=4.3COMPAT
-    export MESA_GLES_VERSION_OVERRIDE=3.2
-    export MESA_GLSL_VERSION_OVERRIDE=430
-    export LIBGL_DRI3_DISABLE=1
-    export X2D_ANGLE_DIR="$ANGLE_DIR"
-    export __EGL_VENDOR_LIBRARY_FILENAMES="$VENDOR_JSON"
-    [[ -f "$WRAPPER_ICD" ]] && export VK_ICD_FILENAMES="$WRAPPER_ICD"
-    export LD_LIBRARY_PATH="$ANGLE_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-    echo "[run_gui] using direct ANGLE vendor (Adreno 830)"
-elif [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL_BIN" ]]; then
-    # Legacy Hw-accel path via virgl_test_server_android (item #28).
-    # Same backend chain but with one extra IPC hop: GL calls go to
-    # virgl_test_server which has its own ANGLE instance.
+# Hardware-acceleration topology (resolved 2026-05-04 — see #95/#96 in
+# IMPROVEMENTS.md). X2D_USE_ADRENO=1 (default ON) uses virgl_test_server_android
+# as the desktop-GL → ANGLE-Vulkan → Adreno bridge. The libEGL_x2dadreno.so
+# vendor (still installed for non-BS GLES apps) can't replace virgl because
+# ANGLE provides only GLES, but BS calls desktop-GL functions through
+# libGL.so.1.
+if [[ "${X2D_USE_ADRENO:-1}" == "1" ]] && [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL_BIN" ]]; then
     export MESA_NO_ERROR=1
     export MESA_GL_VERSION_OVERRIDE=4.3COMPAT
     export MESA_GLES_VERSION_OVERRIDE=3.2
@@ -121,6 +104,7 @@ elif [[ -d "$ANGLE_DIR" ]] && [[ -x "$VIRGL_BIN" ]]; then
             > "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/virgl_server.log" 2>&1 &
         sleep 1
     fi
+    echo "[run_gui] hw-accel via virgl + ANGLE-Vulkan → Adreno 830"
 else
     # Software fallback — llvmpipe via XPutImage. Slow but always works.
     # zink_kopper.c:720 asserts on swapchain acquire because termux-x11 has no
@@ -129,6 +113,7 @@ else
     export LIBGL_ALWAYS_SOFTWARE=1
     export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
     export EGL_PLATFORM=surfaceless
+    echo "[run_gui] software fallback (llvmpipe) — slow"
 fi
 
 # x2d/termux #88 — suppress the "Could not read the contents of /" GTK popup.

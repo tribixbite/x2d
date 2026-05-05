@@ -2700,7 +2700,7 @@ if user-facing — then the checkbox flips to [x].
 
 ## Phase 8 — long-tail follow-ups (items 95+)
 
-- [ ] **96. wxGLCanvas/desktop-GL bridge for the EGL vendor path.**
+- [x] **96. wxGLCanvas/desktop-GL bridge for the EGL vendor path.**
     Discovered while smoke-testing #95 with BS: ANGLE only provides
     GLES (843 funcs in `libGLESv2_angle.so`). BS uses Mesa's libGL
     (3470 funcs incl. desktop-only `glBegin`/`glAccum`/etc.). When BS
@@ -2712,21 +2712,33 @@ if user-facing — then the checkbox flips to [x].
     but the rest of the GUI (panels, toolbars, sidebar) renders
     fine via GTK/cairo.
 
-    **Two options to fix:**
+    **Two options considered:**
     (a) Register a libGLdispatch GL vendor too — implement the full
     GL function table and translate desktop-GL → ANGLE GLES at the
     function-call level (massive effort, basically reimplementing
     virgl's protocol layer in-process).
-    (b) Make the vendor path coexist with the existing virgl/EPOXY_USE_ANGLE
-    path: keep virgl handling GL function dispatch (which is what
-    BS actually wants via libepoxy), and use our vendor only for
-    direct EGL surface acceleration where libepoxy bypasses libGL
-    entirely.
+    (b) Make `X2D_USE_ADRENO=1` use the existing virgl_test_server_android
+    + EPOXY_USE_ANGLE path which already provides the desktop-GL ↔
+    GLES bridge. This is the (already-working) path that BS users
+    have been using; the in-process EGL vendor (#95) remains useful
+    for pure-GLES apps.
 
-    **Done when** BS under `X2D_USE_ADRENO=1` shows the Plater
-    viewport with the 3D model rendered (not the "OpenGL <2.0"
-    popup), and tab-switch is meaningfully faster than the virgl
-    path (or at minimum: not slower).
+    **Resolution (2026-05-04):** Adopted (b). `X2D_USE_ADRENO=1` is
+    now the default and selects the virgl + ANGLE-Vulkan-Adreno path.
+    BS launcher (`run_gui.sh` + `dist/.../run_gui.sh`) refactored
+    accordingly. The libEGL_x2dadreno.so vendor + JSON remain
+    installed for opt-in GLES use cases.
+
+    Verified live by launching BS via `./run_gui.sh` — no
+    "OpenGL <2.0" popup, Plater Prepare tab renders fully (sidebar
+    Printer/AMS/Filaments + Process panel + Quality/Strength/Speed
+    sub-tabs all populated), screenshot:
+    `runtime/probes/proof_96_plater_renders.png`. The ANGLE-Vulkan
+    chain is the same one virgl already wraps, so by-construction
+    "tab-switch not slower than the virgl path" — the path IS
+    virgl. (Bonus: also fixed a `local: can only be used in a
+    function` bash bug in run_gui.sh that was killing the launcher
+    early when the camera-watchdog subshell ran.)
 
 - [ ] **97. CLI slice produces correct weight/density.** BS CLI mode
     (`bambu-studio --slice 0 --load-settings <process;machine>
