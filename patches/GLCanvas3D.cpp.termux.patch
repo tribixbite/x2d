@@ -1,8 +1,31 @@
 diff --git a/src/slic3r/GUI/GLCanvas3D.cpp b/src/slic3r/GUI/GLCanvas3D.cpp
 index 0000000..0000001 100644
---- a/src/slic3r/GUI/GLCanvas3D.cpp
-+++ b/src/slic3r/GUI/GLCanvas3D.cpp
-@@ -6572,7 +6572,18 @@ const Camera *GLCanvas3D::get_active_camera_const() const
+--- a/src/slic3r/GUI/GLCanvas3D.cpp	2026-04-20 03:03:29.485983014 -0400
++++ b/src/slic3r/GUI/GLCanvas3D.cpp	2026-05-05 06:05:08.462999990 -0400
+@@ -1625,6 +1625,21 @@
+     //    wxGetApp().plater()->enable_wireframe(false);
+     m_initialized = true;
+ 
++    // x2d/termux #103 — paint events that fired BEFORE the GL context
++    // was ready will have hit the `else` branch in on_paint() and
++    // called render() directly, but render() bails on
++    // !_is_shown_on_screen() / !_set_current() / !init() and never
++    // re-arms. The wx event loop won't redeliver the paint, so the
++    // canvas can stay blank forever even after the context becomes
++    // ready. After init() finally succeeds, post a refresh + dirty
++    // mark so the next idle tick does a full render. Cheap one-shot
++    // post; harmless on non-termux platforms where init usually
++    // succeeds on the first paint anyway.
++    if (m_canvas != nullptr) {
++        m_dirty = true;
++        m_canvas->Refresh();
++        m_canvas->Update();
++    }
+     return true;
+ }
+ 
+@@ -6571,7 +6586,17 @@
+ 
  bool GLCanvas3D::_is_shown_on_screen() const
  {
 -    return (m_canvas != nullptr) ? m_canvas->IsShownOnScreen() : false;
@@ -18,12 +41,9 @@ index 0000000..0000001 100644
 +    // in the worst case rather than a permanently-blank viewport.
 +    return (m_canvas != nullptr) && m_canvas->IsShown();
  }
-
- void GLCanvas3D::_resize(unsigned int w, unsigned int h)
-@@ -7588,17 +7599,46 @@ Camera *GLCanvas3D::get_active_camera()
- bool GLCanvas3D::_set_current(bool force_update)
- {
-     if (!m_context || !m_canvas) {
+ 
+ // Getter for the const char*[]
+@@ -7581,7 +7606,40 @@
          return false;
      }
      if (m_dirty_context || force_update) {
@@ -65,7 +85,3 @@ index 0000000..0000001 100644
          if (rt) {
              m_dirty_context = false;
          }
-         return rt;
-     }
-     return true;
- }
