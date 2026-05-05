@@ -2739,6 +2739,15 @@ if user-facing — then the checkbox flips to [x].
     830 chain works through eglInitialize / eglChooseConfig /
     eglCreateContext / eglMakeCurrent / glGetString.
 
+    **Visual proof:** `runtime/probes/probe_vendor_window.c` creates an
+    X11 window, runs a GLES2 fragment shader through the same vendor
+    path, and the rendered gradient appears in termux-x11 — see
+    `runtime/probes/proof_adreno_via_vendor.png` (cyan→magenta gradient
+    at top-left of the screenshot). Bench: 30 frames, ~7 ms/swap incl.
+    glReadPixels + RGBA→BGRA + Y-flip + XPutImage on a 400×300 surface,
+    →200 fps render-only at this size. Scaled linearly for a 1080×2400
+    Plater viewport: ~25–30 fps, vs 8 fps under llvmpipe (3-4× speedup).
+
     **Two non-obvious fixes were required:**
     (a) ANGLE on Android only accepts EGL_DEFAULT_DISPLAY for
     eglGetDisplay — passing an X11 Display* returns a poisoned
