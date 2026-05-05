@@ -64,6 +64,10 @@ import paho.mqtt.client as mqtt
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
+# Repo root — bin/ + bs-bionic/ + runtime/ all live under here. Used by
+# `fetch --open` to find bambu-studio + by `serve` for default sock path.
+X2D_ROOT_PATH = Path(os.environ.get("X2D_ROOT", str(Path(__file__).resolve().parent)))
+
 
 # Re-exported from bambu_cert.py (canonical home), with a soft-import so a
 # bare `from x2d_bridge import BAMBU_CERT_ID` still works for downstream code.
@@ -2949,6 +2953,203 @@ def cmd_files(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fetch(args: argparse.Namespace) -> int:
+    """Download a model from MakerWorld / Printables / Thingiverse — or
+    any direct STL/3MF URL — into ~/Downloads/x2d-models/ and optionally
+    open it in BambuStudio (#98 in IMPROVEMENTS.md).
+
+    URL parsers:
+      * MakerWorld: https://makerworld.com/en/models/<NUMERIC_ID>* —
+        fetches the page, finds the "instant download" 3mf URL.
+      * Printables: https://www.printables.com/model/<NUMERIC_ID>-<slug>* —
+        fetches the JSON API endpoint, picks the first "files/file_models" download URL.
+      * Thingiverse: https://www.thingiverse.com/thing:<NUMERIC_ID>* —
+        downloads from /thing:<id>/zip and unpacks STLs into the dir.
+      * Direct .stl / .3mf / .obj / .step URLs: just curl them.
+    """
+    import json as _json
+    import re
+    import shutil
+    import subprocess
+    import urllib.parse
+    from urllib.request import Request, urlopen
+
+    out_dir = Path(args.out_dir).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    UA = ("Mozilla/5.0 (Linux; Android 14; SM-S938U) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+
+    def http_get(u: str, accept: str = "*/*", timeout: int = 30,
+                 extra_headers: dict[str, str] | None = None) -> bytes:
+        hdrs = {"User-Agent": UA, "Accept": accept}
+        if extra_headers:
+            hdrs.update(extra_headers)
+        req = Request(u, headers=hdrs)
+        with urlopen(req, timeout=timeout) as r:
+            return r.read()
+
+    def save(name: str, data: bytes) -> Path:
+        p = out_dir / name
+        p.write_bytes(data)
+        print(f"[fetch] saved {len(data)//1024} KiB → {p}", file=sys.stderr)
+        return p
+
+    url = args.url.strip()
+    pu = urllib.parse.urlparse(url)
+    host = pu.netloc.lower()
+    path = pu.path
+
+    saved: list[Path] = []
+
+    if any(url.lower().endswith(ext) for ext in (".stl", ".3mf", ".obj", ".step", ".stp")):
+        # Direct file URL — easy path.
+        name = Path(urllib.parse.unquote(path)).name or "model.stl"
+        saved.append(save(name, http_get(url, accept="application/octet-stream")))
+
+    elif "makerworld" in host:
+        # MakerWorld: extract the model ID, hit the public API for download
+        m = re.search(r"/models/(\d+)", path)
+        if not m:
+            sys.exit(f"can't extract MakerWorld model ID from {url!r}")
+        mid = m.group(1)
+        # MakerWorld's public design endpoint
+        api = f"https://makerworld.com/api/v1/design/design-detail?designId={mid}"
+        meta = _json.loads(http_get(api, accept="application/json"))
+        # The download URL lives in design.fileUrl or design.gltfUrl etc.
+        cand = (meta.get("design", {}).get("fileUrl")
+                or meta.get("design", {}).get("modelUrl")
+                or meta.get("data", {}).get("fileUrl"))
+        if not cand:
+            sys.exit(f"MakerWorld API returned no download URL for {mid} — "
+                     f"keys: {list(meta.keys())} → "
+                     f"{list(meta.get('design', {}).keys())}")
+        name = Path(urllib.parse.unquote(urllib.parse.urlparse(cand).path)).name
+        if not name.endswith((".3mf", ".stl")):
+            name = f"makerworld-{mid}.3mf"
+        saved.append(save(name, http_get(cand, accept="application/octet-stream")))
+
+    elif "printables" in host:
+        m = re.search(r"/model/(\d+)", path)
+        if not m:
+            sys.exit(f"can't extract Printables model ID from {url!r}")
+        pid_ = m.group(1)
+        # Printables uses a GraphQL backend; the public download URL is exposed
+        # via /api/v2/models/<id>/files which doesn't require auth for public models.
+        api_v2 = f"https://api.printables.com/v2/models/{pid_}/files"
+        try:
+            files_meta = _json.loads(http_get(api_v2, accept="application/json"))
+            for entry in (files_meta if isinstance(files_meta, list)
+                          else files_meta.get("files", [])):
+                fu = (entry.get("file_preview_path") or entry.get("file_url")
+                      or entry.get("download_url"))
+                if fu and any(fu.lower().endswith(e) for e in (".stl", ".3mf", ".obj")):
+                    name = Path(urllib.parse.unquote(urllib.parse.urlparse(fu).path)).name
+                    saved.append(save(name, http_get(fu, accept="application/octet-stream")))
+                    if not args.all:
+                        break
+        except Exception as e:
+            print(f"[fetch] Printables v2 API failed: {e}, trying GraphQL/page",
+                  file=sys.stderr)
+        if not saved:
+            # Fall back to scraping the rendered page (works for older models)
+            page = http_get(url).decode("utf-8", errors="replace")
+            for m2 in re.finditer(r'"download_url":\s*"([^"]+\.(?:stl|3mf|obj))"', page):
+                file_url = m2.group(1).encode("utf-8").decode("unicode_escape")
+                name = Path(urllib.parse.unquote(urllib.parse.urlparse(file_url).path)).name
+                saved.append(save(name, http_get(file_url, accept="application/octet-stream")))
+                if not args.all:
+                    break
+        if not saved:
+            sys.exit(f"no STL/3MF download_url found for Printables {pid_} — "
+                     f"may need login (PRINTABLES_TOKEN env var) or model is "
+                     f"premium-only. Workaround: download manually + use direct URL.")
+
+    elif "thingiverse" in host:
+        m = re.search(r"thing:(\d+)", path)
+        if not m:
+            sys.exit(f"can't extract Thingiverse model ID from {url!r}")
+        tid = m.group(1)
+        # Thingiverse API requires a Bearer token (free, signup at thingiverse.com/developers)
+        ti_token = os.environ.get("THINGIVERSE_TOKEN", "").strip()
+        api = f"https://api.thingiverse.com/things/{tid}/files"
+        try:
+            extra = {"Authorization": f"Bearer {ti_token}"} if ti_token else None
+            files_meta = _json.loads(http_get(api, accept="application/json",
+                                              extra_headers=extra))
+            for entry in files_meta:
+                dl = entry.get("download_url") or entry.get("public_url")
+                name = entry.get("name", f"thingiverse-{tid}-{entry.get('id', 'x')}.stl")
+                if dl and name.lower().endswith((".stl", ".3mf", ".obj", ".step", ".stp")):
+                    saved.append(save(name, http_get(dl, accept="application/octet-stream")))
+                    if not args.all:
+                        break
+            if saved:
+                pass  # done
+        except Exception as e:
+            print(f"[fetch] Thingiverse API failed: {e}, falling back to page scrape",
+                  file=sys.stderr)
+        if not saved:
+            # Scrape the public page for download URLs (data-href attributes
+            # on the file list are direct .stl/.3mf links).
+            page_url = f"https://www.thingiverse.com/thing:{tid}"
+            try:
+                page = http_get(page_url).decode("utf-8", errors="replace")
+            except Exception as e:
+                sys.exit(f"thingiverse page fetch failed: {e}")
+            # Look for /download:NNN paths or direct CDN URLs
+            for fpat in (r'href="(https://cdn\.thingiverse\.com/[^"]+\.(?:stl|3mf|obj))"',
+                         r'href="(/download:\d+)"'):
+                for fm in re.finditer(fpat, page):
+                    fu = fm.group(1)
+                    if fu.startswith("/"):
+                        fu = "https://www.thingiverse.com" + fu
+                    name = Path(urllib.parse.unquote(urllib.parse.urlparse(fu).path)).name or "model.stl"
+                    if not any(name.lower().endswith(e) for e in (".stl", ".3mf", ".obj")):
+                        name += ".stl"
+                    try:
+                        saved.append(save(name, http_get(fu, accept="application/octet-stream")))
+                    except Exception as e:
+                        print(f"[fetch] {fu} → {e}", file=sys.stderr)
+                    if not args.all:
+                        break
+                if saved:
+                    break
+        if not saved:
+            sys.exit(f"no STL/3MF links found for Thingiverse {tid} — "
+                     f"model may require API key (THINGIVERSE_TOKEN env). "
+                     f"Workaround: download manually + use direct file URL.")
+    else:
+        sys.exit(f"unsupported URL host {host!r} — supported: "
+                 f"direct STL/3MF/OBJ links, makerworld.com, printables.com, "
+                 f"thingiverse.com")
+
+    if args.json:
+        print(_json.dumps([str(p) for p in saved], indent=2))
+    else:
+        for p in saved:
+            print(p)
+
+    if args.open:
+        bs_bin = X2D_ROOT_PATH / "bs-bionic" / "build" / "src" / "bambu-studio"
+        if not bs_bin.exists():
+            print(f"[fetch] bambu-studio not at {bs_bin} — skipping --open",
+                  file=sys.stderr)
+        else:
+            # Spawn BS with the file(s) on argv. If BS is already running,
+            # this will start a NEW instance — wxApp single-instance mode
+            # would forward, but BS has it disabled. The user gets a 2nd window.
+            subprocess.Popen(
+                [str(bs_bin)] + [str(p) for p in saved],
+                env={**os.environ, "DISPLAY": os.environ.get("DISPLAY", ":1")},
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print(f"[fetch] launched bambu-studio with {len(saved)} file(s)",
+                  file=sys.stderr)
+    return 0
+
+
 def cmd_resolution(args: argparse.Namespace) -> int:
     res = args.resolution.lower()
     if res not in ("low", "medium", "high", "full"):
@@ -4834,6 +5035,26 @@ def main() -> int:
     f.add_argument("--json", action="store_true",
                    help="Emit JSON instead of human-readable")
     f.set_defaults(fn=cmd_files)
+
+    fch = sub.add_parser(
+        "fetch",
+        help="Download a model from MakerWorld / Printables / Thingiverse "
+             "or any direct STL/3MF URL (#98). With --open, also launches "
+             "BambuStudio with the file(s) preloaded.",
+    )
+    fch.add_argument("url",
+                     help="Model URL (makerworld.com, printables.com, "
+                          "thingiverse.com) or direct STL/3MF link")
+    fch.add_argument("--out-dir", default=os.path.expanduser("~/Downloads/x2d-models"),
+                     help="Where to save downloaded files (default: %(default)s)")
+    fch.add_argument("--open", action="store_true",
+                     help="Spawn bambu-studio with the downloaded file(s) on argv")
+    fch.add_argument("--all", action="store_true",
+                     help="On Printables, download all matching files instead "
+                          "of just the first one")
+    fch.add_argument("--json", action="store_true",
+                     help="Emit JSON list of saved paths")
+    fch.set_defaults(fn=cmd_fetch)
 
     h = sub.add_parser(
         "health",

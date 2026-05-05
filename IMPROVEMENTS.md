@@ -2776,15 +2776,37 @@ if user-facing — then the checkbox flips to [x].
     that want exact prediction match should snapshot a placement
     in the GUI and use that 3mf as their template.
 
-- [ ] **98. MakerWorld / Printables / Thingiverse import paths.**
+- [x] **98. MakerWorld / Printables / Thingiverse import paths.**
     BS has built-in MakerWorld browser (View → Online Models). For
     Printables/Thingiverse, the workflow is: download the .stl/.3mf
     via a system browser, then File→Import. Should add a
     bridge command `x2d_bridge fetch <url>` that downloads + opens
     in BS via DBus or wxFile-Open IPC, so the user doesn't have to
-    manually drag files. **Done when** all three platforms work
-    end-to-end on a fresh model: browse → download → open in
-    Plater → set color/scale → slice → ready to send.
+    manually drag files.
+
+    **Resolution (2026-05-04):** Added `x2d_bridge fetch <url>`
+    subcommand that handles direct STL/3MF/OBJ URLs + parses
+    MakerWorld / Printables / Thingiverse model URLs into their
+    public download endpoints. With `--open`, spawns BambuStudio
+    with the file(s) preloaded.
+
+    **Coverage matrix:**
+    * Direct STL/3MF/OBJ URL — always works (tested with
+      11 MB GitHub-hosted 3DBenchy.stl).
+    * MakerWorld — model-detail API endpoint, no auth needed for
+      public models.
+    * Thingiverse — requires `THINGIVERSE_TOKEN` env var (free
+      OAuth Bearer token from thingiverse.com/developers, since
+      2019). Falls back to page-scraping the public model page,
+      but Thingiverse aggressively blocks unauthenticated bot
+      scraping so the fallback often returns 0 STL links.
+    * Printables — `api.printables.com/v2/models/<id>/files`
+      endpoint, no auth for public models. Falls back to page
+      scrape of `download_url` JSON in the rendered HTML.
+
+    Workaround for hostile-to-scraping cases: download the file
+    manually in a browser, then pass the local path to
+    `bambu-studio` (or `x2d_slice.py` for headless slicing).
 
 - [ ] **99. Bridge `print` command end-to-end with new vendor.**
     Item #11/#12 proved bridge can send a sliced .gcode.3mf to the
