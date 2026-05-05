@@ -50,6 +50,7 @@ import base64
 import configparser
 import json
 import os
+import shutil
 import ssl
 import sys
 import time
@@ -3150,6 +3151,94 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_slice_print(args: argparse.Namespace) -> int:
+    """One-shot pipeline: slice an STL with x2d_slice.py + upload + start
+    print on the configured X2D. Resolves #99 in IMPROVEMENTS.md.
+
+    Equivalent to:
+        x2d_slice.py model.stl --out tmp.gcode.3mf
+        x2d_bridge.py print tmp.gcode.3mf
+
+    With --dry-run, slices but doesn't upload — useful for testing.
+    """
+    import subprocess
+    import tempfile
+
+    stl = Path(args.stl)
+    if not stl.exists():
+        sys.exit(f"input not found: {stl}")
+    if stl.suffix.lower() not in (".stl", ".step", ".stp", ".obj", ".3mf"):
+        sys.exit(f"unsupported input extension: {stl.suffix}")
+
+    # Slice into a temp .gcode.3mf using x2d_slice.py
+    slice_bin = X2D_ROOT_PATH / "x2d_slice.py"
+    if not slice_bin.exists():
+        sys.exit(f"x2d_slice.py not found at {slice_bin}")
+
+    with tempfile.TemporaryDirectory(prefix="x2d_sp_") as td:
+        out_3mf = Path(td) / f"{stl.stem}.gcode.3mf"
+        if stl.suffix.lower() == ".3mf":
+            # Already a 3mf — just re-slice via BS CLI directly to refresh metadata
+            print(f"[slice-print] input already a 3mf, re-slicing in place",
+                  file=sys.stderr)
+            bs_bin = X2D_ROOT_PATH / "bs-bionic" / "build" / "src" / "bambu-studio"
+            rc = subprocess.call([
+                str(bs_bin), "--slice", "0",
+                "--outputdir", str(out_3mf.parent),
+                "--export-3mf", out_3mf.name,
+                str(stl),
+            ], env={**os.environ, "DISPLAY": os.environ.get("DISPLAY", ":1")})
+        else:
+            # STL/OBJ/STEP — graft into template and slice
+            cmd = [str(slice_bin), str(stl), "--out", str(out_3mf)]
+            if args.template:
+                cmd.extend(["--template", str(args.template)])
+            rc = subprocess.call(cmd)
+        if rc != 0:
+            sys.exit(f"slicing failed rc={rc}")
+        if not out_3mf.exists():
+            sys.exit("slicing reported success but no .gcode.3mf produced")
+
+        # Print metrics for confirmation
+        import zipfile as _zf
+        try:
+            with _zf.ZipFile(out_3mf) as z:
+                info = z.read("Metadata/slice_info.config").decode("utf-8", errors="replace")
+            for key in ("prediction", "weight", "used_m"):
+                for line in info.splitlines():
+                    if f'key="{key}"' in line or f'tray_info_idx' in line:
+                        print(f"  {line.strip()}", file=sys.stderr)
+                        break
+        except Exception:
+            pass
+
+        if args.dry_run:
+            # Save the sliced .gcode.3mf so user can inspect it
+            keep = stl.with_suffix(".sliced.gcode.3mf")
+            shutil.copy2(out_3mf, keep)
+            print(f"[slice-print] DRY RUN — sliced to {keep}; not uploading",
+                  file=sys.stderr)
+            return 0
+
+        # Upload + print via existing path
+        creds = Creds.resolve(args)
+        upload_file(creds, out_3mf, remote_name=args.remote)
+        cli = X2DClient(creds)
+        cli.connect()
+        name = args.remote or out_3mf.name
+        start_print(cli, name,
+                    use_ams=not args.no_ams, ams_slot=args.slot,
+                    bed_levelling=not args.no_bed_level,
+                    flow_cali=args.flow_cali,
+                    timelapse=args.timelapse,
+                    vibration_cali=args.vib_cali,
+                    bed_type=args.bed_type,
+                    local_path=out_3mf)
+        print(f"[slice-print] queued: {name} on {creds.ip} (ams_slot={args.slot})")
+        cli.disconnect()
+    return 0
+
+
 def cmd_resolution(args: argparse.Namespace) -> int:
     res = args.resolution.lower()
     if res not in ("low", "medium", "high", "full"):
@@ -5055,6 +5144,39 @@ def main() -> int:
     fch.add_argument("--json", action="store_true",
                      help="Emit JSON list of saved paths")
     fch.set_defaults(fn=cmd_fetch)
+
+    sp = sub.add_parser(
+        "slice-print",
+        help="One-shot pipeline: slice an STL with the X2D profile + "
+             "upload + start print (#99). With --dry-run, slices but "
+             "doesn't upload.",
+    )
+    sp.add_argument("stl", help="STL/STEP/OBJ/3MF input file path")
+    sp.add_argument("--template", help="Reference .gcode.3mf to graft into "
+                                       "(default: x2d_slice.py's default)")
+    sp.add_argument("--remote", help="Remote filename on printer "
+                                     "(default: input basename)")
+    sp.add_argument("--slot", type=int, default=0,
+                    help="AMS tray slot 0-3 (default: 0)")
+    sp.add_argument("--no-ams", action="store_true",
+                    help="Print without AMS (use external spool)")
+    sp.add_argument("--no-bed-level", action="store_true",
+                    help="Skip auto bed leveling before print")
+    sp.add_argument("--flow-cali", action="store_true",
+                    help="Run flow calibration before print")
+    sp.add_argument("--timelapse", action="store_true",
+                    help="Enable timelapse during print")
+    sp.add_argument("--vib-cali", action="store_true",
+                    help="Run vibration calibration before print")
+    sp.add_argument("--bed-type", default="auto",
+                    help="Bed surface type (auto/PEI/PETG/etc., default: auto)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="Slice + save .gcode.3mf locally; do NOT upload/print")
+    sp.add_argument("--printer", help="Printer name in ~/.x2d/credentials")
+    sp.add_argument("--ip", help="Override printer IP")
+    sp.add_argument("--code", help="Override access code")
+    sp.add_argument("--serial", help="Override printer serial")
+    sp.set_defaults(fn=cmd_slice_print)
 
     h = sub.add_parser(
         "health",
