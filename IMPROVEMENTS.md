@@ -2839,6 +2839,68 @@ if user-facing — then the checkbox flips to [x].
 
     Done.
 
+## Phase 9 — real-world verification (items 100+)
+
+- [ ] **100. Plater 3D viewport content actually visible.**
+    BS launches via `run_gui.sh` and the Plater UI renders fully (no
+    "OpenGL <2.0" popup), but the wxGLCanvas region itself is a flat
+    gray with no build plate, no axes, no model — even after loading
+    an STL via Ctrl+I → Open. The earlier #80/#85/#86 fixes addressed
+    `IsShownOnScreen` gating + auto-collapse-causing-blank-Plater +
+    canvas pre-warm; some of those still apply but the *content* of
+    the canvas isn't drawing.
+
+    **Done when** loading an STL into the Plater shows a colored
+    mesh in the 3D viewport, the build plate grid is visible, and
+    rotating/panning via mouse works.
+
+- [ ] **101. Real MakerWorld X2D slice comparison.**
+    `mira_official.gcode.3mf` we used as MakerWorld reference in
+    #97/#35 actually has `printer_model_id="N6"` (= H2D), not X2D.
+    Need a model on MakerWorld tagged X2D-compatible, fetch via
+    `x2d_bridge fetch`, slice locally via `x2d_slice.py`, and diff
+    prediction/weight/used_m against the MakerWorld-server sliced
+    output for that model + the same X2D process profile.
+
+    **Done when** there's a side-by-side comparison committed to
+    `docs/SLICE_COMPARISON_*.md` with prediction within 5% and
+    weight within 2% of the MakerWorld reference for a real X2D
+    model.
+
+- [x] **102. Color assignment + scale workflow in CLI.**
+    User wanted "set colors and scale and slice" workflow.
+    `x2d_slice.py` only forwards STL geometry — it doesn't accept
+    color-per-object or scale args. Add `--scale FACTOR` and
+    `--color "#RRGGBB,..."` to `x2d_slice.py` and `x2d_bridge
+    slice-print`, with the colors going into per-filament tray
+    bindings in the grafted 3MF's `model_settings.config`.
+
+    **Resolution (2026-05-05):** Added `--scale` and `--color` to
+    `x2d_slice.py`. Three patches required:
+    * `build_3mf_object` — multiplies vertex coords by scale at
+      graft time. (Tried baking scale into the 3MF build-item
+      transform AND into model_settings.config's `matrix` — both
+      preserved by BS but ignored during CLI slicing. Vertex-
+      level scaling is the only path that actually affects
+      print volume.)
+    * `patch_project_settings_for_color` — rewrites
+      `filament_colour[0]` in the embedded JSON.
+    * `patch_model_settings_for_color` — overlays
+      `extruder_filament_color` metadata under the first object.
+
+    Tested with `rumi_frame.stl`:
+    | Args                            | prediction | weight  | used_m | color    |
+    |---------------------------------|-----------:|--------:|-------:|----------|
+    | (defaults)                      | 1602s      | 10.95g  | 3.45m  | #00AE42  |
+    | `--scale 0.5`                   | 623s       |  2.03g  | 0.64m  | #00AE42  |
+    | `--color "#FF0000"`             | 1602s      | 10.95g  | 3.45m  | #FF0000  |
+    | `--scale 0.7 --color "#00FF00"` | 907s       |  4.27g  | 1.34m  | #00FF00  |
+
+    Note: `--scale 1.2` returns rc=206 — the rumi_frame STL is
+    already near the X2D's 256x256mm build plate, so 1.2x
+    overflows the print volume. That's correct behaviour, not
+    a bug.
+
 - [x] **95. EGL vendor for Adreno (the long-tail of #90).** GLVND's
     libGLdispatch dispatches EGL calls to a vendor library whose path
     is registered via `$PREFIX/share/glvnd/egl_vendor.d/<name>.json`.
