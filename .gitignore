@@ -65,7 +65,9 @@ __pycache__/
 # Pre-built shim — always rebuild from source
 runtime/libpreloadgtk.so
 runtime/libEGL_x2dadreno.so
-runtime/probes/probe_*
+# probe binaries (no extension); keep the .c sources tracked
+runtime/probes/probe_vendor_gl
+runtime/probes/probe_angle_direct
 
 # Old draft notes
 UNANSWERED_QUESTIONS.md
