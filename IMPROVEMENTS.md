@@ -2880,6 +2880,57 @@ if user-facing — then the checkbox flips to [x].
     change which is mechanically correct and matches the working
     direct-invocation behaviour.
 
+    **Follow-up (2026-05-05 second pass):** When testing the
+    new launcher live, found that virgl was STILL failing with
+    the libgtk-3 error even after the `--angle-vulkan` switch.
+    Root cause #2: Termux's `libtermux-exec.so` re-injects
+    `LD_PRELOAD=libpreloadgtk.so` across `exec()` boundaries —
+    setting `LD_PRELOAD=` explicitly in the prefix-form of the
+    spawn command does NOT clear it (libtermux-exec preserves
+    it). The fix is `env -i` to fully scrub the env, then
+    re-add only the variables virgl actually needs (`HOME`,
+    `PATH`, `PREFIX`, `TMPDIR`, `EPOXY_USE_ANGLE`, `LD_LIBRARY_PATH`,
+    `VK_ICD_FILENAMES`). Both `run_gui.sh` and `dist/.../run_gui.sh`
+    updated with this scrub. With it: virgl alive (`pgrep -af
+    /usr/bin/virgl_test_server_android` shows the running process,
+    no link errors in `virgl_server.log`), BS alive with the right
+    env — `GALLIUM_DRIVER=virpipe`, `EPOXY_USE_ANGLE=1`,
+    `VK_ICD=wrapper`, `LD_LIBRARY_PATH=$ANGLE_DIR` — and BS
+    process maps include `libGL.so.1` (Mesa libglvnd) +
+    `libEGL_angle.so` + `libGLESv2_angle.so`, confirming the
+    BS → libGL/Mesa virpipe → virgl → ANGLE-Vulkan →
+    vulkan_wrapper → Adreno chain. Proof screenshot at
+    `runtime/probes/proof_100_virgl_vulkan_works.png`.
+
+    **Caveat — separate #103 follow-up:** Even with virgl alive
+    + GL chain established, the Plater body in the launcher BS
+    occasionally renders blank-white (no sidebar, no 3D viewport
+    content). This is the same #80/#85/#86 wxGLCanvas paint
+    gating issue (IsShownOnScreen / set_current_panel layout
+    timing) — distinct from the virgl/ANGLE bring-up that #100
+    addresses. The launcher's #100 fix is the correct
+    infrastructural change; the residual Plater body painting
+    is tracked as Phase 9 #103.
+
+- [ ] **103. Plater body fills consistently after virgl warm-up.**
+    With #100's virgl + ANGLE-Vulkan path alive, BS launches
+    cleanly but the Plater body content (sidebar Printer/AMS/
+    Process panels + 3D viewport) sometimes doesn't paint —
+    the top toolbar (Prepare/Preview/Device tabs) renders but
+    the rest of the window stays white. Same launch sometimes
+    succeeds (sidebar + Plater visible), sometimes doesn't,
+    suggesting a paint-event ordering race against the
+    wxGLCanvas IsShownOnScreen gate fix from #86.
+
+    Likely fix: extend the `set_current_panel` IsShown fallback
+    from #86's `Plater.cpp:11008` to also force a `wxPostEvent`
+    repaint after the first MakeCurrent succeeds, so the body
+    is drawn even if the initial paint event was queued before
+    the GL context was ready.
+
+    **Done when** five consecutive launches all show the full
+    Plater (sidebar + 3D viewport) within 90 s of BS startup.
+
 - [x] **101. Real MakerWorld X2D slice comparison.**
     `mira_official.gcode.3mf` we used as MakerWorld reference in
     #97/#35 actually has `printer_model_id="N6"` (= H2D), not X2D.
